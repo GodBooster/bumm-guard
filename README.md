@@ -1,6 +1,6 @@
 # BUMM Guard (NEAR rule-pack)
 
-Static analysis for NEAR smart contracts (near-sdk-rs 5.x). Python 3.12+, standard library only.
+Static analysis for NEAR smart contracts (near-sdk-rs 5.x). Python 3.12+, standard library only (the optional MCP server needs the `mcp` package, see below).
 Finds three defect classes before deploy, fixes two of them deterministically and gates the deploy; output is JSON for machines, text for humans.
 
 ## Quickstart (machine reader)
@@ -49,6 +49,29 @@ Default is print-only. `--execute` runs it, only with `--network testnet`, with 
 | 4 | not used | not used | `--execute` but `near` not on PATH |
 | 5 | not used | not used | `near` ran and failed |
 
+## Use from a coding agent (MCP)
+
+`bumm-guard-mcp` is an MCP server over stdio with four tools: `list_rules`, `scan_contract`, `fix_contract`, `gate_deploy`. It needs the optional `mcp` package (tested with mcp 1.30.0 and 2.3.0).
+
+1. Install: `python3 -m pip install -e '.[mcp]'` -> the command `bumm-guard-mcp` exists (it waits on stdin; that is normal).
+2. Register it with Claude Code: `claude mcp add bumm-guard -- bumm-guard-mcp` -> `claude mcp list` shows `bumm-guard`. Alternative: load the plugin in `clients/claude-plugin/` (`claude --plugin-dir clients/claude-plugin`), which bundles the server config and the skill `near-deploy-gate` (run scan, fix, tests, gate before any deploy). For Cursor or Codex, copy `clients/claude-plugin/examples/mcp-config.json` into their MCP config (generic stdio server entry). The server must be started in the directory that holds the contract.
+3. Ask the agent: `scan tests/fixtures/near/d1_vuln` -> the agent calls `scan_contract(path="tests/fixtures/near/d1_vuln")`; the tool result is the JSON from "Expected JSON" below: 1 finding, `BG-NEAR-001`, severity `high`.
+4. Ask: `fix it` -> `fix_contract` returns a diff adding `#[private]` and changes nothing (dry run is the default). `apply=true` writes the file; use it only after a human has read the diff.
+5. Ask: `gate tests/fixtures/near/d1_vuln` -> `gate_deploy` returns `blocked: true`, `deploy_command: null`.
+
+| tool | arguments | returns |
+|---|---|---|
+| `list_rules` | none | `{rules: [{id, name, severity, summary}]}` |
+| `scan_contract` | `path`, `exclude?` | same JSON as `scan --format json` |
+| `fix_contract` | `path`, `apply=false`, `exclude?` | same JSON as `fix --format json`; `diffs` per file, `remaining` after apply |
+| `gate_deploy` | `crate_dir`, `wasm?`, `account?`, `network="testnet"` | `{blocked, passed, blocking_findings, findings, report_path, deploy_command, deploy_executed: false, messages, note}` |
+
+Safety:
+- `gate_deploy` never executes a deploy and has no `execute` parameter; it returns the `near contract deploy ...` command as text for the human to run (`bumm-guard gate --execute` on the CLI is unchanged and not reachable from MCP).
+- Every path must resolve (symlinks followed) inside the server's working directory. Anything else is a tool error. Set `BUMM_GUARD_ALLOW_ANY_PATH=1` in the server's environment to lift this (for example `claude mcp add -e BUMM_GUARD_ALLOW_ANY_PATH=1 bumm-guard -- bumm-guard-mcp`); only do that for a project you trust the agent with.
+- `fix_contract` writes files only with `apply=true`, and never under `target/`.
+- Tests: `python3 -m unittest tests.test_mcp` (skipped with a message when `mcp` is not installed).
+
 ## Rules
 
 | id | name | severity | what |
@@ -66,7 +89,7 @@ Opt-out for 003: a `// signer-ok` comment above or inside the method.
 ```json
 {
   "tool": "bumm-guard",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "files_scanned": 1,
   "summary": {"total": 1, "by_severity": {"high": 1}, "by_rule": {"BG-NEAR-001": 1}},
   "findings": [
@@ -94,6 +117,7 @@ Opt-out for 003: a `// signer-ok` comment above or inside the method.
 - `bumm_guard/rulepack/near/{non_private_callback,callback_ignores_failure,signer_auth}.py`: one module per rule; `__init__.py` is the registry (`RULES`).
 - `bumm_guard/fix/`: one fixer per rule (`non_private_callback.py`, `signer_auth.py`, `callback_ignores_failure.py`), engine and `FIXERS` registry in `__init__.py`.
 - `bumm_guard/gate.py`: scan, report, deploy command.
+- `bumm_guard/mcp_server.py`: MCP stdio server (`bumm-guard-mcp`); `clients/claude-plugin/`: Claude Code plugin (MCP config + `near-deploy-gate` skill) and `examples/mcp-config.json`.
 - `tests/fixtures/near/`: seven compilable near-sdk crates (`d1..d3_vuln|safe`, `proxy`; `cargo check --workspace` from that folder).
 
 ## Honest limits

@@ -29,15 +29,20 @@ def _summary(findings: list[Finding]) -> dict:
     }
 
 
-def render_json(res: ScanResult) -> str:
-    return json.dumps({
+def scan_to_dict(res: ScanResult) -> dict:
+    """The payload of ``scan --format json`` (also returned by the MCP ``scan_contract`` tool)."""
+    return {
         "tool": "bumm-guard",
         "version": __version__,
         "files_scanned": res.files_scanned,
         "summary": _summary(res.findings),
         "findings": [f.to_dict() for f in res.findings],
         "errors": res.errors,
-    }, indent=2)
+    }
+
+
+def render_json(res: ScanResult) -> str:
+    return json.dumps(scan_to_dict(res), indent=2)
 
 
 def render_text(res: ScanResult) -> str:
@@ -66,7 +71,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     return 1 if any(f.severity in BLOCKING for f in res.findings) else 0
 
 
-def render_fix_json(run: FixRun) -> str:
+def fix_to_dict(run: FixRun) -> dict:
+    """The payload of ``fix --format json`` (also returned by the MCP ``fix_contract`` tool)."""
     data = {
         "tool": "bumm-guard",
         "version": __version__,
@@ -79,7 +85,11 @@ def render_fix_json(run: FixRun) -> str:
     if run.remaining is not None:
         data["remaining"] = {"summary": _summary(run.remaining.findings),
                              "findings": [f.to_dict() for f in run.remaining.findings]}
-    return json.dumps(data, indent=2)
+    return data
+
+
+def render_fix_json(run: FixRun) -> str:
+    return json.dumps(fix_to_dict(run), indent=2)
 
 
 def render_fix_text(run: FixRun) -> str:

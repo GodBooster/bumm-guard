@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "bumm-guard": {
+      "command": "bumm-guard-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}
