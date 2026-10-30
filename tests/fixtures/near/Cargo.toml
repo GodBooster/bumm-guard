@@ -1,0 +1,3 @@
+[workspace]
+members = ["proxy","d1_vuln","d1_safe","d2_vuln","d2_safe","d3_vuln","d3_safe"]
+resolver = "2"

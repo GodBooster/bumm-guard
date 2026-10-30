@@ -1,0 +1,67 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rulepack:
+    name: rule-pack tests (python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: unit tests
+        run: python -m unittest discover -s tests -v
+      - name: scan fixtures (expect 3 findings, exit 1)
+        run: |
+          set +e
+          python -m bumm_guard scan tests/fixtures/near --format json > scan.json
+          code=$?
+          set -e
+          python - <<'EOF'
+          import json, sys
+          d = json.load(open("scan.json"))
+          ids = sorted(f["rule_id"] for f in d["findings"])
+          assert ids == ["BG-NEAR-001", "BG-NEAR-002", "BG-NEAR-003"], ids
+          print("fixtures OK:", ids)
+          EOF
+          test "$code" -eq 1
+
+  fixtures-compile:
+    name: fixtures compile (cargo check, wasm32)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tests/fixtures/near
+      - name: cargo check (host)
+        working-directory: tests/fixtures/near
+        run: cargo check --workspace --locked
+      - name: cargo check (wasm32)
+        working-directory: tests/fixtures/near
+        run: cargo check --workspace --locked --target wasm32-unknown-unknown
+
+  # Sandbox tests (near-workspaces / near-sandbox) run only on Linux: near-sandbox has no
+  # Darwin-x86_64 binary. This job is enabled once contracts/ with sandbox tests exist.
+  sandbox:
+    name: sandbox tests (near-workspaces, linux only)
+    runs-on: ubuntu-latest
+    if: ${{ hashFiles('contracts/**/Cargo.toml') != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts
+      - name: cargo test
+        working-directory: contracts
+        run: cargo test --workspace --locked

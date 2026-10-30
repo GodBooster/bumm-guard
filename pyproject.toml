@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bumm-guard"
+version = "0.1.0"
+description = "Static analysis rule-pack for NEAR (near-sdk-rs 5.x) smart contracts: finds known defect classes before deploy."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "BUMM contributors" }]
+keywords = ["near", "smart-contracts", "security", "static-analysis", "rust"]
+dependencies = []
+
+[project.scripts]
+bumm-guard = "bumm_guard.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["bumm_guard*"]
