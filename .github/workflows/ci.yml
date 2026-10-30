@@ -53,15 +53,21 @@ jobs:
   sandbox:
     name: sandbox tests (near-workspaces, linux only)
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('contracts/**/Cargo.toml') != '' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - id: chk
+        name: contracts present?
+        run: |
+          if ls contracts/*/Cargo.toml contracts/Cargo.toml >/dev/null 2>&1; then echo "has=true" >> "$GITHUB_OUTPUT"; else echo "has=false" >> "$GITHUB_OUTPUT"; echo "no contracts/ yet - skipping"; fi
+      - if: steps.chk.outputs.has == 'true'
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+      - if: steps.chk.outputs.has == 'true'
+        uses: Swatinem/rust-cache@v2
         with:
           workspaces: contracts
-      - name: cargo test
+      - if: steps.chk.outputs.has == 'true'
+        name: cargo test
         working-directory: contracts
         run: cargo test --workspace --locked
