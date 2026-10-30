@@ -1,0 +1,3 @@
+[workspace]
+members = ["sandbox"]
+resolver = "2"
