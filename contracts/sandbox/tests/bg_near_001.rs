@@ -7,8 +7,12 @@ use std::{path::PathBuf, process::Command};
 fn build_fixtures() -> Result<PathBuf> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let target = root.join("contracts/target/fixtures");
+    // Run cargo from the fixtures directory with the harness's RUSTUP_TOOLCHAIN unset, so
+    // rustup picks tests/fixtures/near/rust-toolchain.toml (1.85.0): near-sdk 5.17.2 wasm
+    // host imports do not link on rustc 1.99 (undefined symbol: promise_batch_then ...).
     let status = Command::new("cargo")
-        .current_dir(&root)
+        .current_dir(root.join("tests/fixtures/near"))
+        .env_remove("RUSTUP_TOOLCHAIN")
         .args([
             "build",
             "--locked",
@@ -16,7 +20,7 @@ fn build_fixtures() -> Result<PathBuf> {
             "--target",
             "wasm32-unknown-unknown",
             "--manifest-path",
-            "tests/fixtures/near/Cargo.toml",
+            "Cargo.toml",
             "-p",
             "d1_vuln",
             "-p",
