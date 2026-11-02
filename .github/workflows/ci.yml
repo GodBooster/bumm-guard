@@ -40,6 +40,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+      - name: install the fixtures' pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install 1.85.0 --profile minimal --target wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: tests/fixtures/near
@@ -66,9 +68,14 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - if: steps.chk.outputs.has == 'true'
+        name: install the fixtures' pinned toolchain (built by the test as a subprocess)
+        run: rustup toolchain install 1.85.0 --profile minimal --target wasm32-unknown-unknown
+      - if: steps.chk.outputs.has == 'true'
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: contracts
+          workspaces: |
+            contracts
+            tests/fixtures/near
       - if: steps.chk.outputs.has == 'true'
         name: cargo test
         working-directory: contracts

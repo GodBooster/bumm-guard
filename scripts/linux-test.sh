@@ -22,6 +22,7 @@ fi
 exec docker run --rm \
   -v "$REPO_ROOT":/work \
   -v bumm-guard-cargo-registry:/usr/local/cargo/registry \
+  -v bumm-guard-rustup:/usr/local/rustup \
   -v bumm-guard-target:/work/"$WS"/target \
   -w /work/"$WS" \
   -e CARGO_TERM_COLOR=always \
