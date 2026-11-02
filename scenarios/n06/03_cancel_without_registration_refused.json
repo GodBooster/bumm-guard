@@ -1,0 +1,19 @@
+{
+  "name": "N06 cancel without registration refused",
+  "accounts": {"alice": "10 NEAR", "bob": "10 NEAR"},
+  "contract": {"wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration.wasm",
+               "init": {"method": "new", "args": {"capacity": 2}}},
+  "steps": [
+    {"call": "cancel", "by": "alice",
+     "expect": {"fail_contains": "is not registered"}},
+    {"call": "register", "by": "alice", "expect": "ok"},
+    {"call": "cancel", "by": "bob",
+     "expect": {"fail_contains": "is not registered"}},
+    {"view": "get_registered_count", "expect": {"equals": 1}},
+    {"view": "get_seats_left", "expect": {"equals": 1}},
+    {"call": "cancel", "by": "alice", "expect": "ok"},
+    {"call": "cancel", "by": "alice",
+     "expect": {"fail_contains": "is not registered"}},
+    {"view": "get_registered_count", "expect": {"equals": 0}}
+  ]
+}

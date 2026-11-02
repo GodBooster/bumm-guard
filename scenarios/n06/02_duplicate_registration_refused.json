@@ -1,0 +1,16 @@
+{
+  "name": "N06 duplicate registration refused",
+  "accounts": {"alice": "10 NEAR", "bob": "10 NEAR"},
+  "contract": {"wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration.wasm",
+               "init": {"method": "new", "args": {"capacity": 2}}},
+  "steps": [
+    {"call": "register", "by": "alice", "expect": "ok"},
+    {"call": "register", "by": "alice",
+     "expect": {"fail_contains": "is already registered"}},
+    {"view": "get_registered_count", "expect": {"equals": 1}},
+    {"view": "get_registered", "expect": {"equals": ["alice"]}},
+    {"view": "is_registered", "args": {"account_id": "bob"}, "expect": {"equals": false}},
+    {"call": "register", "by": "bob", "expect": "ok"},
+    {"view": "get_seats_left", "expect": {"equals": 0}}
+  ]
+}

@@ -1,0 +1,24 @@
+[package]
+name = "bumm-sim"
+version = "0.4.0"
+edition = "2021"
+publish = false
+description = "BUMM Guard scenario runner: executes docs/FORMATS.md section 2 scenario files on a local near-sandbox and writes the section 3 report."
+
+[lib]
+name = "bumm_sim"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bumm-sim"
+path = "src/main.rs"
+
+# Same versions as contracts/sandbox (already in Cargo.lock); serde and sha2 are also
+# already locked as transitive dependencies of near-workspaces, so nothing new is fetched.
+[dependencies]
+anyhow = "1"
+near-workspaces = "=0.24.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

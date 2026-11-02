@@ -57,7 +57,7 @@ class FixtureTests(unittest.TestCase):
     def test_whole_fixture_dir_has_three_findings(self):
         res = scan([str(FIXTURES)])
         self.assertEqual(sorted(f.rule_id for f in res.findings), sorted(EXPECTED.values()))
-        self.assertEqual(res.files_scanned, 7)
+        self.assertEqual(res.files_scanned, 8)  # 7 detector fixtures + event_registration (clean)
 
 
 class NonPrivateCallbackTests(unittest.TestCase):

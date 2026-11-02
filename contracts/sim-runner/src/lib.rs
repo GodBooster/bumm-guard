@@ -1,0 +1,1034 @@
+//! Sandbox-free part of `bumm-sim`: scenario parsing (docs/FORMATS.md section 2), amount
+//! parsing, expectation evaluation, hashing and the report model (section 3).
+//!
+//! Everything here is pure so it can be unit-tested without starting near-sandbox
+//! (`cargo test -p bumm-sim --lib`). `main.rs` only adds the near-workspaces calls.
+
+use serde::Serialize;
+use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+pub const TOOL: &str = "bumm-guard";
+pub const RUNNER_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Pinned in contracts/sim-runner/Cargo.toml (`=0.24.0`) and contracts/Cargo.lock.
+pub const NEAR_WORKSPACES_VERSION: &str = "0.24.0";
+/// near-sandbox crate version resolved in contracts/Cargo.lock for near-workspaces 0.24.0.
+pub const NEAR_SANDBOX_VERSION: &str = "0.4.0";
+
+pub const YOCTO_PER_NEAR: u128 = 1_000_000_000_000_000_000_000_000;
+pub const GAS_PER_TGAS: u64 = 1_000_000_000_000;
+pub const DEFAULT_GAS: u64 = 30 * GAS_PER_TGAS;
+/// The contract is deployed to the sub-account `contract.<root>`; scenarios refer to it as
+/// `"contract"` (caller for self-calls, `balance` target, alias in args/expectations).
+pub const CONTRACT_ALIAS: &str = "contract";
+/// Initial balance of the contract account. Covers storage staking for a ~200 KB wasm
+/// (about 2 NEAR at 10^19 yocto/byte) with a wide margin. Not part of the scenario format.
+pub const CONTRACT_INITIAL_BALANCE: u128 = 50 * YOCTO_PER_NEAR;
+
+// ---------------------------------------------------------------------------------------
+// Amounts
+// ---------------------------------------------------------------------------------------
+
+/// Parse a decimal string with at most `scale` fractional digits into an integer scaled by
+/// `10^scale`. Exact (no floating point).
+fn parse_scaled(num: &str, scale: u32, what: &str) -> Result<u128, String> {
+    let (int_part, frac_part) = match num.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => (num, ""),
+    };
+    let digits_ok = |s: &str| s.chars().all(|c| c.is_ascii_digit());
+    if (int_part.is_empty() && frac_part.is_empty()) || !digits_ok(int_part) || !digits_ok(frac_part) {
+        return Err(format!("bad {what} {num:?}: expected a non-negative decimal number"));
+    }
+    if frac_part.len() as u32 > scale {
+        return Err(format!("bad {what} {num:?}: more than {scale} decimal places"));
+    }
+    let overflow = || format!("bad {what} {num:?}: value too large");
+    let int_v: u128 = if int_part.is_empty() { 0 } else { int_part.parse().map_err(|_| overflow())? };
+    let mut frac_v: u128 = if frac_part.is_empty() { 0 } else { frac_part.parse().map_err(|_| overflow())? };
+    frac_v = frac_v
+        .checked_mul(10u128.pow(scale - frac_part.len() as u32))
+        .ok_or_else(overflow)?;
+    int_v
+        .checked_mul(10u128.pow(scale))
+        .and_then(|v| v.checked_add(frac_v))
+        .ok_or_else(overflow)
+}
+
+/// NEAR amount: a yoctoNEAR integer string (`"1000"`) or `"<decimal> NEAR"` (`"1.5 NEAR"`).
+pub fn parse_near_amount(s: &str) -> Result<u128, String> {
+    let t = s.trim();
+    if let Some(num) = strip_suffix_ci(t, "NEAR") {
+        return parse_scaled(num.trim_end(), 24, "NEAR amount");
+    }
+    if !t.is_empty() && t.chars().all(|c| c.is_ascii_digit()) {
+        return t
+            .parse::<u128>()
+            .map_err(|_| format!("bad NEAR amount {s:?}: value too large"));
+    }
+    Err(format!(
+        "bad NEAR amount {s:?}: expected a yoctoNEAR integer string like \"1000\" or \"<decimal> NEAR\" like \"1.5 NEAR\""
+    ))
+}
+
+/// Gas: a raw gas integer string or `"<decimal> Tgas"` (`"30 Tgas"`).
+pub fn parse_gas(s: &str) -> Result<u64, String> {
+    let t = s.trim();
+    let v: u128 = if let Some(num) = strip_suffix_ci(t, "Tgas") {
+        parse_scaled(num.trim_end(), 12, "gas")?
+    } else if !t.is_empty() && t.chars().all(|c| c.is_ascii_digit()) {
+        t.parse::<u128>().map_err(|_| format!("bad gas {s:?}: value too large"))?
+    } else {
+        return Err(format!("bad gas {s:?}: expected a gas integer string or \"<n> Tgas\" like \"30 Tgas\""));
+    };
+    u64::try_from(v).map_err(|_| format!("bad gas {s:?}: value too large"))
+}
+
+fn strip_suffix_ci<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
+    if s.len() >= suffix.len() && s.is_char_boundary(s.len() - suffix.len()) {
+        let (head, tail) = s.split_at(s.len() - suffix.len());
+        if tail.eq_ignore_ascii_case(suffix) {
+            return Some(head);
+        }
+    }
+    None
+}
+
+/// `1_500_000_000_000_000_000_000_000` -> `"1.5"`; for human-readable report fields only.
+pub fn format_near(yocto: u128) -> String {
+    let int = yocto / YOCTO_PER_NEAR;
+    let frac = yocto % YOCTO_PER_NEAR;
+    if frac == 0 {
+        return int.to_string();
+    }
+    let f = format!("{frac:024}");
+    format!("{int}.{}", f.trim_end_matches('0'))
+}
+
+pub fn gas_to_tgas(gas: u64) -> f64 {
+    ((gas as f64 / GAS_PER_TGAS as f64) * 1000.0).round() / 1000.0
+}
+
+// ---------------------------------------------------------------------------------------
+// Scenario model and parser
+// ---------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Scenario {
+    pub name: String,
+    /// alias -> initial balance in yoctoNEAR (BTreeMap: deterministic creation order)
+    pub accounts: BTreeMap<String, u128>,
+    pub wasm: String,
+    pub init: Option<Init>,
+    pub steps: Vec<Step>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Init {
+    pub method: String,
+    pub args: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Step {
+    pub index: usize,
+    pub kind: StepKind,
+    pub expect: Expect,
+    /// The `expect` value exactly as written (echoed into the report as `expected`).
+    pub expect_raw: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum StepKind {
+    Call { method: String, by: String, args: Value, deposit: u128, gas: u64 },
+    View { method: String, args: Value },
+    Balance { account: String },
+}
+
+impl StepKind {
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            StepKind::Call { .. } => "call",
+            StepKind::View { .. } => "view",
+            StepKind::Balance { .. } => "balance",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expect {
+    Ok,
+    FailContains(String),
+    Equals(Value),
+    Contains(Value),
+    AtLeast(u128),
+    AtMost(u128),
+}
+
+const TOP_KEYS: &[&str] = &["name", "description", "accounts", "contract", "steps"];
+const CONTRACT_KEYS: &[&str] = &["wasm", "init"];
+const INIT_KEYS: &[&str] = &["method", "args"];
+const CALL_KEYS: &[&str] = &["call", "by", "args", "deposit", "gas", "expect"];
+const VIEW_KEYS: &[&str] = &["view", "args", "expect"];
+const BALANCE_KEYS: &[&str] = &["balance", "expect"];
+const STEP_KINDS: &[&str] = &["call", "view", "balance"];
+
+fn check_keys(obj: &Map<String, Value>, allowed: &[&str], ctx: &str) -> Result<(), String> {
+    for k in obj.keys() {
+        if !allowed.contains(&k.as_str()) {
+            return Err(format!("{ctx}: unknown field {k:?} (allowed: {})", allowed.join(", ")));
+        }
+    }
+    Ok(())
+}
+
+fn req_str<'a>(obj: &'a Map<String, Value>, key: &str, ctx: &str) -> Result<&'a str, String> {
+    match obj.get(key) {
+        Some(Value::String(s)) if !s.is_empty() => Ok(s),
+        Some(_) => Err(format!("{ctx}: {key:?} must be a non-empty string")),
+        None => Err(format!("{ctx}: missing {key:?}")),
+    }
+}
+
+fn args_of(obj: &Map<String, Value>, ctx: &str) -> Result<Value, String> {
+    match obj.get("args") {
+        None | Some(Value::Null) => Ok(Value::Object(Map::new())),
+        Some(v @ Value::Object(_)) => Ok(v.clone()),
+        Some(_) => Err(format!("{ctx}: \"args\" must be a JSON object")),
+    }
+}
+
+/// Sub-account prefix: what `create_subaccount` accepts as one id part.
+pub fn valid_alias(a: &str) -> bool {
+    let b = a.as_bytes();
+    !b.is_empty()
+        && b.len() <= 32
+        && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-' || *c == b'_')
+        && b[0].is_ascii_alphanumeric()
+        && b[b.len() - 1].is_ascii_alphanumeric()
+        && !a.contains("--")
+        && !a.contains("__")
+        && !a.contains("-_")
+        && !a.contains("_-")
+}
+
+fn amount_value(v: &Value, ctx: &str) -> Result<u128, String> {
+    match v {
+        Value::String(s) => parse_near_amount(s).map_err(|e| format!("{ctx}: {e}")),
+        Value::Number(n) => n
+            .as_u64()
+            .map(u128::from)
+            .ok_or_else(|| format!("{ctx}: bad amount {n}: expected a non-negative integer or amount string")),
+        _ => Err(format!("{ctx}: amount must be a string like \"9 NEAR\" or a yoctoNEAR integer string")),
+    }
+}
+
+pub fn parse_expect(v: Option<&Value>, ctx: &str) -> Result<(Expect, Value), String> {
+    let v = match v {
+        None => return Ok((Expect::Ok, Value::String("ok".into()))),
+        Some(v) => v,
+    };
+    let e = match v {
+        Value::String(s) if s == "ok" => Expect::Ok,
+        Value::Object(o) if o.len() == 1 => {
+            let (k, val) = o.iter().next().expect("len 1");
+            match k.as_str() {
+                "fail_contains" => match val {
+                    Value::String(s) if !s.is_empty() => Expect::FailContains(s.clone()),
+                    _ => return Err(format!("{ctx}: \"fail_contains\" must be a non-empty string")),
+                },
+                "equals" => Expect::Equals(val.clone()),
+                "contains" => Expect::Contains(val.clone()),
+                "at_least" => Expect::AtLeast(amount_value(val, ctx)?),
+                "at_most" => Expect::AtMost(amount_value(val, ctx)?),
+                other => {
+                    return Err(format!(
+                        "{ctx}: unknown expectation {other:?} (allowed: \"ok\", fail_contains, equals, contains, at_least, at_most)"
+                    ))
+                }
+            }
+        }
+        _ => {
+            return Err(format!(
+                "{ctx}: expect must be \"ok\" or an object with exactly one of fail_contains, equals, contains, at_least, at_most"
+            ))
+        }
+    };
+    Ok((e, v.clone()))
+}
+
+/// Parse and validate one scenario file (FORMATS section 2). Errors name the step index
+/// (0-based, as in the report) and the offending field.
+pub fn parse_scenario(text: &str) -> Result<Scenario, String> {
+    let root: Value = serde_json::from_str(text).map_err(|e| format!("invalid JSON: {e}"))?;
+    let obj = root.as_object().ok_or("scenario must be a JSON object")?;
+    check_keys(obj, TOP_KEYS, "scenario")?;
+    let name = req_str(obj, "name", "scenario")?.to_string();
+
+    let mut accounts = BTreeMap::new();
+    match obj.get("accounts") {
+        Some(Value::Object(a)) => {
+            for (alias, bal) in a {
+                if alias == CONTRACT_ALIAS {
+                    return Err(format!("accounts: {CONTRACT_ALIAS:?} is reserved for the contract account"));
+                }
+                if !valid_alias(alias) {
+                    return Err(format!(
+                        "accounts: bad account name {alias:?}: use 1-32 chars of a-z, 0-9, '-', '_' (no dots)"
+                    ));
+                }
+                let bal = match bal {
+                    Value::String(s) => parse_near_amount(s).map_err(|e| format!("accounts.{alias}: {e}"))?,
+                    _ => return Err(format!("accounts.{alias}: balance must be a string like \"10 NEAR\"")),
+                };
+                accounts.insert(alias.clone(), bal);
+            }
+        }
+        Some(_) => return Err("accounts must be an object {name: balance}".into()),
+        None => return Err("scenario: missing \"accounts\"".into()),
+    }
+
+    let contract = match obj.get("contract") {
+        Some(Value::Object(c)) => c,
+        Some(_) => return Err("contract must be an object".into()),
+        None => return Err("scenario: missing \"contract\"".into()),
+    };
+    check_keys(contract, CONTRACT_KEYS, "contract")?;
+    let wasm = req_str(contract, "wasm", "contract")?.to_string();
+    let init = match contract.get("init") {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(i)) => {
+            check_keys(i, INIT_KEYS, "contract.init")?;
+            Some(Init {
+                method: req_str(i, "method", "contract.init")?.to_string(),
+                args: args_of(i, "contract.init")?,
+            })
+        }
+        Some(_) => return Err("contract.init must be an object {method, args}".into()),
+    };
+
+    let known = |a: &str| a == CONTRACT_ALIAS || accounts.contains_key(a);
+    let known_list = || {
+        let mut v: Vec<&str> = accounts.keys().map(String::as_str).collect();
+        v.push(CONTRACT_ALIAS);
+        v.join(", ")
+    };
+
+    let raw_steps = match obj.get("steps") {
+        Some(Value::Array(s)) => s,
+        Some(_) => return Err("steps must be an array".into()),
+        None => return Err("scenario: missing \"steps\"".into()),
+    };
+    let mut steps = Vec::with_capacity(raw_steps.len());
+    for (index, raw) in raw_steps.iter().enumerate() {
+        let ctx = format!("step {index}");
+        let s = raw.as_object().ok_or_else(|| format!("{ctx}: must be a JSON object"))?;
+        let kinds: Vec<&str> = STEP_KINDS.iter().copied().filter(|k| s.contains_key(*k)).collect();
+        let kind = match kinds.as_slice() {
+            [k] => *k,
+            [] => {
+                let keys: Vec<&str> = s.keys().map(String::as_str).collect();
+                return Err(format!(
+                    "{ctx}: unknown step kind (expected exactly one of call, view, balance; got keys: {})",
+                    keys.join(", ")
+                ));
+            }
+            _ => return Err(format!("{ctx}: more than one step kind ({})", kinds.join(", "))),
+        };
+        let (expect, expect_raw) = parse_expect(s.get("expect"), &ctx)?;
+        let kind = match kind {
+            "call" => {
+                check_keys(s, CALL_KEYS, &ctx)?;
+                let method = req_str(s, "call", &ctx)?.to_string();
+                let by = req_str(s, "by", &ctx)?.to_string();
+                if !known(&by) {
+                    return Err(format!("{ctx}: unknown account {by:?} in \"by\" (known: {})", known_list()));
+                }
+                let deposit = match s.get("deposit") {
+                    None => 0,
+                    Some(Value::String(d)) => parse_near_amount(d).map_err(|e| format!("{ctx}: deposit: {e}"))?,
+                    Some(_) => return Err(format!("{ctx}: deposit must be a string like \"0\" or \"1 NEAR\"")),
+                };
+                let gas = match s.get("gas") {
+                    None => DEFAULT_GAS,
+                    Some(Value::String(g)) => parse_gas(g).map_err(|e| format!("{ctx}: gas: {e}"))?,
+                    Some(_) => return Err(format!("{ctx}: gas must be a string like \"30 Tgas\"")),
+                };
+                StepKind::Call { method, by, args: args_of(s, &ctx)?, deposit, gas }
+            }
+            "view" => {
+                check_keys(s, VIEW_KEYS, &ctx)?;
+                StepKind::View { method: req_str(s, "view", &ctx)?.to_string(), args: args_of(s, &ctx)? }
+            }
+            _ => {
+                check_keys(s, BALANCE_KEYS, &ctx)?;
+                let account = req_str(s, "balance", &ctx)?.to_string();
+                if !known(&account) {
+                    return Err(format!("{ctx}: unknown account {account:?} in \"balance\" (known: {})", known_list()));
+                }
+                StepKind::Balance { account }
+            }
+        };
+        if matches!(kind, StepKind::Balance { .. })
+            && matches!(expect, Expect::FailContains(_) | Expect::Contains(_))
+        {
+            return Err(format!("{ctx}: a balance step supports ok, equals, at_least, at_most"));
+        }
+        steps.push(Step { index, kind, expect, expect_raw });
+    }
+    Ok(Scenario { name, accounts, wasm, init, steps })
+}
+
+// ---------------------------------------------------------------------------------------
+// Aliases, actual results, expectation evaluation
+// ---------------------------------------------------------------------------------------
+
+/// Replace every JSON string that exactly equals an account alias (or `"contract"`) with the
+/// full sandbox account id, recursively. Used for call/view args and expected values, so
+/// `{"contains": "carol"}` matches `["carol.test.near"]`.
+pub fn resolve_aliases(v: &Value, aliases: &BTreeMap<String, String>) -> Value {
+    match v {
+        Value::String(s) => Value::String(aliases.get(s).cloned().unwrap_or_else(|| s.clone())),
+        Value::Array(a) => Value::Array(a.iter().map(|x| resolve_aliases(x, aliases)).collect()),
+        Value::Object(o) => Value::Object(o.iter().map(|(k, x)| (k.clone(), resolve_aliases(x, aliases))).collect()),
+        other => other.clone(),
+    }
+}
+
+/// What the chain returned for one step. Always filled; `status` is `success`, `failure`
+/// or `skipped` (not executed because the sandbox/init failed earlier).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Actual {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Return value as JSON (`null` for an empty return). Balance steps: yoctoNEAR string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<Value>,
+    /// true when the return bytes were not JSON; `value` then holds them as a lossy UTF-8 string.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub value_not_json: bool,
+    /// Balance steps: the same balance in NEAR, for reading.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub near: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gas_burnt_tgas: Option<f64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub logs: Vec<String>,
+    /// Debug form of the error, only used for matching when `error` (Display) misses the text.
+    #[serde(skip)]
+    pub error_debug: Option<String>,
+}
+
+impl Actual {
+    pub fn success(value: Option<Value>) -> Self {
+        Actual { status: "success".into(), value, ..Default::default() }
+    }
+    pub fn failure(error: impl Into<String>) -> Self {
+        Actual { status: "failure".into(), error: Some(error.into()), ..Default::default() }
+    }
+    pub fn skipped(reason: impl Into<String>) -> Self {
+        Actual { status: "skipped".into(), error: Some(reason.into()), ..Default::default() }
+    }
+    pub fn is_success(&self) -> bool {
+        self.status == "success"
+    }
+    /// Convert raw return bytes into `value` (JSON if possible).
+    pub fn from_return_bytes(bytes: &[u8]) -> Self {
+        if bytes.is_empty() {
+            return Actual::success(Some(Value::Null));
+        }
+        match serde_json::from_slice::<Value>(bytes) {
+            Ok(v) => Actual::success(Some(v)),
+            Err(_) => Actual {
+                value_not_json: true,
+                ..Actual::success(Some(Value::String(String::from_utf8_lossy(bytes).into_owned())))
+            },
+        }
+    }
+}
+
+fn json_eq(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => match (x.as_i64(), y.as_i64()) {
+            (Some(i), Some(j)) => i == j,
+            _ => match (x.as_u64(), y.as_u64()) {
+                (Some(i), Some(j)) => i == j,
+                _ => x.as_f64() == y.as_f64(),
+            },
+        },
+        (Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(p, q)| json_eq(p, q)),
+        (Value::Object(x), Value::Object(y)) => {
+            x.len() == y.len() && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| json_eq(v, w)))
+        }
+        _ => a == b,
+    }
+}
+
+fn json_contains(actual: &Value, expected: &Value) -> bool {
+    match (actual, expected) {
+        (Value::Array(items), Value::Array(wanted)) => {
+            wanted.iter().all(|w| items.iter().any(|i| json_eq(i, w)))
+        }
+        (Value::Array(items), w) => items.iter().any(|i| json_eq(i, w)),
+        (Value::String(s), Value::String(w)) => s.contains(w.as_str()),
+        (Value::Object(o), Value::String(k)) => o.contains_key(k),
+        (Value::Object(o), Value::Object(w)) => w.iter().all(|(k, v)| o.get(k).is_some_and(|x| json_eq(x, v))),
+        _ => false,
+    }
+}
+
+/// Numeric view of a returned value: JSON integer or integer string (NEAR U128 is a string).
+fn as_amount(v: &Value) -> Option<u128> {
+    match v {
+        Value::Number(n) => n.as_u64().map(u128::from),
+        Value::String(s) => s.trim().parse::<u128>().ok(),
+        _ => None,
+    }
+}
+
+/// Evaluate one expectation. Returns (passed, reason-if-failed).
+pub fn evaluate(expect: &Expect, actual: &Actual, aliases: &BTreeMap<String, String>) -> (bool, Option<String>) {
+    let fail = |r: String| (false, Some(r));
+    if actual.status == "skipped" {
+        return fail("step not executed".into());
+    }
+    if let Expect::FailContains(needle) = expect {
+        if actual.is_success() {
+            return fail(format!("expected a failure containing {needle:?}, but the call succeeded"));
+        }
+        let hit = actual.error.as_deref().is_some_and(|e| e.contains(needle.as_str()))
+            || actual.error_debug.as_deref().is_some_and(|e| e.contains(needle.as_str()));
+        return if hit { (true, None) } else { fail(format!("failed, but the error does not contain {needle:?}")) };
+    }
+    if !actual.is_success() {
+        return fail(format!(
+            "expected success, got failure: {}",
+            actual.error.as_deref().unwrap_or("(no error text)")
+        ));
+    }
+    let value = actual.value.clone().unwrap_or(Value::Null);
+    match expect {
+        Expect::Ok => (true, None),
+        Expect::Equals(want) => {
+            let want = resolve_aliases(want, aliases);
+            if json_eq(&value, &want) { (true, None) } else { fail(format!("expected {want}, got {value}")) }
+        }
+        Expect::Contains(want) => {
+            let want = resolve_aliases(want, aliases);
+            if json_contains(&value, &want) { (true, None) } else { fail(format!("{value} does not contain {want}")) }
+        }
+        Expect::AtLeast(min) => match as_amount(&value) {
+            Some(n) if n >= *min => (true, None),
+            Some(n) => fail(format!("{n} < {min}")),
+            None => fail(format!("{value} is not an integer amount")),
+        },
+        Expect::AtMost(max) => match as_amount(&value) {
+            Some(n) if n <= *max => (true, None),
+            Some(n) => fail(format!("{n} > {max}")),
+            None => fail(format!("{value} is not an integer amount")),
+        },
+        Expect::FailContains(_) => unreachable!("handled above"),
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Report (FORMATS section 3)
+// ---------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StepResult {
+    pub index: usize,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+    pub passed: bool,
+    pub expected: Value,
+    pub actual: Actual,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl StepResult {
+    pub fn new(step: &Step, actual: Actual, aliases: &BTreeMap<String, String>) -> Self {
+        let (passed, reason) = evaluate(&step.expect, &actual, aliases);
+        let (method, by, account) = match &step.kind {
+            StepKind::Call { method, by, .. } => (Some(method.clone()), Some(by.clone()), None),
+            StepKind::View { method, .. } => (Some(method.clone()), None, None),
+            StepKind::Balance { account } => (None, None, Some(account.clone())),
+        };
+        StepResult {
+            index: step.index,
+            kind: step.kind.kind_name().into(),
+            method,
+            by,
+            account,
+            passed,
+            expected: step.expect_raw.clone(),
+            actual,
+            reason,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InitResult {
+    pub method: String,
+    pub passed: bool,
+    pub actual: Actual,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ScenarioResult {
+    pub name: String,
+    pub file: String,
+    pub scenario_sha256: String,
+    pub wasm: String,
+    pub wasm_sha256: Option<String>,
+    pub passed: bool,
+    pub duration_s: f64,
+    /// Infrastructure error (sandbox start, account creation, deploy, missing wasm).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// alias -> sandbox account id
+    pub accounts: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub init: Option<InitResult>,
+    pub steps: Vec<StepResult>,
+}
+
+impl ScenarioResult {
+    /// Fill steps that were never executed (infra/init failure) with `skipped`, then set
+    /// `passed`. Every step of the file therefore appears in the report.
+    pub fn finish(&mut self, sc: &Scenario, aliases: &BTreeMap<String, String>, duration_s: f64) {
+        let reason = match (&self.error, &self.init) {
+            (Some(e), _) => format!("not executed: {e}"),
+            (None, Some(i)) if !i.passed => "not executed: init failed".to_string(),
+            _ => "not executed".to_string(),
+        };
+        for step in sc.steps.iter().skip(self.steps.len()) {
+            self.steps.push(StepResult::new(step, Actual::skipped(reason.clone()), aliases));
+        }
+        self.passed = self.error.is_none()
+            && self.init.as_ref().is_none_or(|i| i.passed)
+            && self.steps.iter().all(|s| s.passed);
+        self.duration_s = (duration_s * 10.0).round() / 10.0;
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Summary {
+    pub scenarios: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub steps: usize,
+    pub steps_failed: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SandboxInfo {
+    pub near_workspaces: &'static str,
+    pub near_sandbox: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Report {
+    pub tool: &'static str,
+    pub version: &'static str,
+    pub runner: String,
+    /// Shared wasm hash of all scenarios; `null` if they use different wasm files or none was read.
+    pub wasm_sha256: Option<String>,
+    /// See [`combined_sha256`].
+    pub scenario_sha256: String,
+    pub sandbox: SandboxInfo,
+    pub scenarios: Vec<ScenarioResult>,
+    pub summary: Summary,
+}
+
+pub fn summarize(results: &[ScenarioResult]) -> Summary {
+    let passed = results.iter().filter(|r| r.passed).count();
+    Summary {
+        scenarios: results.len(),
+        passed,
+        failed: results.len() - passed,
+        steps: results.iter().map(|r| r.steps.len()).sum(),
+        steps_failed: results.iter().map(|r| r.steps.iter().filter(|s| !s.passed).count()).sum(),
+    }
+}
+
+pub fn build_report(results: Vec<ScenarioResult>) -> Report {
+    let mut wasm_hashes: Vec<Option<&String>> = results.iter().map(|r| r.wasm_sha256.as_ref()).collect();
+    wasm_hashes.dedup();
+    let wasm_sha256 = match wasm_hashes.as_slice() {
+        [Some(h)] => Some((*h).clone()),
+        _ => None,
+    };
+    let file_hashes: Vec<String> = results.iter().map(|r| r.scenario_sha256.clone()).collect();
+    Report {
+        tool: TOOL,
+        version: RUNNER_VERSION,
+        runner: format!("bumm-sim {RUNNER_VERSION}"),
+        wasm_sha256,
+        scenario_sha256: combined_sha256(&file_hashes),
+        sandbox: SandboxInfo { near_workspaces: NEAR_WORKSPACES_VERSION, near_sandbox: NEAR_SANDBOX_VERSION },
+        summary: summarize(&results),
+        scenarios: results,
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Hashing, paths, CLI
+// ---------------------------------------------------------------------------------------
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Report-level `scenario_sha256`: the file's sha256 for one file; for several files the
+/// sha256 of their hex digests, sorted, joined with `\n` (order of `--scenario` irrelevant).
+/// `bumm_guard/simulate.py` computes the same value.
+pub fn combined_sha256(file_hashes: &[String]) -> String {
+    match file_hashes {
+        [one] => one.clone(),
+        many => {
+            let mut v: Vec<&str> = many.iter().map(String::as_str).collect();
+            v.sort_unstable();
+            sha256_hex(v.join("\n").as_bytes())
+        }
+    }
+}
+
+/// Locate the wasm: `--wasm` override; absolute path; relative to the current directory
+/// (normally the repository root); else relative to the scenario file's directory.
+pub fn resolve_wasm(spec: &str, scenario_file: &Path, override_path: Option<&Path>) -> PathBuf {
+    if let Some(p) = override_path {
+        return p.to_path_buf();
+    }
+    let p = Path::new(spec);
+    if p.is_absolute() || p.exists() {
+        return p.to_path_buf();
+    }
+    if let Some(dir) = scenario_file.parent() {
+        let q = dir.join(p);
+        if q.exists() {
+            return q;
+        }
+    }
+    p.to_path_buf()
+}
+
+pub const USAGE: &str = "usage: bumm-sim run --scenario <file.json> [--scenario <file.json> ...] --out <report.json> [--wasm <file.wasm>]
+
+Runs each scenario file (docs/FORMATS.md section 2) in its own fresh near-sandbox and writes
+the section 3 report. Exit: 0 all scenarios passed, 1 a scenario failed, 2 usage/parse error.";
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Command {
+    Help,
+    Version,
+    Run { scenarios: Vec<PathBuf>, out: PathBuf, wasm: Option<PathBuf> },
+}
+
+pub fn parse_args(args: &[String]) -> Result<Command, String> {
+    let mut it = args.iter();
+    match it.next().map(String::as_str) {
+        None => return Err("missing command".into()),
+        Some("-h" | "--help" | "help") => return Ok(Command::Help),
+        Some("-V" | "--version") => return Ok(Command::Version),
+        Some("run") => {}
+        Some(other) => return Err(format!("unknown command {other:?}")),
+    }
+    let (mut scenarios, mut out, mut wasm) = (Vec::new(), None, None);
+    while let Some(a) = it.next() {
+        let mut value = |flag: &str| it.next().cloned().ok_or_else(|| format!("{flag} needs a value"));
+        match a.as_str() {
+            "--scenario" => scenarios.push(PathBuf::from(value("--scenario")?)),
+            "--out" => out = Some(PathBuf::from(value("--out")?)),
+            "--wasm" => wasm = Some(PathBuf::from(value("--wasm")?)),
+            "-h" | "--help" => return Ok(Command::Help),
+            other => return Err(format!("unknown argument {other:?}")),
+        }
+    }
+    if scenarios.is_empty() {
+        return Err("at least one --scenario is required".into());
+    }
+    let out = out.ok_or("--out is required")?;
+    Ok(Command::Run { scenarios, out, wasm })
+}
+
+// ---------------------------------------------------------------------------------------
+// Tests (no sandbox)
+// ---------------------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    const N06: &str = r#"{
+      "name": "N06 capacity 2, third refused, cancel frees a seat",
+      "accounts": {"alice": "10 NEAR", "bob": "10 NEAR", "carol": "10 NEAR"},
+      "contract": {"wasm": "target/near/event_registration.wasm",
+                   "init": {"method": "new", "args": {"capacity": 2}}},
+      "steps": [
+        {"call": "register", "by": "alice", "args": {}, "deposit": "0", "gas": "30 Tgas", "expect": "ok"},
+        {"call": "register", "by": "bob", "expect": "ok"},
+        {"call": "register", "by": "carol", "expect": {"fail_contains": "Event is full"}},
+        {"view": "get_registered_count", "expect": {"equals": 2}},
+        {"call": "cancel", "by": "alice", "expect": "ok"},
+        {"call": "register", "by": "carol", "expect": "ok"},
+        {"view": "get_registered", "expect": {"contains": "carol"}},
+        {"balance": "bob", "expect": {"at_least": "9 NEAR"}}
+      ]
+    }"#;
+
+    fn aliases() -> BTreeMap<String, String> {
+        [("alice", "alice.test.near"), ("carol", "carol.test.near"), ("contract", "contract.test.near")]
+            .into_iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn near_amounts() {
+        assert_eq!(parse_near_amount("1 NEAR").unwrap(), YOCTO_PER_NEAR);
+        assert_eq!(parse_near_amount("10 NEAR").unwrap(), 10 * YOCTO_PER_NEAR);
+        assert_eq!(parse_near_amount("1.5 NEAR").unwrap(), 15 * YOCTO_PER_NEAR / 10);
+        assert_eq!(parse_near_amount("0.000000000000000000000001 NEAR").unwrap(), 1);
+        assert_eq!(parse_near_amount(" 2near ").unwrap(), 2 * YOCTO_PER_NEAR);
+        assert_eq!(parse_near_amount("0").unwrap(), 0);
+        assert_eq!(parse_near_amount("1000").unwrap(), 1000);
+        for bad in ["", "NEAR", "-1", "1e3", "1.5", "1,5 NEAR", "abc", "0.0000000000000000000000001 NEAR", "1 ETH"] {
+            assert!(parse_near_amount(bad).is_err(), "{bad:?} must be rejected");
+        }
+        assert!(parse_near_amount("999999999999999999999999 NEAR").is_err(), "overflow");
+    }
+
+    #[test]
+    fn gas_values() {
+        assert_eq!(parse_gas("30 Tgas").unwrap(), DEFAULT_GAS);
+        assert_eq!(parse_gas("2.5 Tgas").unwrap(), 2_500_000_000_000);
+        assert_eq!(parse_gas("300TGAS").unwrap(), 300 * GAS_PER_TGAS);
+        assert_eq!(parse_gas("1000").unwrap(), 1000);
+        assert!(parse_gas("30 Ggas").is_err());
+        assert!(parse_gas("99999999999 Tgas").is_err(), "u64 overflow");
+        assert_eq!(gas_to_tgas(2_912_345_678_901), 2.912);
+    }
+
+    #[test]
+    fn format_near_readable() {
+        assert_eq!(format_near(10 * YOCTO_PER_NEAR), "10");
+        assert_eq!(format_near(15 * YOCTO_PER_NEAR / 10), "1.5");
+        assert_eq!(format_near(1), "0.000000000000000000000001");
+    }
+
+    #[test]
+    fn parses_the_formats_example() {
+        let sc = parse_scenario(N06).unwrap();
+        assert_eq!(sc.accounts.len(), 3);
+        assert_eq!(sc.accounts["alice"], 10 * YOCTO_PER_NEAR);
+        assert_eq!(sc.init, Some(Init { method: "new".into(), args: json!({"capacity": 2}) }));
+        assert_eq!(sc.steps.len(), 8);
+        assert_eq!(
+            sc.steps[1].kind,
+            StepKind::Call { method: "register".into(), by: "bob".into(), args: json!({}), deposit: 0, gas: DEFAULT_GAS }
+        );
+        assert_eq!(sc.steps[2].expect, Expect::FailContains("Event is full".into()));
+        assert_eq!(sc.steps[2].expect_raw, json!({"fail_contains": "Event is full"}));
+        assert_eq!(sc.steps[7].kind, StepKind::Balance { account: "bob".into() });
+        assert_eq!(sc.steps[7].expect, Expect::AtLeast(9 * YOCTO_PER_NEAR));
+        assert_eq!(sc.steps[3].index, 3);
+    }
+
+    fn with_step(step: &str) -> String {
+        format!(
+            r#"{{"name":"t","accounts":{{"alice":"1 NEAR"}},"contract":{{"wasm":"x.wasm"}},"steps":[{step}]}}"#
+        )
+    }
+
+    #[test]
+    fn parse_errors_are_specific() {
+        let cases = [
+            (r#"{"transfer": "alice"}"#, "step 0: unknown step kind"),
+            (r#"{"call": "register", "by": "dave"}"#, "unknown account \"dave\""),
+            (r#"{"balance": "dave"}"#, "unknown account \"dave\""),
+            (r#"{"call": "register", "by": "alice", "deposit": "1 ETH"}"#, "deposit: bad NEAR amount"),
+            (r#"{"call": "register", "by": "alice", "gas": "lots"}"#, "gas: bad gas"),
+            (r#"{"call": "register", "by": "alice", "expcet": "ok"}"#, "unknown field \"expcet\""),
+            (r#"{"call": "register", "view": "x", "by": "alice"}"#, "more than one step kind"),
+            (r#"{"view": "x", "expect": {"greater": 1}}"#, "unknown expectation \"greater\""),
+            (r#"{"view": "x", "expect": "fine"}"#, "expect must be"),
+            (r#"{"view": "x", "args": [1]}"#, "\"args\" must be a JSON object"),
+            (r#"{"balance": "alice", "expect": {"contains": "x"}}"#, "balance step supports"),
+            (r#"{"call": "register"}"#, "missing \"by\""),
+        ];
+        for (step, want) in cases {
+            let err = parse_scenario(&with_step(step)).unwrap_err();
+            assert!(err.contains(want), "{step}: got {err:?}, want {want:?}");
+        }
+        let err = parse_scenario(r#"{"name":"t","accounts":{"alice":"lots"},"contract":{"wasm":"x"},"steps":[]}"#).unwrap_err();
+        assert!(err.contains("accounts.alice: bad NEAR amount"), "{err}");
+        let err = parse_scenario(r#"{"name":"t","accounts":{"contract":"1 NEAR"},"contract":{"wasm":"x"},"steps":[]}"#).unwrap_err();
+        assert!(err.contains("reserved"), "{err}");
+        let err = parse_scenario(r#"{"name":"t","accounts":{"Bob.x":"1 NEAR"},"contract":{"wasm":"x"},"steps":[]}"#).unwrap_err();
+        assert!(err.contains("bad account name"), "{err}");
+        assert!(parse_scenario("{not json").unwrap_err().starts_with("invalid JSON"));
+        let err = parse_scenario(r#"{"name":"t","accounts":{},"contract":{"wasm":"x"},"steps":[],"loop":1}"#).unwrap_err();
+        assert!(err.contains("unknown field \"loop\""), "{err}");
+    }
+
+    #[test]
+    fn contract_is_a_valid_caller() {
+        let sc = parse_scenario(&with_step(r#"{"call": "new", "by": "contract"}"#)).unwrap();
+        assert!(matches!(&sc.steps[0].kind, StepKind::Call { by, .. } if by == "contract"));
+        assert_eq!(sc.steps[0].expect, Expect::Ok, "missing expect defaults to ok");
+    }
+
+    #[test]
+    fn aliases_resolve_recursively() {
+        let v = resolve_aliases(&json!({"account_id": "carol", "list": ["alice", "zed"], "n": 1}), &aliases());
+        assert_eq!(v, json!({"account_id": "carol.test.near", "list": ["alice.test.near", "zed"], "n": 1}));
+    }
+
+    fn failure(text: &str) -> Actual {
+        Actual::failure(format!("Action #0: ExecutionError(\"Smart contract panicked: {text}\")"))
+    }
+
+    #[test]
+    fn expectations() {
+        let a = aliases();
+        let ok = Actual::success(Some(Value::Null));
+        assert_eq!(evaluate(&Expect::Ok, &ok, &a), (true, None));
+        assert!(!evaluate(&Expect::Ok, &failure("boom"), &a).0);
+
+        let full = failure("Event is full: capacity 2 reached, registration refused");
+        assert!(evaluate(&Expect::FailContains("Event is full".into()), &full, &a).0);
+        assert!(!evaluate(&Expect::FailContains("already registered".into()), &full, &a).0);
+        let (p, reason) = evaluate(&Expect::FailContains("Event is full".into()), &ok, &a);
+        assert!(!p && reason.unwrap().contains("succeeded"));
+        let mut dbg = Actual::failure("Execution");
+        dbg.error_debug = Some("... Event is full ...".into());
+        assert!(evaluate(&Expect::FailContains("Event is full".into()), &dbg, &a).0, "falls back to debug text");
+
+        let two = Actual::success(Some(json!(2)));
+        assert!(evaluate(&Expect::Equals(json!(2)), &two, &a).0);
+        assert!(evaluate(&Expect::Equals(json!(2.0)), &two, &a).0, "2 == 2.0");
+        assert!(!evaluate(&Expect::Equals(json!(3)), &two, &a).0);
+        assert!(!evaluate(&Expect::Equals(json!(2)), &failure("x"), &a).0);
+
+        let list = Actual::success(Some(json!(["alice.test.near", "carol.test.near"])));
+        assert!(evaluate(&Expect::Contains(json!("carol")), &list, &a).0, "alias resolved");
+        assert!(evaluate(&Expect::Contains(json!(["alice", "carol"])), &list, &a).0);
+        assert!(!evaluate(&Expect::Contains(json!("bob")), &list, &a).0);
+        assert!(evaluate(&Expect::Equals(json!(["alice", "carol"])), &list, &a).0);
+        let s = Actual::success(Some(json!("hello world")));
+        assert!(evaluate(&Expect::Contains(json!("world")), &s, &a).0);
+
+        let bal = Actual::success(Some(json!("9999000000000000000000000")));
+        assert!(evaluate(&Expect::AtLeast(9 * YOCTO_PER_NEAR), &bal, &a).0);
+        assert!(!evaluate(&Expect::AtLeast(10 * YOCTO_PER_NEAR), &bal, &a).0);
+        assert!(evaluate(&Expect::AtMost(10 * YOCTO_PER_NEAR), &bal, &a).0);
+        assert!(evaluate(&Expect::AtMost(2), &two, &a).0);
+        assert!(!evaluate(&Expect::AtLeast(1), &Actual::success(Some(json!("x"))), &a).0);
+        assert!(!evaluate(&Expect::Ok, &Actual::skipped("not executed"), &a).0);
+    }
+
+    #[test]
+    fn return_bytes() {
+        assert_eq!(Actual::from_return_bytes(b"").value, Some(Value::Null));
+        assert_eq!(Actual::from_return_bytes(b"2").value, Some(json!(2)));
+        let raw = Actual::from_return_bytes(b"\xffnot json");
+        assert!(raw.value_not_json && raw.is_success());
+    }
+
+    #[test]
+    fn report_shape_and_skips() {
+        let sc = parse_scenario(N06).unwrap();
+        let a = aliases();
+        let mut r = ScenarioResult {
+            name: sc.name.clone(),
+            file: "scenarios/n06/x.json".into(),
+            scenario_sha256: sha256_hex(N06.as_bytes()),
+            wasm: sc.wasm.clone(),
+            wasm_sha256: Some("ab".into()),
+            passed: false,
+            duration_s: 0.0,
+            error: None,
+            accounts: a.clone(),
+            init: Some(InitResult { method: "new".into(), passed: true, actual: Actual::success(Some(Value::Null)) }),
+            steps: vec![],
+        };
+        r.steps.push(StepResult::new(&sc.steps[0], Actual::success(Some(Value::Null)), &a));
+        r.steps.push(StepResult::new(&sc.steps[1], Actual::success(Some(Value::Null)), &a));
+        r.steps.push(StepResult::new(&sc.steps[2], failure("Event is full: capacity 2 reached"), &a));
+        r.error = Some("sandbox died".into());
+        r.finish(&sc, &a, 12.44);
+        assert_eq!(r.steps.len(), 8);
+        assert!(!r.passed);
+        assert_eq!(r.duration_s, 12.4);
+        assert_eq!(r.steps[3].actual.status, "skipped");
+        let report = build_report(vec![r]);
+        assert_eq!(report.summary, Summary { scenarios: 1, passed: 0, failed: 1, steps: 8, steps_failed: 5 });
+        let v = serde_json::to_value(&report).unwrap();
+        assert_eq!(v["tool"], "bumm-guard");
+        assert_eq!(v["wasm_sha256"], "ab");
+        assert_eq!(v["sandbox"]["near_workspaces"], "0.24.0");
+        let s2 = &v["scenarios"][0]["steps"][2];
+        assert_eq!(s2["index"], 2);
+        assert_eq!(s2["kind"], "call");
+        assert_eq!(s2["by"], "carol");
+        assert_eq!(s2["passed"], true);
+        assert_eq!(s2["expected"], json!({"fail_contains": "Event is full"}));
+        assert_eq!(s2["actual"]["status"], "failure");
+        assert!(s2["actual"].get("error_debug").is_none());
+        assert_eq!(v["scenarios"][0]["steps"][7]["account"], "bob");
+    }
+
+    #[test]
+    fn hashes() {
+        assert_eq!(sha256_hex(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        let h = vec!["bb".to_string(), "aa".to_string()];
+        assert_eq!(combined_sha256(&h), sha256_hex(b"aa\nbb"));
+        assert_eq!(combined_sha256(&h[..1]), "bb");
+        let mut r = vec!["aa".to_string(), "bb".to_string()];
+        r.reverse();
+        assert_eq!(combined_sha256(&r), combined_sha256(&h), "order-independent");
+    }
+
+    #[test]
+    fn cli_args() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            parse_args(&s(&["run", "--scenario", "a.json", "--scenario", "b.json", "--out", "r.json"])).unwrap(),
+            Command::Run { scenarios: vec!["a.json".into(), "b.json".into()], out: "r.json".into(), wasm: None }
+        );
+        assert!(matches!(
+            parse_args(&s(&["run", "--scenario", "a.json", "--out", "r.json", "--wasm", "c.wasm"])).unwrap(),
+            Command::Run { wasm: Some(_), .. }
+        ));
+        assert_eq!(parse_args(&s(&["--help"])).unwrap(), Command::Help);
+        assert!(parse_args(&s(&[])).is_err());
+        assert!(parse_args(&s(&["run", "--out", "r.json"])).unwrap_err().contains("--scenario"));
+        assert!(parse_args(&s(&["run", "--scenario", "a.json"])).unwrap_err().contains("--out"));
+        assert!(parse_args(&s(&["run", "--scenario"])).unwrap_err().contains("needs a value"));
+        assert!(parse_args(&s(&["walk"])).is_err());
+    }
+
+    #[test]
+    fn wasm_resolution() {
+        let dir = std::env::temp_dir().join(format!("bumm-sim-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("c.wasm"), b"\0asm").unwrap();
+        let scen = dir.join("s.json");
+        assert_eq!(resolve_wasm("c.wasm", &scen, None), dir.join("c.wasm"), "scenario-relative fallback");
+        assert_eq!(resolve_wasm("c.wasm", &scen, Some(Path::new("o.wasm"))), PathBuf::from("o.wasm"));
+        assert_eq!(resolve_wasm("missing.wasm", &scen, None), PathBuf::from("missing.wasm"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

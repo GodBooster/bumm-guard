@@ -91,3 +91,38 @@ jobs:
         name: cargo test
         working-directory: contracts
         run: cargo test --workspace --locked
+
+  simulate:
+    name: scenario runner (bumm-sim on near-sandbox, linux only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: install the fixtures' pinned toolchain
+        run: rustup toolchain install 1.85.0 --profile minimal --target wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            contracts
+            tests/fixtures/near
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: build event_registration wasm (rustc 1.85.0)
+        working-directory: tests/fixtures/near
+        run: cargo build --release --locked --target wasm32-unknown-unknown -p event_registration
+      - name: build bumm-sim (rustc 1.99.1)
+        working-directory: contracts
+        run: cargo build --release --locked -p bumm-sim
+      - name: run N06 scenarios
+        run: |
+          python -m bumm_guard simulate scenarios/n06/*.json \
+            --runner contracts/target/release/bumm-sim --out simulate-out/simulate-report.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulate-report
+          path: simulate-out/simulate-report.json
+          if-no-files-found: warn

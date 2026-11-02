@@ -1,4 +1,4 @@
-"""Command line interface: ``scan``, ``rules``, ``fix`` and ``gate``."""
+"""Command line interface: ``scan``, ``rules``, ``fix``, ``gate`` and ``simulate``."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from .gate import NETWORKS, run_gate
 from .model import SEVERITIES, Finding
 from .rulepack.near import RULES
 from .scanner import DEFAULT_EXCLUDES, ScanResult, scan
+from .simulate import DEFAULT_OUT, run_simulate
 
 BLOCKING = ("critical", "high")
 
@@ -150,6 +151,16 @@ def _cmd_gate(args: argparse.Namespace) -> int:
     return out.exit_code
 
 
+def _cmd_simulate(args: argparse.Namespace) -> int:
+    out = run_simulate(args.scenarios, wasm=args.wasm, out=args.out, runner=args.runner,
+                       validate_only=args.validate_only)
+    for line in out.lines:
+        print(line)
+    for line in out.errors:
+        print(line, file=sys.stderr)
+    return out.exit_code
+
+
 def _cmd_rules(args: argparse.Namespace) -> int:
     if args.format == "json":
         print(json.dumps([r.to_dict() for r in RULES], indent=2))
@@ -188,6 +199,13 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--execute", action="store_true",
                       help="run the deploy command (testnet only; needs `near` on PATH). Default: print only")
     gp.set_defaults(func=_cmd_gate)
+    smp = sub.add_parser("simulate", help="run scenario files (docs/FORMATS.md §2) on a local near-sandbox via bumm-sim")
+    smp.add_argument("scenarios", nargs="+", metavar="scenario.json")
+    smp.add_argument("--wasm", metavar="PATH", help="use this wasm instead of each scenario's contract.wasm")
+    smp.add_argument("--out", metavar="PATH", help=f"report path or directory (default: {DEFAULT_OUT})")
+    smp.add_argument("--runner", metavar="PATH", help="bumm-sim binary (default: $BUMM_SIM, then contracts/target/release/bumm-sim)")
+    smp.add_argument("--validate-only", action="store_true", help="check the files against the format; run nothing")
+    smp.set_defaults(func=_cmd_simulate)
     return p
 
 

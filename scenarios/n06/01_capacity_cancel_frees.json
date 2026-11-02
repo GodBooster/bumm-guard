@@ -1,0 +1,19 @@
+{
+  "name": "N06 capacity 2, third refused, cancel frees a seat",
+  "accounts": {"alice": "10 NEAR", "bob": "10 NEAR", "carol": "10 NEAR"},
+  "contract": {"wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration.wasm",
+               "init": {"method": "new", "args": {"capacity": 2}}},
+  "steps": [
+    {"call": "register", "by": "alice", "args": {}, "deposit": "0", "gas": "30 Tgas",
+     "expect": "ok"},
+    {"call": "register", "by": "bob", "expect": "ok"},
+    {"call": "register", "by": "carol",
+     "expect": {"fail_contains": "Event is full"}},
+    {"view": "get_registered_count", "expect": {"equals": 2}},
+    {"call": "cancel", "by": "alice", "expect": "ok"},
+    {"call": "register", "by": "carol", "expect": "ok"},
+    {"view": "get_registered", "expect": {"contains": "carol"}},
+    {"view": "get_seats_left", "expect": {"equals": 0}},
+    {"balance": "bob", "expect": {"at_least": "9 NEAR"}}
+  ]
+}
