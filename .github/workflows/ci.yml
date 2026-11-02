@@ -32,6 +32,17 @@ jobs:
           EOF
           test "$code" -eq 1
 
+  ui-panel:
+    name: ABI panel tests (node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: node --test ui/test
+        run: node --test ui/test
+
   fixtures-compile:
     name: fixtures compile (cargo check, wasm32)
     runs-on: ubuntu-latest

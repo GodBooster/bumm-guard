@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BUMM Guard ABI panel</title>
+<link rel="stylesheet" href="panel.css">
+</head>
+<body>
+<main>
+  <h1>BUMM Guard ABI panel</h1>
+  <p class="lead">Interaction panel generated from a near-abi file. One card per contract function. Not a product UI.</p>
+
+  <section class="box" aria-labelledby="h-conn">
+    <h2 id="h-conn">1. Network and contract</h2>
+    <div class="row">
+      <label>Network
+        <select id="network"><option value="testnet" selected>testnet</option><option value="mainnet">mainnet</option></select>
+      </label>
+      <label class="grow">RPC URL
+        <input id="rpc" type="text" value="https://rpc.testnet.fastnear.com" spellcheck="false">
+      </label>
+    </div>
+    <label>Contract account id
+      <input id="contract" type="text" placeholder="mycontract.testnet" spellcheck="false" autocomplete="off">
+    </label>
+  </section>
+
+  <section class="box" aria-labelledby="h-abi">
+    <h2 id="h-abi">2. ABI</h2>
+    <p class="hint">Use <code>target/near/&lt;name&gt;_abi.json</code> (<code>cargo near abi</code> output, or <code>artifact.abi</code> from <code>bumm-guard build</code>).</p>
+    <div class="row">
+      <label>File <input id="abi-file" type="file" accept=".json,application/json"></label>
+    </div>
+    <div class="row">
+      <label class="grow">URL <input id="abi-url" type="text" placeholder="https://host/abi.json (needs CORS)" spellcheck="false"></label>
+      <button id="abi-url-load" type="button">Load URL</button>
+    </div>
+    <label>Paste JSON <textarea id="abi-paste" rows="3" spellcheck="false"></textarea></label>
+    <div class="row">
+      <button id="abi-paste-load" type="button">Load pasted ABI</button>
+      <button id="abi-fixture" type="button">Load bundled N06 fixture</button>
+    </div>
+  </section>
+
+  <section class="box" aria-labelledby="h-wallet">
+    <h2 id="h-wallet">3. Wallet (only for change calls)</h2>
+    <p id="wallet-state" class="hint">not signed in (view calls work without a wallet)</p>
+    <div class="row">
+      <button id="signin" type="button">Sign in with wallet</button>
+      <button id="signout" type="button" hidden>Sign out</button>
+    </div>
+    <p class="hint">Wallet path: near-api-js WalletConnection, MyNearWallet redirect. Not verified without a wallet; see README.</p>
+  </section>
+
+  <p id="status" class="status" role="status">Load an ABI to see the functions.</p>
+  <div id="cards"></div>
+</main>
+<script src="panel.js"></script>
+</body>
+</html>

@@ -38,10 +38,10 @@ contract. Values are JSON; NEAR amounts are strings in yoctoNEAR or `"1 NEAR"`.
     {"call": "register", "by": "bob", "expect": "ok"},
     {"call": "register", "by": "carol",
      "expect": {"fail_contains": "Event is full"}},
-    {"view": "registered_count", "expect": {"equals": 2}},
+    {"view": "get_registered_count", "expect": {"equals": 2}},
     {"call": "cancel", "by": "alice", "expect": "ok"},
     {"call": "register", "by": "carol", "expect": "ok"},
-    {"view": "registered", "expect": {"contains": "carol"}},
+    {"view": "get_registered", "expect": {"contains": "carol"}},
     {"balance": "bob", "expect": {"at_least": "9 NEAR"}}
   ]
 }
@@ -64,7 +64,7 @@ Step kinds: `call` (change method; defaults `deposit: "0"`, `gas: "30 Tgas"`), `
        {"index": 2, "kind": "call", "method": "register", "by": "carol",
         "passed": true, "expected": {"fail_contains": "Event is full"},
         "actual": {"status": "failure", "error": "Smart contract panicked: Event is full: capacity 2 reached", "gas_burnt_tgas": 2.9}},
-       {"index": 3, "kind": "view", "method": "registered_count",
+       {"index": 3, "kind": "view", "method": "get_registered_count",
         "passed": true, "expected": {"equals": 2}, "actual": {"value": 2}}
      ]}
   ],
@@ -94,7 +94,7 @@ Existing fields stay. Added:
   "post_deploy": {
     "account": "demo.testnet",
     "code_hash_on_chain": "…", "matches_artifact": true,
-    "smoke": [{"view": "registered_count", "ok": true}],
+    "smoke": [{"view": "get_registered_count", "ok": true}],
     "note": "init is never re-called; a contract that fails the smoke view is reported, not fixed"
   }
 }
@@ -121,6 +121,6 @@ N06 scenarios: the file in §2 plus "duplicate registration refused" and "cancel
 without registration refused". N10 starts from the frozen N06 starter commit and adds
 waitlist scenarios: "third registers → waitlisted", "cancel promotes first waitlisted",
 "order preserved". Acceptance = all scenario files pass in `simulate`, the panel can
-perform `register` and show `registered` on testnet, and `gate --verify-deployed`
+perform `register` and show `get_registered` on testnet, and `gate --verify-deployed`
 reports `matches_artifact: true`. Both study arms (with and without BUMM) get this
 full definition, not only "contract compiles".

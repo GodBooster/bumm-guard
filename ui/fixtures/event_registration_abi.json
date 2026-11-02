@@ -1,0 +1,105 @@
+{
+  "schema_version": "0.4.0",
+  "metadata": {
+    "name": "event_registration",
+    "version": "0.1.0",
+    "authors": []
+  },
+  "body": {
+    "functions": [
+      {
+        "name": "new",
+        "kind": "call",
+        "modifiers": ["init"],
+        "params": {
+          "serialization_type": "json",
+          "args": [
+            {
+              "name": "capacity",
+              "type_schema": { "type": "integer", "format": "uint32", "minimum": 0.0 }
+            }
+          ]
+        }
+      },
+      {
+        "name": "register",
+        "doc": "Registers the caller. Panics with an explicit message if the event is full or the caller is already registered.",
+        "kind": "call",
+        "params": { "serialization_type": "json", "args": [] }
+      },
+      {
+        "name": "cancel",
+        "doc": "Cancels the caller's registration and frees a seat.",
+        "kind": "call",
+        "params": { "serialization_type": "json", "args": [] }
+      },
+      {
+        "name": "get_capacity",
+        "kind": "view",
+        "params": { "serialization_type": "json", "args": [] },
+        "result": {
+          "serialization_type": "json",
+          "type_schema": { "type": "integer", "format": "uint32", "minimum": 0.0 }
+        }
+      },
+      {
+        "name": "get_registered_count",
+        "kind": "view",
+        "params": { "serialization_type": "json", "args": [] },
+        "result": {
+          "serialization_type": "json",
+          "type_schema": { "type": "integer", "format": "uint32", "minimum": 0.0 }
+        }
+      },
+      {
+        "name": "get_registered",
+        "kind": "view",
+        "params": { "serialization_type": "json", "args": [] },
+        "result": {
+          "serialization_type": "json",
+          "type_schema": {
+            "type": "array",
+            "items": { "$ref": "#/definitions/AccountId" }
+          }
+        }
+      },
+      {
+        "name": "is_registered",
+        "kind": "view",
+        "params": {
+          "serialization_type": "json",
+          "args": [
+            {
+              "name": "account_id",
+              "type_schema": { "$ref": "#/definitions/AccountId" }
+            }
+          ]
+        },
+        "result": {
+          "serialization_type": "json",
+          "type_schema": { "type": "boolean" }
+        }
+      },
+      {
+        "name": "get_seats_left",
+        "kind": "view",
+        "params": { "serialization_type": "json", "args": [] },
+        "result": {
+          "serialization_type": "json",
+          "type_schema": { "type": "integer", "format": "uint32", "minimum": 0.0 }
+        }
+      }
+    ],
+    "root_schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "String",
+      "type": "string",
+      "definitions": {
+        "AccountId": {
+          "description": "NEAR Account Identifier.",
+          "type": "string"
+        }
+      }
+    }
+  }
+}
