@@ -1,6 +1,6 @@
 # BUMM Guard
 
-**Find, fix, prove, gate for NEAR smart contracts (near-sdk-rs 5.x).** BUMM Guard is a static-analysis rule-pack with deterministic auto-fixers and a deploy gate, built for coding agents and for humans. It scans Rust contract source for three known NEAR defect classes, patches two of them with a minimal diff, re-scans to prove the finding is gone, and refuses to print a deploy command while any high or critical finding remains. Python 3.12+, standard library only. An optional MCP server (`bumm-guard-mcp`) exposes the same four operations to Claude Code, Cursor, Codex or any MCP client. Track: AI Security & Defense (NEAR HACKATHON).
+**The "after the contract compiles" layer for coding agents on NEAR (near-sdk-rs 5.x): scan, fix, simulate scenarios in a sandbox, gate, deploy, interact via the ABI panel.** Contract generation is deliberately left to the agent; BUMM Guard checks what the agent produced. The core is a static-analysis rule-pack with deterministic auto-fixers and a deploy gate: it scans Rust contract source for three known NEAR defect classes, patches two of them with a minimal diff, re-scans to prove the finding is gone, and refuses to print a deploy command while any high or critical finding remains. Two newer components cover the rest of the path: a **scenario runner** that executes JSON scenarios against the built wasm in a fresh local NEAR sandbox and reports every step, and an **ABI interaction panel** (a static page) that gives each contract function a form. Python 3.12+, standard library only, for the CLI. An optional MCP server (`bumm-guard-mcp`) exposes the scan/fix/gate operations to Claude Code, Cursor, Codex or any MCP client. Track: AI Security & Defense (NEAR HACKATHON).
 
 ## The problem
 
@@ -10,7 +10,7 @@ References: [security checklist](https://docs.near.org/smart-contracts/security/
 
 ## Try it in 5 minutes (do X, see Y)
 
-Needs Python 3.12+ (verified locally on 3.14.7). No network or NEAR account is needed for steps 1-7. All commands run from the repository root. Fixtures live in `tests/fixtures/near/`.
+Needs Python 3.12+ (verified locally on 3.14.7). No network, Docker or NEAR account is needed for steps 1-8. Step 9 is the CI run. All commands run from the repository root. Fixtures live in `tests/fixtures/near/`.
 
 **1. Install.**
 ```sh
@@ -19,7 +19,7 @@ python3 -m pip install -e .
 bumm-guard --version
 ```
 ```
-bumm-guard 0.3.0
+bumm-guard 0.5.0
 ```
 (Without installing, `python3 -m bumm_guard ...` from the repo root is equivalent. The examples below use it.)
 
@@ -33,7 +33,7 @@ tests/fixtures/near/d1_vuln/src/lib.rs:23: [HIGH] BG-NEAR-001 non-private-callba
     fix: Add `#[private]` directly above `pub fn on_paid` (after existing attributes), or assert env::predecessor_account_id() == env::current_account_id().
 1 finding(s) in 1 file(s): high=1
 ```
-Add `--format json` for machine-readable output (`summary.by_rule`, `findings[].{rule_id,severity,file,line,message,fix_hint,snippet}`). Scanning all fixtures, `python3 -m bumm_guard scan tests/fixtures/near`, gives 3 findings (one per rule) in 7 files, exit `1`. A safe fixture, `scan tests/fixtures/near/d1_safe`, prints `0 finding(s) in 1 file(s)`, exit `0`.
+Add `--format json` for machine-readable output (`summary.by_rule`, `findings[].{rule_id,severity,file,line,message,fix_hint,snippet}`). Scanning all fixtures, `python3 -m bumm_guard scan tests/fixtures/near`, gives 3 findings (one per rule) in 8 files, exit `1`. A safe fixture, `scan tests/fixtures/near/d1_safe`, prints `0 finding(s) in 1 file(s)`, exit `0`.
 
 **3. Preview the fix (dry run, writes nothing).** Exit `1` (the finding is still there).
 ```sh
@@ -91,15 +91,30 @@ deploy command (NOT executed; pass --execute with --network testnet to run it):
 ```
 The report (`/tmp/d1_safe/.bumm-guard/gate-report.json`) holds: tool version, `rule_ids_checked`, findings counts, sha256 of every scanned `*.rs`, the wasm path and sha256, network, account, UTC timestamp.
 
-**7. Run the unit tests.**
+**7. Validate the sandbox scenarios (no Docker, no runner).** Exit `0`. This checks the three N06 scenario files against the format and prints a combined `scenario_sha256`; nothing is executed.
+```sh
+python3 -m bumm_guard simulate scenarios/n06/*.json --validate-only
+```
+```
+valid  scenarios/n06/01_capacity_cancel_frees.json  'N06 capacity 2, third refused, cancel frees a seat': 3 account(s), 9 step(s), sha256 b8dafbe172da, wasm tests/fixtures/near/target/...
+valid  scenarios/n06/02_duplicate_registration_refused.json  ... 7 step(s) ...
+valid  scenarios/n06/03_cancel_without_registration_refused.json  ... 8 step(s) ...
+scenario_sha256 378d90e1b228a9a4f7f9099e706370d4954ac9de19f3370d645ffba0b46bd17b
+3 scenario file(s) valid (validate-only, nothing executed)
+```
+Without `--validate-only` and without the runner binary the command exits `4` and prints the build command (see "Scenario runner").
+
+**8. See the real sandbox run.** It needs Linux, so it is not a local step: open the `scenario runner` job of the CI run [41428851380](https://github.com/GodBooster/bumm-guard/actions/runs/41428851380) (all 5 jobs green) and download the `simulate-report` artifact (`simulate-report.json`, the format of `docs/FORMATS.md` §3). Expected content: 3 of 3 scenarios and 24 of 24 steps passed, durations 5.1 s, 3.3 s and 4.0 s, and the refusals carry the contract's own messages (see "Scenario runner").
+
+**9. Run the unit tests.**
 ```sh
 python3 -m unittest discover -s tests
 ```
 ```
-Ran 83 tests in 16.702s
+Ran 104 tests in 119.835s
 OK (skipped=12)
 ```
-The 12 skipped tests are the MCP tests (the `mcp` package is not installed). After `python3 -m pip install -e '.[mcp]'` the same command gives `Ran 83 tests ... OK` with nothing skipped (36 s on the verifying machine). If `cargo` is installed, a compile check of the patched fixtures also runs; first run may take longer.
+The 12 skipped tests are the MCP tests (the `mcp` package is not installed). After `python3 -m pip install -e '.[mcp]'` the same command gives `Ran 104 tests ... OK` with nothing skipped. If `cargo` is installed, a compile check of the patched fixtures also runs; first run may take longer (the 120 s above included it). The panel tests need Node 22: `node --test ui/test` (18 tests).
 
 ## Use from a coding agent (MCP)
 
@@ -140,19 +155,50 @@ Exit codes. `scan`: `0` no high/critical, `1` at least one, `2` bad path. `fix`:
 
 The authoritative list is `python3 -m bumm_guard rules`. Fixers (`bumm-guard fix`): 001 inserts `#[private]` above the callback; 003 replaces `signer_account_id` with `predecessor_account_id` in the flagged guard only (REVIEW findings are never patched); 002 is **not** auto-fixed: it returns a `suggested_patch` skeleton (`#[callback_result] r: Result<(), PromiseError>` plus an `if r.is_err()` rollback TODO) with `applied: false`.
 
+## Scenario runner
+
+Static checks say what the code looks like; a scenario says what the contract does. `contracts/sim-runner` (crate `bumm-sim`, Rust, near-workspaces 0.24.0 / near-sandbox 0.4.0) executes JSON scenarios (format: `docs/FORMATS.md` §2) against a wasm in a **fresh local sandbox per scenario file** and writes the §3 report. A scenario has named accounts with balances, the wasm and an init call, then linear steps: `call` (by an account, with args, deposit, gas), `view`, `balance`. Each step carries an expectation: `ok`, `fail_contains`, `equals`, `contains`, `at_least`, `at_most`. Steps keep running after a failed expectation, so the report shows the whole trace.
+
+**Do X, see Y.** Validate without a runner (step 7 above) and get `valid ...` for the three files in `scenarios/n06/`, which target the fixture contract `tests/fixtures/near/event_registration` (N06: event registration with a capacity; methods `new(capacity)`, `register`, `cancel`, `get_capacity`, `get_registered_count`, `get_registered`, `is_registered`, `get_seats_left`). The real run, on Linux:
+```sh
+cd tests/fixtures/near && cargo build --release --locked --target wasm32-unknown-unknown -p event_registration   # rustc 1.85.0, pinned there
+cd ../../../contracts && cargo build --release --locked -p bumm-sim
+cd .. && python3 -m bumm_guard simulate scenarios/n06/*.json --runner contracts/target/release/bumm-sim --out simulate-report.json
+```
+`simulate` validates the files, runs the binary, checks the report's hashes against the inputs and prints a summary. Exit `0` all passed or all files valid, `1` a scenario failed (or no readable report, or a hash mismatch), `2` invalid file or missing wasm, `4` runner not found.
+
+**What was observed** (CI job `scenario runner`, about 9 min including compile, run 41428851380): 3/3 scenarios, 24/24 steps passed. The refusals happened on-chain with the contract's own messages: `Event is full: capacity 2 reached...` (third registration), `... is already registered` (duplicate), `... is not registered` (cancel without registering). Durations 5.1 s, 3.3 s, 4.0 s. The report is the `simulate-report` artifact of that run.
+
+**Limits.** The format is linear: no loops, no scripting, no conditionals. One contract, named accounts, JSON args only (no borsh, no cross-contract setup, no time travel or state patching). Only the final status of a transaction is reported (a handled callback failure inside a successful transaction is not shown). Linux only: `near-sandbox` ships no macOS x86_64 binary, so locally only the unit tests run, via `scripts/linux-test.sh contracts test -p bumm-sim --lib` (needs Docker; this is the one Docker step); the real run is CI. The wasm must be built first; the fixture builds with rustc 1.85.0, but its own unit tests (`cargo test -p event_registration`) need rustc 1.88 or newer because of the `unit-testing` dev-dependencies. The Python and Rust validators are kept in sync by hand. Details: `SIMULATE_REPORT.md`.
+
+## ABI interaction panel
+
+`ui/` is a static page (`index.html`, `panel.js`, `panel.css`; no backend, no build step) that reads a near-abi file and renders one form per contract function. It is an interaction panel generated from the ABI, **not a product UI**. View calls go straight to a JSON-RPC endpoint with zero dependencies; change calls go through a wallet redirect.
+
+**Do X, see Y** (no wallet needed for these):
+```sh
+python3 -m http.server -d ui      # then open http://localhost:8000
+```
+Type a testnet account where the N06 contract is deployed into "Contract account id", click **Load bundled N06 fixture**: 8 cards appear (`new` marked init, `register`, `cancel`, five views). **Call** on `get_capacity` shows the capacity as JSON. Typing `Alice` into `is_registered` shows `account_id: "Alice" is not a valid NEAR account id ...` and sends no request; `-1` into `new` shows `capacity: -1 is below the minimum 0`. Step-by-step: `ui/README.md`.
+
+**Limits.** The wallet write path (`signIn`, `sendTransaction`, MyNearWallet via `near-api-js` from a CDN) is written but **not verified**: nobody has run it against a wallet. The bundled ABI `ui/fixtures/event_registration_abi.json` is hand-written and should be replaced by real `cargo near abi` output. Unsupported argument types fall back to a raw JSON textarea. Mainnet defaults are untested. Verified: 18 node tests (`node --test ui/test`), and `viewCall` against live testnet RPC and in a browser over `http://localhost` (ABI load, validation messages, rendering).
+
 ## Testing
 
-- **Unit tests** (83): `python3 -m unittest discover -s tests`. They cover each `*_vuln` fixture giving exactly its own finding and each `*_safe` fixture giving none, the CLI exit codes, JSON/text output, 30 synthetic edge cases, fixers (dry run, apply, re-scan, CRLF, `target/` untouched), the gate (blocked, pass, report, mainnet refusal) and the MCP server over a real stdio subprocess.
-- **Fixtures compile.** `tests/fixtures/near/` is a workspace of seven near-sdk 5.17.2 crates. Verified locally: `cd tests/fixtures/near && cargo check --workspace --locked --offline` finishes without errors (host target). The wasm32 target is checked only in CI.
+- **Counts:** Python 104 (12 skipped without `mcp`), node 18, Rust `bumm-sim` lib 13, sandbox test 1.
+- **Unit tests** (104): `python3 -m unittest discover -s tests`. They cover each `*_vuln` fixture giving exactly its own finding and each `*_safe` fixture giving none (the scan of `tests/fixtures/near` covers 8 files and gives exactly 3 findings), the CLI exit codes, JSON/text output, 30 synthetic edge cases, fixers (dry run, apply, re-scan, CRLF, `target/` untouched), the gate (blocked, pass, report, mainnet refusal), `simulate` (21 tests: amounts, validation, hashing, summary, the CLI driven by a fake runner) and the MCP server over a real stdio subprocess.
+- **Fixtures compile.** `tests/fixtures/near/` is a workspace of eight near-sdk 5.17.2 crates (the eighth is `event_registration`). Verified locally: `cd tests/fixtures/near && cargo check --workspace --locked --offline` finishes without errors (host target). The wasm32 target is checked only in CI.
 - **Linux runner.** `scripts/linux-test.sh <workspace-dir> [cargo args]` runs cargo in a `rust:1.99-slim-bookworm` Docker container with the repo mounted, for example `scripts/linux-test.sh tests/fixtures/near check --workspace --locked`. It exists because `near-sandbox` (used by `near-workspaces` sandbox tests) ships no macOS x86_64 binary, and the author develops on such a Mac. Verified on 2026-10-30 with Docker Desktop 4.97 on an Intel Mac: `scripts/linux-test.sh tests/fixtures/near check --workspace --locked` finished in 1 min 41 s (44 s of it `cargo check`, the rest apt and image setup).
-- **CI** (`.github/workflows/ci.yml`, on every push and PR): `rulepack` (Python 3.12, installs the MCP extra, unit tests, scans the fixtures and asserts exactly the three rule ids and exit `1`), `fixtures-compile` (`cargo check --workspace --locked`, host and `wasm32-unknown-unknown`), `sandbox` (runs `cargo test` in `contracts/` only if it exists). CI results are visible on the repository's Actions tab; they were not re-run for this README.
-- **`contracts/` sandbox tests** (`contracts/sandbox/tests/bg_near_001.rs`, near-workspaces 0.24): deploys the real `d1_vuln`, `d1_safe` and `proxy` fixtures to a local near-sandbox and checks, for each fixture, that a third account calling the callback through the proxy is accepted on `d1_vuln` (state flips to paid) and rejected on `d1_safe` with `Method on_paid is private`, that the seller's balance is untouched by the spoof, and that the legitimate `pay` path works on both. Runs in CI on ubuntu (job `sandbox tests`, about 4 min: 3 min compile, 31 s test) and locally on Linux via `scripts/linux-test.sh contracts test --workspace --locked`. Verified green on 2026-11-02 (Actions run 41422672919). The fixtures build with rustc 1.85.0 (pinned in `tests/fixtures/near/rust-toolchain.toml`) because near-sdk 5.17.2 wasm imports do not link on rustc 1.99.
+- **CI** (`.github/workflows/ci.yml`, on every push and PR), 5 jobs: `rule-pack tests (python)` (Python 3.12, MCP extra, unit tests, scans the fixtures and asserts exactly the three rule ids and exit `1`), `ABI panel tests (node)` (`node --test ui/test`), `fixtures compile (cargo check, wasm32)` (`cargo check --workspace --locked`, host and `wasm32-unknown-unknown`), `sandbox tests (near-workspaces)` and `scenario runner (bumm-sim on near-sandbox)` (builds the `event_registration` wasm and `bumm-sim`, runs the three N06 scenarios, uploads `simulate-report`). All 5 jobs were green on run 41428851380 (2026-11-02), visible on the Actions tab.
+- **`contracts/` sandbox tests** (`contracts/sandbox/tests/bg_near_001.rs`, near-workspaces 0.24): deploys the real `d1_vuln`, `d1_safe` and `proxy` fixtures to a local near-sandbox and checks, for each fixture, that a third account calling the callback through the proxy is accepted on `d1_vuln` (state flips to paid) and rejected on `d1_safe` with `Method on_paid is private`, that the seller's balance is untouched by the spoof, and that the legitimate `pay` path works on both. Runs in CI on ubuntu (job `sandbox tests`, about 4 min: 3 min compile, 31 s test; it now also runs the 13 `bumm-sim` lib tests) and locally on Linux via `scripts/linux-test.sh contracts test --workspace --locked`. Verified green on 2026-11-02 (Actions run 41422672919). The fixtures build with rustc 1.85.0 (pinned in `tests/fixtures/near/rust-toolchain.toml`) because near-sdk 5.17.2 wasm imports do not link on rustc 1.99.
 
 ## Honest limits
 
 - Detection and fixes are regex/brace-level: no type information, no name resolution, no macro expansion (methods generated by macros or `include!` are invisible). Callback scheduling is recognised only as `.then(<Self|own type|*self*|*callback*>::ext[_self](..)[.with_*(..)]*.cb(..))`. The old `ext_self::cb(..)` syntax, `Promise::function_call("cb", ..)` with string names, `.and()` joins and callbacks stored in variables are missed by 002 (001 may still fire via parameter attributes). 002 mutation detection is textual; mutation through a local alias or a helper is not seen. 003 does not follow the signer through helpers or struct fields.
 - Fixes are textual patches for the exact patterns flagged. They are checked by re-scan and, for the fixtures, `cargo check`; that is not proof the contract is safe. Read the diff.
 - BG-NEAR-002 is not auto-fixed (a correct rollback needs semantic knowledge).
+- **Scenario runner:** linear scenarios only (no loops, no scripting), one contract, JSON args; Linux only (no local real run on macOS x86_64). A passing scenario shows behaviour on the listed steps, not absence of bugs. The only scenarios shipped are the three N06 ones, written by the author for a fixture contract; no third-party contract has been run through it.
+- **ABI panel:** the wallet (change-call) path is written but not verified; the bundled ABI is hand-written, not `cargo near abi` output. It is an interaction panel, not a finished UI.
 - **False-positive rate on production code is not measured.** The only real-code run (recorded in `RULEPACK_REPORT.md`, 2026-10-30) used 290 `.rs` files from near-sdk-rs examples and standards, near/core-contracts and three near-examples repos (99 exported impls, 332 exported methods, about 1.4 s, no crashes). Results: BG-NEAR-001 5 findings (2 high, 3 info), BG-NEAR-002 0, BG-NEAR-003 7 (all low, REVIEW). Both high findings are true positives by pattern; one has real impact (`mpc-contract` `sign_on_finish`), the other has low practical impact (public `&mut self` callback that mutates nothing). Of the 7 REVIEW items, 3 are signer values forwarded as arguments (noise), 1 is a legitimate per-user key, 3 are review-worthy. `core-contracts` gave 0 because of the old `ext_self::cb` syntax the detector does not recognise. This is a small, educational sample and a sanity check, not an FP rate. The corpus itself is not included in this repository.
 - The gate is **pipeline control, not an on-chain guarantee**. It means "no high/critical finding from these three rules in the scanned source". It does not build the wasm, does not check that the wasm matches the source (it records both hashes), checks nothing beyond three rules, and is not an audit. Anyone with shell access can still run `near contract deploy` by hand.
 
@@ -160,11 +206,11 @@ The authoritative list is `python3 -m bumm_guard rules`. Fixers (`bumm-guard fix
 
 **Prior work (not included here).** [BUMM](https://github.com/bumm-ai/bumm) is an AI smart-contract builder for Solana/Anchor by the same author, developed 2025-2026, before this hackathon. It is a separate project on another chain and is **not part of this repository**; no BUMM source code was copied in.
 
-**Built during the hackathon window** (announcement 2026-10-19 to 2026-11-14). This repository was created on 2026-10-30, and everything in it was written in that window: the NEAR rule-pack (`bumm_guard/rulepack/near/`), the three detectors, the fixers (`bumm_guard/fix/`), the deploy gate (`bumm_guard/gate.py`), the CLI, the MCP server (`bumm_guard/mcp_server.py`), the Claude Code plugin and skill (`clients/claude-plugin/`), the fixtures and tests (`tests/`), the Linux runner script and CI. `git log --format='%h %ad %s' --date=iso` lists every commit; the first one is dated 2026-10-30. Nothing in the history predates the window.
+**Built during the hackathon window** (announcement 2026-10-19 to 2026-11-14). This repository was created on 2026-10-30, and everything in it was written in that window: the NEAR rule-pack (`bumm_guard/rulepack/near/`), the three detectors, the fixers (`bumm_guard/fix/`), the deploy gate (`bumm_guard/gate.py`), the CLI, the MCP server (`bumm_guard/mcp_server.py`), the Claude Code plugin and skill (`clients/claude-plugin/`), the fixtures (including `tests/fixtures/near/event_registration`) and tests (`tests/`), the Linux runner script and CI, the scenario runner (`contracts/sim-runner`, `bumm_guard/simulate.py`, `scenarios/`) and the ABI interaction panel (`ui/`). `git log --format='%h %ad %s' --date=iso` lists every commit; the first one is dated 2026-10-30. Nothing in the history predates the window.
 
 **Ideas reused from BUMM** (ideas only, no code): the find, fix, gate pipeline shape and the style of MCP tool naming. `Finding.to_bumm_vulnerability()` in `bumm_guard/model.py` maps a finding to the BUMM backend `Vulnerability` schema field names; it is a mapping function, not BUMM code.
 
-**Libraries and tools.** Runtime: Python standard library only. Optional: the `mcp` Python SDK for the MCP server. Fixtures depend on `near-sdk` 5.17.2 (compile checks only). Parts of the code were written with AI assistance (Claude Code).
+**Libraries and tools.** Runtime: Python standard library only. Optional: the `mcp` Python SDK for the MCP server. Fixtures depend on `near-sdk` 5.17.2; the runner and the sandbox tests use `near-workspaces` 0.24.0 / `near-sandbox` 0.4.0; the panel loads `near-api-js` 4.0.4 from a CDN only for the unverified wallet path. Parts of the code were written with AI assistance (Claude Code).
 
 ## License, track, links
 
@@ -173,4 +219,4 @@ The authoritative list is `python3 -m bumm_guard rules`. Fixers (`bumm-guard fix
 - Repository: https://github.com/GodBooster/bumm-guard
 - Rules and dates: https://nearhackathon.com/HACKATHON.md
 - NEAR docs used: https://docs.near.org/smart-contracts/security/checklist
-- Further detail: `RULEPACK_REPORT.md` (detectors, corpus run, limitations), `MCP_REPORT.md` (MCP server, SDK versions, limitations).
+- Further detail: `RULEPACK_REPORT.md` (detectors, corpus run, limitations), `MCP_REPORT.md` (MCP server, SDK versions, limitations), `SIMULATE_REPORT.md` (scenario runner), `ui/README.md` (panel), `docs/FORMATS.md` (file formats).

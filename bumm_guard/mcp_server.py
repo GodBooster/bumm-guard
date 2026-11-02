@@ -2,7 +2,7 @@
 
 Entry point: ``bumm-guard-mcp``. Needs the optional extra: ``pip install 'bumm-guard[mcp]'``.
 The tool functions below are plain Python (``list_rules``, ``scan_contract``, ``fix_contract``,
-``gate_deploy``) and need only the standard library; the ``mcp`` SDK is imported lazily in
+``gate_deploy``, ``estimate_storage``, ``verify_deployed``) and need only the standard library; the ``mcp`` SDK is imported lazily in
 ``build_server``/``main``.
 
 Safety properties:
@@ -11,6 +11,9 @@ Safety properties:
   * ``fix_contract`` is a dry run unless ``apply`` is true.
   * ``gate_deploy`` never runs a deploy: there is no ``execute`` parameter. It only returns the
     command text.
+  * ``estimate_storage`` and ``verify_deployed`` are read-only: they make public-RPC queries
+    (``EXPERIMENTAL_protocol_config``, ``view_code``, view calls), write nothing, and hold no key.
+    ``verify_deployed`` refuses init/migrate smoke methods.
 Nothing is ever written to stdout except MCP protocol messages.
 """
 
@@ -25,9 +28,12 @@ from pathlib import Path
 from . import __version__
 from .cli import fix_to_dict, scan_to_dict
 from .fix import run_fix
-from .gate import BLOCKING, NETWORKS, run_gate
+from .gate import BLOCKING, NETWORKS, run_gate, valid_account
 from .rulepack.near import RULES
 from .scanner import DEFAULT_EXCLUDES, scan
+from .storage import estimate_storage as _estimate_storage
+from .verify import SmokeSpecError, parse_smoke, post_deploy_ok
+from .verify import verify_deployed as _verify_deployed
 
 ALLOW_ANY_PATH_ENV = "BUMM_GUARD_ALLOW_ANY_PATH"
 
@@ -115,6 +121,40 @@ def gate_deploy(crate_dir: str, wasm: str | None = None, account: str | None = N
     }
 
 
+def _check_wasm(wasm: str, network: str) -> None:
+    _check_path(wasm, "wasm")
+    if network not in NETWORKS:
+        raise ToolInputError(f"network must be one of {list(NETWORKS)}")
+    if not os.path.isfile(wasm):
+        raise ToolInputError(f"wasm file not found: {wasm}")
+
+
+def estimate_storage(wasm: str, network: str = "testnet") -> dict:
+    """Storage-staking estimate for the wasm (one read-only RPC call; falls back to the documented default)."""
+    _check_wasm(wasm, network)
+    return {"tool": "bumm-guard", "version": __version__, "network": network,
+            "storage_estimate": _estimate_storage(wasm, network)}
+
+
+def verify_deployed(account: str, wasm: str, network: str = "testnet", smoke: list[str] | None = None) -> dict:
+    """Compare the code deployed at ``account`` with ``wasm`` and run view-only smoke calls (read-only)."""
+    _check_wasm(wasm, network)
+    if smoke is not None and (not isinstance(smoke, list) or not all(isinstance(x, str) for x in smoke)):
+        raise ToolInputError("smoke must be a list of 'METHOD' or 'METHOD:ARGS_JSON' strings")
+    if not isinstance(account, str) or not valid_account(account):
+        raise ToolInputError(f"invalid NEAR account id: {account!r}")
+    try:
+        for spec in smoke or []:
+            parse_smoke(spec)
+    except SmokeSpecError as e:
+        raise ToolInputError(str(e)) from None
+    block = _verify_deployed(account, wasm, network, smoke)
+    return {"tool": "bumm-guard", "version": __version__, "network": network, "verified": post_deploy_ok(block),
+            "post_deploy": block, "report_written": False,
+            "note": "Read-only check; nothing was deployed, signed or written. Use `bumm-guard gate --verify-deployed` "
+                    "to also record post_deploy in gate-report.json."}
+
+
 def build_server():
     """Create the MCP server object (imports the optional ``mcp`` SDK)."""
     try:
@@ -177,6 +217,26 @@ def build_server():
     def gate_deploy_tool(crate_dir: str, wasm: str | None = None, account: str | None = None,
                          network: str = "testnet") -> dict:
         return gate_deploy(crate_dir, wasm, account, network)
+
+    @server.tool(name="estimate_storage", description=(
+        "Estimate the storage-staking balance that deploying `wasm` locks on its account: code_bytes (file size), "
+        "storage_amount_per_byte_yocto (from the public RPC EXPERIMENTAL_protocol_config for `network`, falling back "
+        "to the documented 1e19 yocto/byte with source 'default (RPC unavailable)'), and locked_near_for_code. "
+        "state_bytes_after_init is null unless a simulate report measured it. Storage staking is a locked balance, "
+        "not a fee. READ-ONLY: one public RPC query, no key, no transaction, nothing written. Gas is not estimated."))
+    @readable_errors
+    def estimate_storage_tool(wasm: str, network: str = "testnet") -> dict:
+        return estimate_storage(wasm, network)
+
+    @server.tool(name="verify_deployed", description=(
+        "After the HUMAN has deployed: fetch the code at `account` (RPC view_code), sha256 it and compare with the "
+        "local `wasm` (matches_artifact), and run each `smoke` entry ('METHOD' or 'METHOD:ARGS_JSON', args default {}) "
+        "as a VIEW call, recording ok/result or the error. READ-ONLY: never deploys, never signs, never calls init, "
+        "migrate or any change method (such smoke names are refused). A failing smoke is reported, not fixed."))
+    @readable_errors
+    def verify_deployed_tool(account: str, wasm: str, network: str = "testnet",
+                             smoke: list[str] | None = None) -> dict:
+        return verify_deployed(account, wasm, network, smoke)
 
     return server
 

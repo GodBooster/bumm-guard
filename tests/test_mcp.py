@@ -21,7 +21,8 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parent.parent
 D1_VULN = "tests/fixtures/near/d1_vuln"
-EXPECTED_TOOLS = {"list_rules", "scan_contract", "fix_contract", "gate_deploy"}
+EXPECTED_TOOLS = {"list_rules", "scan_contract", "fix_contract", "gate_deploy", "estimate_storage",
+                  "verify_deployed"}
 
 
 def payload(result) -> dict:
@@ -45,7 +46,7 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
                 await s.initialize()
                 yield s
 
-    async def test_lists_four_tools_without_execute(self):
+    async def test_lists_six_tools_without_execute(self):
         async with self.session() as s:
             tools = (await s.list_tools()).tools
             self.assertEqual({t.name for t in tools}, EXPECTED_TOOLS)
@@ -56,6 +57,10 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("DRY-RUN", fix.description)
             for t in tools:
                 self.assertTrue(t.description)
+            for name in ("estimate_storage", "verify_deployed"):
+                t = next(t for t in tools if t.name == name)
+                self.assertIn("READ-ONLY", t.description)
+                self.assertNotIn("execute", (getattr(t, "input_schema", None) or t.inputSchema)["properties"])
 
     async def test_list_rules(self):
         async with self.session() as s:
@@ -148,10 +153,67 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
                 data = payload(await s.call_tool("scan_contract", {"path": str(ROOT / D1_VULN)}))
             self.assertEqual(data["summary"]["total"], 1)
 
+    async def test_rpc_tools_refuse_paths_outside_cwd(self):
+        # Nothing can be stubbed in the server subprocess: use inputs that are refused before any network call.
+        async with self.session() as s:
+            r = await s.call_tool("estimate_storage", {"wasm": "/etc/hosts"})
+            self.assertTrue(r.is_error if hasattr(r, "is_error") else r.isError)
+            self.assertIn("outside", r.content[0].text)
+            r = await s.call_tool("verify_deployed", {"account": "demo.testnet", "wasm": "/etc/hosts"})
+            self.assertTrue(r.is_error if hasattr(r, "is_error") else r.isError)
+
     async def test_missing_path_is_a_tool_error(self):
         async with self.session() as s:
             r = await s.call_tool("scan_contract", {"path": "does/not/exist"})
             self.assertTrue(r.is_error if hasattr(r, "is_error") else r.isError)
+
+
+class McpToolFunctionTests(unittest.TestCase):
+    """The two RPC tools as plain functions (no ``mcp`` package needed), with urllib stubbed.
+
+    The stdio server runs in a subprocess, where urllib cannot be stubbed, so the RPC paths are tested here.
+    """
+
+    def test_estimate_storage_and_verify_deployed_with_stubbed_rpc(self):
+        import base64
+        import hashlib
+        from unittest import mock
+        from bumm_guard import mcp_server
+
+        wasm_bytes = b"\0asm\x01\0\0\0" + b"x" * 100
+        with tempfile.TemporaryDirectory() as d:
+            w = Path(d) / "c.wasm"
+            w.write_bytes(wasm_bytes)
+
+            class Resp:
+                def __init__(self, result):
+                    self.body = json.dumps({"jsonrpc": "2.0", "id": "x", "result": result}).encode()
+                def read(self):
+                    return self.body
+                def __enter__(self):
+                    return self
+                def __exit__(self, *a):
+                    return False
+
+            def fake(req, timeout=None):
+                p = json.loads(req.data)
+                if p["method"] == "EXPERIMENTAL_protocol_config":
+                    return Resp({"runtime_config": {"storage_amount_per_byte": "10000000000000000000"}})
+                if p["params"]["request_type"] == "view_code":
+                    return Resp({"code_base64": base64.b64encode(wasm_bytes).decode(), "hash": "x"})
+                return Resp({"result": list(b"3"), "logs": []})
+
+            with mock.patch("urllib.request.urlopen", side_effect=fake), \
+                    mock.patch.dict(os.environ, {mcp_server.ALLOW_ANY_PATH_ENV: "1"}):
+                est = mcp_server.estimate_storage(str(w), "testnet")["storage_estimate"]
+                ver = mcp_server.verify_deployed("demo.testnet", str(w), "testnet", ["get_x"])
+                with self.assertRaises(mcp_server.ToolInputError):
+                    mcp_server.verify_deployed("demo.testnet", str(w), "testnet", ["new"])
+        self.assertEqual(est["code_bytes"], len(wasm_bytes))
+        self.assertEqual(est["locked_near_for_code"], "0.0011")
+        self.assertTrue(ver["verified"])
+        self.assertEqual(ver["post_deploy"]["code_hash_on_chain"], hashlib.sha256(wasm_bytes).hexdigest())
+        self.assertEqual(ver["post_deploy"]["smoke"], [{"view": "get_x", "ok": True, "result": 3}])
 
 
 if __name__ == "__main__":

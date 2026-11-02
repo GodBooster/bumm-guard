@@ -1,8 +1,10 @@
 """Deploy gate: scan a crate, refuse to hand out a deploy command while blocking findings exist.
 
 ``run_gate`` returns a ``GateOutcome`` (exit code + lines to print); the CLI does the printing.
-Exit codes: 0 clean, 2 refused/bad input, 3 DEPLOY BLOCKED (high/critical finding),
-4 ``--execute`` but ``near`` not on PATH, 5 ``near`` ran and failed.
+Exit codes: 0 clean, 2 refused/bad input, 3 DEPLOY BLOCKED (high/critical finding, or a simulate
+report that does not match the wasm / has failed scenarios), 4 ``--execute`` but ``near`` not on PATH,
+5 ``near`` ran and failed (deploy mode) or post-deploy verification failed (``--verify-deployed`` mode:
+code hash mismatch, a failed smoke view, or RPC unreachable).
 
 Nothing is executed by default: the exact ``near contract deploy`` command (near-cli-rs 0.30
 syntax) is only printed. ``--execute`` runs it, testnet only. When the gate blocks, no deploy
@@ -26,6 +28,8 @@ from pathlib import Path
 from . import __version__
 from .rulepack.near import RULES
 from .scanner import ScanResult, discover, scan
+from .storage import RPC_URLS, estimate_storage, simulate_state_bytes  # noqa: F401  (RPC_URLS re-exported)
+from .verify import SmokeSpecError, parse_smoke, post_deploy_ok, verify_deployed
 
 BLOCKING = ("critical", "high")
 REPORT_DIR = ".bumm-guard"
@@ -67,7 +71,8 @@ def deploy_command(account: str, wasm: str, network: str) -> list[str]:
             "network-config", network, "sign-with-keychain", "send"]
 
 
-def build_report(crate: Path, res: ScanResult, wasm: str | None, network: str, account: str | None) -> dict:
+def build_report(crate: Path, res: ScanResult, wasm: str | None, network: str, account: str | None,
+                 abi: str | None = None) -> dict:
     hashes = {}
     for disp, _root in discover([str(crate)]):
         hashes[Path(os.path.relpath(disp, crate)).as_posix()] = sha256_file(disp)
@@ -91,12 +96,48 @@ def build_report(crate: Path, res: ScanResult, wasm: str | None, network: str, a
         "account": account,
         "rs_sha256": dict(sorted(hashes.items())),
         "wasm": wasm_info,
+        "artifact": {"wasm_sha256": wasm_info["sha256"] if wasm_info else None,
+                     "abi_sha256": sha256_file(abi) if abi else None},
+        "simulate": None,
+        "storage_estimate": None,
+        "post_deploy": None,
     }
 
 
+def load_simulate_report(path: str, wasm_sha256: str) -> tuple[dict | None, list[str], int]:
+    """Check a docs/FORMATS.md §3 report against the wasm. Returns ``(simulate block, error lines, exit code)``.
+
+    Exit 2 = unreadable report, 3 = blocks the deploy (other wasm, failed scenarios, no scenarios).
+    """
+    try:
+        rep = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return None, [f"bumm-guard: cannot read simulate report {path}: {e}"], 2
+    if not isinstance(rep, dict) or not isinstance(rep.get("scenarios"), list) or not isinstance(rep.get("summary"), dict):
+        return None, [f"bumm-guard: {path} is not a simulate report (docs/FORMATS.md §3)"], 2
+    if rep.get("wasm_sha256") != wasm_sha256:
+        return None, ["DEPLOY BLOCKED: simulate report is for a different wasm "
+                      f"(report {rep.get('wasm_sha256')!r}, artifact {wasm_sha256!r}). Re-run `bumm-guard simulate` "
+                      "against this wasm."], 3
+    failing = [str(sc.get("name", "?")) for sc in rep["scenarios"] if isinstance(sc, dict) and not sc.get("passed")]
+    failed = rep["summary"].get("failed")
+    if failing or not isinstance(failed, int) or failed != 0:
+        names = ", ".join(failing) or "(see report)"
+        return None, [f"DEPLOY BLOCKED: simulate report has failing scenario(s): {names}"], 3
+    if not rep["scenarios"]:
+        return None, ["DEPLOY BLOCKED: simulate report contains no scenarios"], 3
+    return {"report": path, "passed": True, "scenarios": len(rep["scenarios"])}, [], 0
+
+
 def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", account: str | None = None,
-             dry_run: bool = False, execute: bool = False) -> GateOutcome:
-    """Scan, decide, optionally write the report and (testnet only) run the deploy."""
+             dry_run: bool = False, execute: bool = False, abi: str | None = None,
+             simulate_report: str | None = None, estimate_storage_flag: bool = False,
+             rpc_url: str | None = None) -> GateOutcome:
+    """Scan, decide, optionally write the report and (testnet only) run the deploy.
+
+    ``simulate_report`` binds a §3 report to ``wasm``; ``estimate_storage_flag`` adds the read-only
+    storage estimate (one RPC call, plus one with ``account``).
+    """
     crate = Path(crate_dir)
     if not crate.is_dir():
         return GateOutcome(2, errors=[f"bumm-guard: not a directory: {crate_dir}"])
@@ -112,6 +153,12 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
         if not Path(wasm).is_file():
             return GateOutcome(2, errors=[f"bumm-guard: wasm file not found: {wasm}"])
 
+    if abi is not None and not Path(abi).is_file():
+        return GateOutcome(2, errors=[f"bumm-guard: abi file not found: {abi}"])
+    if (simulate_report or estimate_storage_flag) and not (wasm and Path(wasm).is_file()):
+        return GateOutcome(2, errors=["bumm-guard: --simulate-report and --estimate-storage need an existing --wasm "
+                                      "(the report is bound to the wasm hash / its size is measured)"])
+
     res = scan([str(crate)])
     blocking = [f for f in res.findings if f.severity in BLOCKING]
     report = crate / REPORT_DIR / REPORT_NAME
@@ -125,7 +172,35 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
         return out
 
     out = GateOutcome(0, scan=res)
-    data = build_report(crate, res, wasm, network, account)
+    data = build_report(crate, res, wasm, network, account, abi)
+    sim_block, sim_report = None, None
+    if simulate_report:
+        sim_block, errs, code = load_simulate_report(simulate_report, data["artifact"]["wasm_sha256"])
+        if code:
+            out = GateOutcome(code, scan=res, blocked=(code == 3), errors=errs if code == 2 else [])
+            if code == 3:
+                out.lines.extend(errs)
+            if not dry_run and report.is_file():
+                report.unlink()
+                out.lines.append(f"removed stale {report}")
+            return out
+        sim_report = json.loads(Path(simulate_report).read_text(encoding="utf-8"))
+        data["simulate"] = sim_block
+        out.lines.append(f"simulate report ok: {sim_block['scenarios']} scenario(s) passed for this wasm")
+    else:
+        out.lines.append("warning: no scenario report: behaviour not verified")
+    if estimate_storage_flag:
+        est = estimate_storage(wasm, network, rpc_url, account, simulate_state_bytes(sim_report))
+        data["storage_estimate"] = est
+        out.lines.append(f"storage: wasm {est['code_bytes']} bytes locks about {est['locked_near_for_code']} NEAR "
+                         f"({est['source']}); a locked balance, not a fee")
+        if est.get("state_bytes_after_init") is None:
+            out.lines.append("storage: state size after init unknown (simulate report has no storage_usage)")
+        acct = est.get("account")
+        if acct:
+            out.lines.append(f"storage: account {acct['id']}: " + (
+                acct["error"] if "error" in acct else
+                f"storage_usage {acct['storage_usage']} bytes, balance {acct['amount_near']} NEAR"))
     if wasm and not data["wasm"]["exists"]:
         out.errors.append(f"bumm-guard: warning: wasm not found: {wasm} (sha256 not recorded)")
     if dry_run:
@@ -153,4 +228,69 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
     if rc != 0:
         out.exit_code = 5
         out.errors.append(f"bumm-guard: `near` exited with status {rc}")
+    return out
+
+
+def run_verify_deployed(account: str, wasm: str, network: str = "testnet", smoke: list[str] | None = None,
+                        crate_dir: str | None = None, rpc_url: str | None = None,
+                        dry_run: bool = False) -> GateOutcome:
+    """``gate --verify-deployed``: compare on-chain code with ``wasm``, run view-only smoke calls.
+
+    Exit 0 if the hash matches and every smoke view succeeded, 5 otherwise, 2 for bad input. The
+    ``post_deploy`` block is merged into ``<crate_dir or .>/.bumm-guard/gate-report.json`` (created if absent).
+    Never calls init or a change method and never holds a key.
+    """
+    if not valid_account(account):
+        return GateOutcome(2, errors=[f"bumm-guard: invalid NEAR account id: {account!r}"])
+    if not Path(wasm).is_file():
+        return GateOutcome(2, errors=[f"bumm-guard: wasm file not found: {wasm}"])
+    base = Path(crate_dir) if crate_dir else Path(".")
+    if not base.is_dir():
+        return GateOutcome(2, errors=[f"bumm-guard: not a directory: {base}"])
+    try:
+        for spec in smoke or []:
+            parse_smoke(spec)
+    except SmokeSpecError as e:
+        return GateOutcome(2, errors=[f"bumm-guard: {e}"])
+    block = verify_deployed(account, wasm, network, smoke, rpc_url)
+    ok = post_deploy_ok(block)
+    out = GateOutcome(0 if ok else 5)
+    local = sha256_file(wasm)
+    out.lines.append(f"post-deploy {account} ({network}): on-chain code sha256 {block['code_hash_on_chain']}")
+    out.lines.append(f"post-deploy: local wasm sha256 {local}: "
+                     + ("MATCH" if block["matches_artifact"] else "MISMATCH (deployed code is not this artifact)"))
+    if "error" in block:
+        out.errors.append(f"bumm-guard: could not fetch deployed code: {block['error']}")
+    for sm in block["smoke"]:
+        detail = json.dumps(sm["result"]) if sm["ok"] else sm.get("error", "failed")
+        out.lines.append(f"smoke {sm['view']}: {'ok' if sm['ok'] else 'FAILED'}: {detail}")
+    out.lines.append("post-deploy verification " + ("passed" if ok else "FAILED"))
+    report = base / REPORT_DIR / REPORT_NAME
+    if dry_run:
+        out.lines.append("dry-run: gate-report.json not written")
+        return out
+    data: dict = {}
+    if report.is_file():
+        try:
+            loaded = json.loads(report.read_text(encoding="utf-8"))
+            data = loaded if isinstance(loaded, dict) else {}
+        except (OSError, ValueError):
+            data = {}
+    if not data:
+        data = {"tool": "bumm-guard", "version": __version__,
+                "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "network": network, "account": account,
+                "wasm": {"path": wasm, "sha256": local, "exists": True},
+                "artifact": {"wasm_sha256": local, "abi_sha256": None},
+                "simulate": None, "storage_estimate": None}
+    else:
+        prev = (data.get("artifact") or {}).get("wasm_sha256")
+        if prev and prev != local:
+            out.errors.append("bumm-guard: warning: existing gate-report.json is for a different wasm "
+                              f"({prev}); post_deploy was compared with {wasm}")
+    data["post_deploy"] = block
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    out.report_path = str(report)
+    out.lines.append(f"post_deploy written to {report}")
     return out

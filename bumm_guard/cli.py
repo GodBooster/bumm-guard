@@ -8,7 +8,7 @@ import sys
 
 from . import __version__
 from .fix import FixRun, run_fix
-from .gate import NETWORKS, run_gate
+from .gate import NETWORKS, run_gate, run_verify_deployed
 from .model import SEVERITIES, Finding
 from .rulepack.near import RULES
 from .scanner import DEFAULT_EXCLUDES, ScanResult, scan
@@ -140,8 +140,25 @@ def _cmd_fix(args: argparse.Namespace) -> int:
 
 
 def _cmd_gate(args: argparse.Namespace) -> int:
-    out = run_gate(args.crate_dir, wasm=args.wasm, network=args.network, account=args.account,
-                   dry_run=args.dry_run, execute=args.execute)
+    if args.verify_deployed is not None:
+        clash = [f for f, v in (("--execute", args.execute), ("--abi", args.abi), ("--account", args.account),
+                                ("--simulate-report", args.simulate_report),
+                                ("--estimate-storage", args.estimate_storage)) if v]
+        if clash or not args.wasm:
+            print("bumm-guard: --verify-deployed needs --wasm and cannot be combined with "
+                  + ", ".join(clash or ["(nothing else)"]), file=sys.stderr)
+            return 2
+        out = run_verify_deployed(args.verify_deployed, args.wasm, args.network, args.smoke,
+                                  crate_dir=args.crate_dir, rpc_url=args.rpc_url, dry_run=args.dry_run)
+    else:
+        if args.crate_dir is None or args.smoke:
+            print("bumm-guard: gate needs <crate-dir> (and --smoke only works with --verify-deployed)",
+                  file=sys.stderr)
+            return 2
+        out = run_gate(args.crate_dir, wasm=args.wasm, network=args.network, account=args.account,
+                       dry_run=args.dry_run, execute=args.execute, abi=args.abi,
+                       simulate_report=args.simulate_report, estimate_storage_flag=args.estimate_storage,
+                       rpc_url=args.rpc_url)
     if out.blocked and out.scan is not None:
         print(render_text(out.scan))
     for line in out.lines:
@@ -190,8 +207,19 @@ def build_parser() -> argparse.ArgumentParser:
     fp.add_argument("--exclude", action="append", metavar="DIRNAME", help="extra directory name to skip (repeatable)")
     fp.set_defaults(func=_cmd_fix)
     gp = sub.add_parser("gate", help="scan a crate and print the deploy command only if no high/critical finding exists")
-    gp.add_argument("crate_dir", metavar="crate-dir")
+    gp.add_argument("crate_dir", metavar="crate-dir", nargs="?",
+                    help="crate to scan (optional with --verify-deployed: where .bumm-guard/ lives, default .)")
     gp.add_argument("--wasm", metavar="PATH", help="built contract; its sha256 goes into the report")
+    gp.add_argument("--abi", metavar="PATH", help="cargo near abi output; its sha256 goes into the report")
+    gp.add_argument("--simulate-report", metavar="PATH",
+                    help="simulate-report.json (docs/FORMATS.md §3); must match --wasm and have 0 failed scenarios, else exit 3")
+    gp.add_argument("--estimate-storage", action="store_true",
+                    help="add the storage-staking estimate (read-only RPC call to --network; needs --wasm)")
+    gp.add_argument("--rpc-url", metavar="URL", help="override the public RPC endpoint for --network")
+    gp.add_argument("--verify-deployed", metavar="ACCOUNT",
+                    help="post-deploy check: compare view_code of ACCOUNT with --wasm and run --smoke views; exit 0 ok, 5 not")
+    gp.add_argument("--smoke", action="append", metavar="METHOD[:ARGS_JSON]",
+                    help="view method to call after --verify-deployed (repeatable; args default {}; init/migrate refused)")
     gp.add_argument("--network", choices=NETWORKS, default="testnet")
     gp.add_argument("--account", metavar="ID", help="NEAR account to deploy to")
     mode = gp.add_mutually_exclusive_group()

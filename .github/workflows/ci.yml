@@ -120,6 +120,11 @@ jobs:
         run: |
           python -m bumm_guard simulate scenarios/n06/*.json \
             --runner contracts/target/release/bumm-sim --out simulate-out/simulate-report.json
+      - name: gate with simulate evidence (binds report to this wasm; blocks on failed scenarios)
+        run: |
+          python -m bumm_guard gate tests/fixtures/near/event_registration \
+            --wasm tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration.wasm \
+            --simulate-report simulate-out/simulate-report.json --dry-run
       - if: always()
         uses: actions/upload-artifact@v4
         with:

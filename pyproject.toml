@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bumm-guard"
-version = "0.3.0"
+version = "0.5.0"
 description = "Static analysis rule-pack for NEAR (near-sdk-rs 5.x) smart contracts: finds known defect classes before deploy."
 readme = "README.md"
 requires-python = ">=3.12"

@@ -1,6 +1,6 @@
 {
   "name": "bumm-guard",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "description": "BUMM Guard for NEAR contracts: MCP tools (scan, fix, deploy gate) and a skill that runs the gate before any NEAR deploy.",
   "author": { "name": "BUMM contributors" },
   "license": "MIT",
