@@ -1,0 +1,426 @@
+{
+  "tool": "bumm-guard",
+  "version": "0.4.0",
+  "runner": "bumm-sim 0.4.0",
+  "wasm_sha256": "c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617",
+  "scenario_sha256": "378d90e1b228a9a4f7f9099e706370d4954ac9de19f3370d645ffba0b46bd17b",
+  "sandbox": {
+    "near_workspaces": "0.24.0",
+    "near_sandbox": "0.4.0"
+  },
+  "scenarios": [
+    {
+      "name": "N06 capacity 2, third refused, cancel frees a seat",
+      "file": "scenarios/n06/01_capacity_cancel_frees.json",
+      "scenario_sha256": "b8dafbe172da8485f95573b9dec961c47608b4997da70f2634cfbe5ccb26123c",
+      "wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration.wasm",
+      "wasm_sha256": "c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617",
+      "passed": true,
+      "duration_s": 4.8,
+      "accounts": {
+        "alice": "alice.test.near",
+        "bob": "bob.test.near",
+        "carol": "carol.test.near",
+        "contract": "contract.test.near"
+      },
+      "init": {
+        "method": "new",
+        "passed": true,
+        "actual": {
+          "status": "success",
+          "value": null,
+          "gas_burnt_tgas": 1.542
+        }
+      },
+      "steps": [
+        {
+          "index": 0,
+          "kind": "call",
+          "method": "register",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.799
+          }
+        },
+        {
+          "index": 1,
+          "kind": "call",
+          "method": "register",
+          "by": "bob",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.81
+          }
+        },
+        {
+          "index": 2,
+          "kind": "call",
+          "method": "register",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Event is full"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Event is full: capacity 2 reached, registration refused\")",
+            "gas_burnt_tgas": 1.577
+          }
+        },
+        {
+          "index": 3,
+          "kind": "view",
+          "method": "get_registered_count",
+          "passed": true,
+          "expected": {
+            "equals": 2
+          },
+          "actual": {
+            "status": "success",
+            "value": 2
+          }
+        },
+        {
+          "index": 4,
+          "kind": "call",
+          "method": "cancel",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.152
+          }
+        },
+        {
+          "index": 5,
+          "kind": "call",
+          "method": "register",
+          "by": "carol",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.811
+          }
+        },
+        {
+          "index": 6,
+          "kind": "view",
+          "method": "get_registered",
+          "passed": true,
+          "expected": {
+            "contains": "carol"
+          },
+          "actual": {
+            "status": "success",
+            "value": [
+              "bob.test.near",
+              "carol.test.near"
+            ]
+          }
+        },
+        {
+          "index": 7,
+          "kind": "view",
+          "method": "get_seats_left",
+          "passed": true,
+          "expected": {
+            "equals": 0
+          },
+          "actual": {
+            "status": "success",
+            "value": 0
+          }
+        },
+        {
+          "index": 8,
+          "kind": "balance",
+          "account": "bob",
+          "passed": true,
+          "expected": {
+            "at_least": "9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "9999818953840960300000000",
+            "near": "9.9998189538409603"
+          }
+        }
+      ]
+    },
+    {
+      "name": "N06 duplicate registration refused",
+      "file": "scenarios/n06/02_duplicate_registration_refused.json",
+      "scenario_sha256": "5d73076c50629c6fc2857185a8d98c0b197ad298de02d1db8ebd2a6e3f3a913a",
+      "wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration.wasm",
+      "wasm_sha256": "c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617",
+      "passed": true,
+      "duration_s": 3.6,
+      "accounts": {
+        "alice": "alice.test.near",
+        "bob": "bob.test.near",
+        "contract": "contract.test.near"
+      },
+      "init": {
+        "method": "new",
+        "passed": true,
+        "actual": {
+          "status": "success",
+          "value": null,
+          "gas_burnt_tgas": 1.542
+        }
+      },
+      "steps": [
+        {
+          "index": 0,
+          "kind": "call",
+          "method": "register",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.799
+          }
+        },
+        {
+          "index": 1,
+          "kind": "call",
+          "method": "register",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "fail_contains": "is already registered"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Account alice.test.near is already registered\")",
+            "gas_burnt_tgas": 1.573
+          }
+        },
+        {
+          "index": 2,
+          "kind": "view",
+          "method": "get_registered_count",
+          "passed": true,
+          "expected": {
+            "equals": 1
+          },
+          "actual": {
+            "status": "success",
+            "value": 1
+          }
+        },
+        {
+          "index": 3,
+          "kind": "view",
+          "method": "get_registered",
+          "passed": true,
+          "expected": {
+            "equals": [
+              "alice"
+            ]
+          },
+          "actual": {
+            "status": "success",
+            "value": [
+              "alice.test.near"
+            ]
+          }
+        },
+        {
+          "index": 4,
+          "kind": "view",
+          "method": "is_registered",
+          "passed": true,
+          "expected": {
+            "equals": false
+          },
+          "actual": {
+            "status": "success",
+            "value": false
+          }
+        },
+        {
+          "index": 5,
+          "kind": "call",
+          "method": "register",
+          "by": "bob",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.81
+          }
+        },
+        {
+          "index": 6,
+          "kind": "view",
+          "method": "get_seats_left",
+          "passed": true,
+          "expected": {
+            "equals": 0
+          },
+          "actual": {
+            "status": "success",
+            "value": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "N06 cancel without registration refused",
+      "file": "scenarios/n06/03_cancel_without_registration_refused.json",
+      "scenario_sha256": "e785e1df1555c3c459b2ca1d11a14deb648475746fc800bcf088f5028cf26776",
+      "wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration.wasm",
+      "wasm_sha256": "c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617",
+      "passed": true,
+      "duration_s": 4.0,
+      "accounts": {
+        "alice": "alice.test.near",
+        "bob": "bob.test.near",
+        "contract": "contract.test.near"
+      },
+      "init": {
+        "method": "new",
+        "passed": true,
+        "actual": {
+          "status": "success",
+          "value": null,
+          "gas_burnt_tgas": 1.542
+        }
+      },
+      "steps": [
+        {
+          "index": 0,
+          "kind": "call",
+          "method": "cancel",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "fail_contains": "is not registered"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Account alice.test.near is not registered\")",
+            "gas_burnt_tgas": 1.575
+          }
+        },
+        {
+          "index": 1,
+          "kind": "call",
+          "method": "register",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.799
+          }
+        },
+        {
+          "index": 2,
+          "kind": "call",
+          "method": "cancel",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "fail_contains": "is not registered"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Account bob.test.near is not registered\")",
+            "gas_burnt_tgas": 1.574
+          }
+        },
+        {
+          "index": 3,
+          "kind": "view",
+          "method": "get_registered_count",
+          "passed": true,
+          "expected": {
+            "equals": 1
+          },
+          "actual": {
+            "status": "success",
+            "value": 1
+          }
+        },
+        {
+          "index": 4,
+          "kind": "view",
+          "method": "get_seats_left",
+          "passed": true,
+          "expected": {
+            "equals": 1
+          },
+          "actual": {
+            "status": "success",
+            "value": 1
+          }
+        },
+        {
+          "index": 5,
+          "kind": "call",
+          "method": "cancel",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.875
+          }
+        },
+        {
+          "index": 6,
+          "kind": "call",
+          "method": "cancel",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "fail_contains": "is not registered"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Account alice.test.near is not registered\")",
+            "gas_burnt_tgas": 1.575
+          }
+        },
+        {
+          "index": 7,
+          "kind": "view",
+          "method": "get_registered_count",
+          "passed": true,
+          "expected": {
+            "equals": 0
+          },
+          "actual": {
+            "status": "success",
+            "value": 0
+          }
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "scenarios": 3,
+    "passed": 3,
+    "failed": 0,
+    "steps": 24,
+    "steps_failed": 0
+  }
+}

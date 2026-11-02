@@ -1,0 +1,78 @@
+{
+  "tool": "bumm-guard",
+  "version": "0.5.0",
+  "timestamp_utc": "2026-11-02T13:09:15Z",
+  "crate_dir": "tests/fixtures/near/event_registration",
+  "rule_ids_checked": [
+    "BG-NEAR-001",
+    "BG-NEAR-002",
+    "BG-NEAR-003"
+  ],
+  "findings_count": 0,
+  "findings_by_severity": {},
+  "blocking_findings": 0,
+  "network": "testnet",
+  "account": "bumm-guard-demo.testnet",
+  "rs_sha256": {
+    "src/lib.rs": "a959c68b5d2dad0fae036a3e9a0f74675fe8d9bb7b32f83d1cc96018f9cb72d8"
+  },
+  "wasm": {
+    "path": "../e2e/event_registration.wasm",
+    "sha256": "c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617",
+    "exists": true
+  },
+  "artifact": {
+    "wasm_sha256": "c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617",
+    "abi_sha256": null
+  },
+  "simulate": {
+    "report": "../e2e/simulate-report.json",
+    "passed": true,
+    "scenarios": 3
+  },
+  "storage_estimate": {
+    "code_bytes": 180626,
+    "state_bytes_after_init": null,
+    "storage_amount_per_byte_yocto": "10000000000000000000",
+    "source": "EXPERIMENTAL_protocol_config via RPC testnet, 2026-11-02",
+    "locked_near_for_code": "1.8063",
+    "note": "storage staking is a locked balance, not a fee; state bytes are measured by simulate when available",
+    "account": {
+      "id": "bumm-guard-demo.testnet",
+      "storage_usage": 182,
+      "amount_yocto": "10000000000000000000000000",
+      "amount_near": "10.0000"
+    }
+  },
+  "post_deploy": {
+    "account": "bumm-guard-demo.testnet",
+    "code_hash_on_chain": "c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617",
+    "matches_artifact": true,
+    "smoke": [
+      {
+        "view": "get_capacity",
+        "ok": true,
+        "result": 2
+      },
+      {
+        "view": "get_registered_count",
+        "ok": true,
+        "result": 0
+      },
+      {
+        "view": "get_seats_left",
+        "ok": true,
+        "result": 2
+      },
+      {
+        "view": "is_registered",
+        "args": {
+          "account_id": "bumm-guard-demo.testnet"
+        },
+        "ok": true,
+        "result": false
+      }
+    ],
+    "note": "init is never re-called; a contract that fails the smoke view is reported, not fixed"
+  }
+}
