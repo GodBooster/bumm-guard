@@ -125,11 +125,39 @@ jobs:
           python -m bumm_guard gate tests/fixtures/near/event_registration \
             --wasm tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration.wasm \
             --simulate-report simulate-out/simulate-report.json --dry-run
+      - name: build event_registration_waitlist wasm (rustc 1.85.0; N10 upgrade target)
+        working-directory: tests/fixtures/near
+        run: cargo build --release --locked --target wasm32-unknown-unknown -p event_registration_waitlist
+      - name: upgrade N06 -> N10 with migrate() (expected PASS)
+        run: |
+          python -m bumm_guard simulate scenarios/upgrade/n06_to_n10_with_migrate.json \
+            --runner contracts/target/release/bumm-sim --out simulate-out/upgrade-with-migrate.json
+      - name: upgrade N06 -> N10 code only (expected FAIL after the upgrade step)
+        run: |
+          set +e
+          python -m bumm_guard simulate scenarios/upgrade/n06_to_n10_code_only.json \
+            --runner contracts/target/release/bumm-sim --out simulate-out/upgrade-code-only.json
+          code=$?
+          set -e
+          test "$code" -eq 1 || { echo "expected exit 1 (scenario failed), got $code"; exit 1; }
+          python - <<'EOF'
+          import json
+          r = json.load(open("simulate-out/upgrade-code-only.json"))
+          (sc,) = r["scenarios"]
+          up = next(s["index"] for s in sc["steps"] if s["kind"] == "upgrade")
+          before = [s for s in sc["steps"] if s["index"] <= up]
+          after = [s for s in sc["steps"] if s["index"] > up]
+          assert sc.get("error") is None, sc["error"]
+          assert all(s["passed"] for s in before), [s for s in before if not s["passed"]]
+          assert after and all(not s["passed"] and s["actual"]["status"] == "failure" for s in after), after
+          assert r["upgrade_wasm_sha256"] and sc["steps"][up]["actual"]["code_sha256"] == r["upgrade_wasm_sha256"]
+          print(f"code-only upgrade: steps 0..{up} passed, {len(after)} step(s) after it failed, as expected")
+          EOF
       - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: simulate-report
-          path: simulate-out/simulate-report.json
+          path: simulate-out/
           if-no-files-found: warn
       - name: upload the exact wasm the scenarios ran against (deploy this file, not a local rebuild)
         uses: actions/upload-artifact@v4
