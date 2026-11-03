@@ -1,0 +1,72 @@
+name: evaluate
+
+# Builds one NEAR contract crate from any branch and runs scenario files against it in
+# near-sandbox, using the same bumm-sim runner as the main CI. Used two ways:
+#   - by the coordinator, to score study runs against hidden acceptance scenarios;
+#   - by an agent working "with BUMM", as its remote sandbox (the owner's machine has no
+#     near-sandbox binary and limited traffic).
+# Trigger: gh workflow run evaluate.yml --ref <branch> -f crate_dir=<dir> -f scenarios='<glob>'
+
+on:
+  workflow_dispatch:
+    inputs:
+      crate_dir:
+        description: "crate directory on the chosen ref (must build to wasm with rustc 1.85.0)"
+        required: true
+      scenarios:
+        description: "space-separated scenario files or globs, relative to the repo root"
+        required: true
+      label:
+        description: "free text, copied into the report artifact name"
+        required: false
+        default: "run"
+
+jobs:
+  evaluate:
+    name: build + simulate (${{ inputs.label }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: install rustc 1.85.0 for the contract (near-sdk 5.17.2 does not link on newer rustc)
+        run: rustup toolchain install 1.85.0 --profile minimal --target wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            contracts
+            ${{ inputs.crate_dir }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: build the contract wasm with rustc 1.85.0
+        id: build
+        working-directory: ${{ inputs.crate_dir }}
+        run: |
+          set -o pipefail
+          cargo +1.85.0 build --release --target wasm32-unknown-unknown 2>&1 | tee ../build.log
+          wasm=$(ls target/wasm32-unknown-unknown/release/*.wasm | head -1)
+          echo "wasm=${{ inputs.crate_dir }}/$wasm" >> "$GITHUB_OUTPUT"
+          sha256sum "$wasm"
+      - name: build bumm-sim (rustc 1.99.1)
+        working-directory: contracts
+        run: cargo build --release --locked -p bumm-sim
+      - name: run scenarios
+        run: |
+          mkdir -p eval-out
+          set +e
+          python -m bumm_guard simulate ${{ inputs.scenarios }} \
+            --wasm "${{ steps.build.outputs.wasm }}" \
+            --runner contracts/target/release/bumm-sim --out eval-out/simulate-report.json
+          echo "simulate exit=$?" | tee eval-out/exit.txt
+          exit 0
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-${{ inputs.label }}
+          path: |
+            eval-out/
+            ${{ inputs.crate_dir }}/../build.log
+          if-no-files-found: warn
