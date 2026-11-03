@@ -97,6 +97,16 @@ fn upgrade_scenarios_on_near_sandbox() -> Result<()> {
     for s in &steps[UPGRADE_INDEX + 1..] {
         assert_eq!(s["passed"], false, "code only, after the upgrade: {s:#}");
         assert_eq!(s["actual"]["status"], "failure", "{s:#}");
+        // Every step (call and view alike) must name the contract's own failure, not only the
+        // RPC wrapper: the report is the evidence that the migration is missing.
+        let a = &s["actual"];
+        assert!(
+            a["error"].as_str().unwrap_or("").contains("Cannot deserialize"),
+            "code only, after the upgrade, actual.error must carry the panic text: {s:#}"
+        );
+        if s["kind"] == "view" {
+            assert!(a["error_detail"].as_str().unwrap_or("").contains("Cannot deserialize"), "{s:#}");
+        }
     }
     Ok(())
 }

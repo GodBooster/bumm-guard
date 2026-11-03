@@ -470,6 +470,11 @@ pub struct Actual {
     /// Upgrade steps: sha256 of the wasm sent in the `DeployContract` action.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code_sha256: Option<String>,
+    /// Failed `view` steps: the contract's own error text (the `vm_error` of the RPC query error,
+    /// e.g. `... GuestPanic { panic_msg: "Cannot deserialize the contract state." }`), when it
+    /// could be extracted; `error` then ends with the same text. Absent elsewhere.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_detail: Option<String>,
     /// Debug form of the error, only used for matching when `error` (Display) misses the text.
     #[serde(skip)]
     pub error_debug: Option<String>,
@@ -488,6 +493,19 @@ impl Actual {
     pub fn is_success(&self) -> bool {
         self.status == "success"
     }
+    /// A failed `view` step. `display` is the near-workspaces error text (an RPC wrapper such as
+    /// `unable to fulfill the query request`), `debug` its `{:?}` form and `sources` the text of
+    /// its `std::error::Error::source` chain, outermost first. The contract's own text (see
+    /// `inner_error_text`) goes to `error_detail` and is appended to `error` unless the wrapper
+    /// already contains it, so a report shows why the view failed, not only that the RPC refused.
+    pub fn view_failure(display: String, debug: String, sources: Vec<String>) -> Self {
+        let detail = inner_error_text(&debug, &sources);
+        let error = match &detail {
+            Some(d) if !display.contains(d.as_str()) => format!("{display}: {d}"),
+            _ => display,
+        };
+        Actual { error_detail: detail, error_debug: Some(debug), ..Actual::failure(error) }
+    }
     /// Convert raw return bytes into `value` (JSON if possible).
     pub fn from_return_bytes(bytes: &[u8]) -> Self {
         if bytes.is_empty() {
@@ -501,6 +519,39 @@ impl Actual {
             },
         }
     }
+}
+
+/// The contract's own error text inside a failed RPC query: the `vm_error: "..."` string of the
+/// error's `Debug` form (escapes undone), else the innermost text of `sources` (the Display of
+/// the error's `source()` chain), else nothing. Never invents text.
+pub fn inner_error_text(debug: &str, sources: &[String]) -> Option<String> {
+    if let Some(v) = debug_field(debug, "vm_error") {
+        if !v.trim().is_empty() {
+            return Some(v);
+        }
+    }
+    sources.iter().rev().find(|s| !s.trim().is_empty()).cloned()
+}
+
+/// Value of the first `name: "..."` field in a Rust `Debug` rendering, with `\"`, `\\`, `\n`
+/// and `\t` unescaped. `None` when the field is absent or its string is not closed.
+fn debug_field(debug: &str, name: &str) -> Option<String> {
+    let key = format!("{name}: \"");
+    let start = debug.find(&key)? + key.len();
+    let mut out = String::new();
+    let mut chars = debug[start..].chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => match chars.next()? {
+                'n' => out.push('\n'),
+                't' => out.push('\t'),
+                other => out.push(other),
+            },
+            '"' => return Some(out),
+            other => out.push(other),
+        }
+    }
+    None
 }
 
 fn json_eq(a: &Value, b: &Value) -> bool {
@@ -1039,6 +1090,44 @@ mod tests {
         assert!(evaluate(&Expect::AtMost(2), &two, &a).0);
         assert!(!evaluate(&Expect::AtLeast(1), &Actual::success(Some(json!("x"))), &a).0);
         assert!(!evaluate(&Expect::Ok, &Actual::skipped("not executed"), &a).0);
+    }
+
+    #[test]
+    fn view_failure_exposes_the_contract_error() {
+        // Debug form of the near-workspaces error for a view on code that cannot read the state.
+        let debug = r#"Error { repr: Custom { kind: Execution, error: ServerError(HandlerError(ContractExecutionError { vm_error: "wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })", block_height: 12, block_hash: 4YxC })) } }"#;
+        let a = Actual::view_failure("unable to fulfill the query request".into(), debug.into(), vec![]);
+        assert_eq!(a.status, "failure");
+        assert_eq!(
+            a.error_detail.as_deref(),
+            Some("wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })")
+        );
+        let err = a.error.clone().unwrap();
+        assert!(err.starts_with("unable to fulfill the query request: "), "{err}");
+        assert!(err.contains("Cannot deserialize the contract state."), "{err}");
+        let v = serde_json::to_value(&a).unwrap();
+        assert!(v["error"].as_str().unwrap().contains("Cannot deserialize"));
+        assert!(v["error_detail"].as_str().unwrap().contains("Cannot deserialize"));
+        assert!(v.get("error_debug").is_none());
+        let al = aliases();
+        assert!(evaluate(&Expect::FailContains("Cannot deserialize".into()), &a, &al).0);
+
+        // No vm_error in the debug text: the innermost source() text is used.
+        let b = Actual::view_failure("outer".into(), "Error { .. }".into(), vec!["mid".into(), "inner text".into()]);
+        assert_eq!(b.error.as_deref(), Some("outer: inner text"));
+        assert_eq!(b.error_detail.as_deref(), Some("inner text"));
+        // Neither: nothing is invented and the field is not serialized.
+        let c = Actual::view_failure("outer".into(), "Error { .. }".into(), vec![]);
+        assert_eq!(c.error.as_deref(), Some("outer"));
+        assert!(c.error_detail.is_none());
+        assert!(serde_json::to_value(&c).unwrap().get("error_detail").is_none());
+        // Already in the wrapper text: not repeated.
+        let d = Actual::view_failure("x: boom".into(), r#"vm_error: "boom""#.into(), vec![]);
+        assert_eq!(d.error.as_deref(), Some("x: boom"));
+        assert_eq!(d.error_detail.as_deref(), Some("boom"));
+        // Unterminated string: ignored.
+        assert_eq!(inner_error_text(r#"vm_error: "no end"#, &[]), None);
+        assert_eq!(debug_field(r#"a: "x\\y\n""#, "a"), Some("x\\y\n".to_string()));
     }
 
     #[test]
