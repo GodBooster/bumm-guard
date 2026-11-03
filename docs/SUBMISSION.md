@@ -16,7 +16,7 @@ Evidence:
 - The upgrade runs in CI on every push (near-sandbox): with migrate 16/16; code-only 4/16, every call after the upgrade panics, and CI requires exactly that.
 - Testnet end to end (2026-11-02): CI-built wasm, simulate, gate, deploy by the owner, on-chain code hash matched.
 
-Not done: a gate that requires the upgrade proof is in progress; the proof was run in the sandbox, not on testnet, for one contract pair; the panel's wallet path is unverified.
+Not done: the proof was run in the sandbox for one contract pair, and on testnet only the blocking direction of the gate was checked; the panel's wallet path is unverified.
 
 Prior work: BUMM, the author's Solana builder, is a separate project, not in this repo. Built in the hackathon window; written with Claude Code.
 
@@ -42,7 +42,7 @@ Pilot: same task (add a waitlist), same model, one run per arm. Fresh deploy: bo
 Thread, reply 2 (229 characters; check the official hashtag on the day):
 
 <!-- x3-start -->
-Not done yet: a gate that requires the upgrade proof (in progress), the proof on testnet, the panel's wallet path. The upgrade scenarios run in CI on every push. Rule-pack, fixers, MCP server, ABI panel: same repo. #NEARHACKATHON
+Not done yet: a live upgrade on testnet, the panel's wallet path. The upgrade scenarios run in CI on every push. Rule-pack, fixers, MCP server, ABI panel: same repo. #NEARHACKATHON
 <!-- x3-end -->
 
 ## 3. Video script (2 min 50 s, screen recording, voice-over in plain statements)
@@ -58,6 +58,6 @@ Record once on a clean clone with no keys, wallets or seed phrases in frame. The
 | 5 | 1:25-1:45 | Same job, step "upgrade N06 -> N10 with migrate()" | `PASS ... (16/16 steps, 5.7s)`, `upgrade_wasm_sha256` line | "The same upgrade with `migrate`: 16 of 16. The registrations survive and the waitlist works." |
 | 6 | 1:45-2:15 | README, section "Why this matters (measured)" | The table: fresh deploy equal (3/3, 35/35 for both), upgrade differs (PASS 16/16 vs FAIL). Cursor on "One run per arm: a pilot" | "Pilot, one run per arm. On a fresh deploy both agents passed. On the upgrade only the one with migrate survived. The agent that used BUMM had no upgrade step to check with yet; this is what the step is for." |
 | 7 | 2:15-2:35 | Terminal | `python3 -m bumm_guard gate tests/fixtures/near/d1_vuln` prints `DEPLOY BLOCKED`, exit 3 | "The rest of the pipeline: rule-pack, fixers, gate, MCP server. Here the gate blocks a callback without `#[private]`." |
-| 8 | 2:35-2:50 | README, "Honest limits" and the repo URL | Lines: upgrade gate in progress; sandbox only, one contract pair; wallet path unverified | "In progress: a gate that requires the proof. Not done: the proof on testnet. One contract pair. Repository: {REPO}." |
+| 8 | 2:35-2:50 | README, "Honest limits" and the repo URL | Lines: sandbox proof, one contract pair; wallet path unverified | "The gate requires the proof for live accounts. Not done: the wallet path. One contract pair. Repository: {REPO}." |
 
 Shots 4 and 5 are the two required frames: code-only upgrade ending in `Cannot deserialize the contract state.`, and the same upgrade with `migrate` at 16/16. Do not show or mention anything beyond these claims.

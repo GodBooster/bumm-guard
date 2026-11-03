@@ -164,3 +164,8 @@ jobs:
         with:
           name: event_registration-wasm
           path: tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration.wasm
+      - name: upload the exact N10 wasm the upgrade scenario proved (for a real upgrade on testnet)
+        uses: actions/upload-artifact@v4
+        with:
+          name: event_registration_waitlist-wasm
+          path: tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration_waitlist.wasm
