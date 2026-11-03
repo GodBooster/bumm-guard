@@ -168,6 +168,55 @@ jobs:
           print(f"code-only upgrade: steps 0..{up} passed, {len(after)} step(s) after it failed with "
                 f"'Cannot deserialize' ({len(views)} view steps), as expected")
           EOF
+      - name: build escrow_v1 and escrow_v2 wasm (rustc 1.85.0; second upgrade pair)
+        working-directory: tests/fixtures/near
+        run: cargo build --release --locked --target wasm32-unknown-unknown -p escrow_v1 -p escrow_v2
+      - name: run escrow v1 scenarios
+        run: |
+          python -m bumm_guard simulate scenarios/escrow/*.json \
+            --runner contracts/target/release/bumm-sim --out simulate-out/escrow-report.json
+      - name: gate escrow_v1 with its simulate evidence (fresh deploy, no upgrade proof needed)
+        run: |
+          python -m bumm_guard gate tests/fixtures/near/escrow_v1 \
+            --wasm tests/fixtures/near/target/wasm32-unknown-unknown/release/escrow_v1.wasm \
+            --simulate-report simulate-out/escrow-report.json --dry-run
+      - name: upgrade escrow v1 -> v2 with migrate() (expected PASS)
+        run: |
+          python -m bumm_guard simulate scenarios/upgrade/escrow_v1_to_v2_with_migrate.json \
+            --runner contracts/target/release/bumm-sim --out simulate-out/escrow-upgrade-with-migrate.json
+      - name: upgrade escrow v1 -> v2 code only (expected FAIL after the first view; the smoke view lies)
+        run: |
+          set +e
+          python -m bumm_guard simulate scenarios/upgrade/escrow_v1_to_v2_code_only.json \
+            --runner contracts/target/release/bumm-sim --out simulate-out/escrow-upgrade-code-only.json
+          code=$?
+          set -e
+          test "$code" -eq 1 || { echo "expected exit 1 (scenario failed), got $code"; exit 1; }
+          python - <<'EOF'
+          import json
+          r = json.load(open("simulate-out/escrow-upgrade-code-only.json"))
+          (sc,) = r["scenarios"]
+          up = next(s["index"] for s in sc["steps"] if s["kind"] == "upgrade")
+          before = [s for s in sc["steps"] if s["index"] <= up]
+          smoke = sc["steps"][up + 1]
+          after = [s for s in sc["steps"] if s["index"] > up + 1]
+          assert sc.get("error") is None, sc["error"]
+          assert all(s["passed"] for s in before), [s for s in before if not s["passed"]]
+          # The layout change sits inside a map record, not in the root struct, so the smoke view
+          # right after the upgrade still answers correctly (deal_count 3): a smoke check cannot
+          # see this upgrade failure. Only reading a record fails.
+          assert smoke["kind"] == "view" and smoke["method"] == "deal_count" and smoke["passed"], smoke
+          assert smoke["actual"]["value"] == 3, smoke
+          assert after and all(not s["passed"] and s["actual"]["status"] == "failure" for s in after), after
+          # near-sdk store's own message for a record it cannot read (not the root-struct one).
+          lacking = [s for s in after if "Cannot deserialize element" not in s["actual"].get("error", "")]
+          assert not lacking, [(s["index"], s["kind"], s["actual"].get("error")) for s in lacking]
+          views = [s for s in after if s["kind"] == "view"]
+          assert views and all("Cannot deserialize element" in s["actual"].get("error_detail", "") for s in views), views
+          assert r["upgrade_wasm_sha256"] and sc["steps"][up]["actual"]["code_sha256"] == r["upgrade_wasm_sha256"]
+          print(f"escrow code-only upgrade: steps 0..{up} passed, deal_count right after it passed (value 3), "
+                f"{len(after)} step(s) after that failed with 'Cannot deserialize element' ({len(views)} view steps), as expected")
+          EOF
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -184,3 +233,12 @@ jobs:
         with:
           name: event_registration_waitlist-wasm
           path: tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration_waitlist.wasm
+      - name: upload the exact escrow wasm files the second upgrade pair was proved with
+        uses: actions/upload-artifact@v4
+        with:
+          name: escrow_v1-wasm
+          path: tests/fixtures/near/target/wasm32-unknown-unknown/release/escrow_v1.wasm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: escrow_v2-wasm
+          path: tests/fixtures/near/target/wasm32-unknown-unknown/release/escrow_v2.wasm
