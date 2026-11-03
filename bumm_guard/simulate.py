@@ -32,6 +32,8 @@ RUNNER_REL = Path("contracts/target/release/bumm-sim")
 BUILD_RUNNER_CMD = "cd contracts && cargo build --release --locked -p bumm-sim"
 BUILD_WASM_HINT = ("for the N06 contract: cd tests/fixtures/near && "
                    "cargo build --release --locked --target wasm32-unknown-unknown -p event_registration")
+BUILD_UPGRADE_WASM_HINT = ("for the N10 upgrade: cd tests/fixtures/near && "
+                           "cargo build --release --locked --target wasm32-unknown-unknown -p event_registration_waitlist")
 
 TOP_KEYS = ("name", "description", "accounts", "contract", "steps")
 CONTRACT_KEYS = ("wasm", "init")
@@ -40,7 +42,9 @@ STEP_KEYS = {
     "call": ("call", "by", "args", "deposit", "gas", "expect"),
     "view": ("view", "args", "expect"),
     "balance": ("balance", "expect"),
+    "upgrade": ("upgrade", "migrate", "expect"),
 }
+MIGRATE_KEYS = ("method", "args", "gas")
 EXPECT_KINDS = ("fail_contains", "equals", "contains", "at_least", "at_most")
 _ALIAS_RE = re.compile(r"^[a-z0-9](?:[a-z0-9]|[-_](?=[a-z0-9]))*$")
 
@@ -126,6 +130,16 @@ def _check_args(obj: dict, ctx: str) -> None:
         raise ScenarioError(f"{ctx}: 'args' must be a JSON object")
 
 
+def _check_gas(obj: dict, ctx: str) -> None:
+    if "gas" in obj:
+        if not isinstance(obj["gas"], str):
+            raise ScenarioError(f"{ctx}: gas must be a string like \"30 Tgas\"")
+        try:
+            parse_gas(obj["gas"])
+        except ScenarioError as e:
+            raise ScenarioError(f"{ctx}: gas: {e}") from None
+
+
 def _amount_value(v, ctx: str) -> int:
     if isinstance(v, bool):
         raise ScenarioError(f"{ctx}: amount must be a string like \"9 NEAR\" or a yoctoNEAR integer string")
@@ -162,7 +176,8 @@ def _check_expect(step: dict, ctx: str) -> str:
 def validate_scenario(data) -> dict:
     """Validate one parsed scenario against FORMATS section 2. Raises ``ScenarioError`` with
     a message naming the step (0-based, as in the report) and field. Returns a small summary
-    ``{"name", "accounts", "wasm", "steps"}``. Mirrors ``parse_scenario`` in
+    ``{"name", "accounts", "wasm", "steps", "upgrades"}`` (``upgrades``: wasm path of each
+    upgrade step, section 2a). Mirrors ``parse_scenario`` in
     ``contracts/sim-runner/src/lib.rs``."""
     if not isinstance(data, dict):
         raise ScenarioError("scenario must be a JSON object")
@@ -207,13 +222,14 @@ def validate_scenario(data) -> dict:
     steps = data["steps"]
     if not isinstance(steps, list):
         raise ScenarioError("steps must be an array")
+    upgrades: list[str] = []
     for i, step in enumerate(steps):
         ctx = f"step {i}"
         if not isinstance(step, dict):
             raise ScenarioError(f"{ctx}: must be a JSON object")
         kinds = [k for k in STEP_KEYS if k in step]
         if not kinds:
-            raise ScenarioError(f"{ctx}: unknown step kind (expected exactly one of call, view, balance; "
+            raise ScenarioError(f"{ctx}: unknown step kind (expected exactly one of call, view, balance, upgrade; "
                                 f"got keys: {', '.join(step)})")
         if len(kinds) > 1:
             raise ScenarioError(f"{ctx}: more than one step kind ({', '.join(kinds)})")
@@ -232,23 +248,30 @@ def validate_scenario(data) -> dict:
                     parse_near_amount(step["deposit"])
                 except ScenarioError as e:
                     raise ScenarioError(f"{ctx}: deposit: {e}") from None
-            if "gas" in step:
-                if not isinstance(step["gas"], str):
-                    raise ScenarioError(f"{ctx}: gas must be a string like \"30 Tgas\"")
-                try:
-                    parse_gas(step["gas"])
-                except ScenarioError as e:
-                    raise ScenarioError(f"{ctx}: gas: {e}") from None
+            _check_gas(step, ctx)
             _check_args(step, ctx)
         elif kind == "view":
             _check_args(step, ctx)
+        elif kind == "upgrade":
+            upgrades.append(step["upgrade"])
+            migrate = step.get("migrate")
+            if migrate is not None:
+                mctx = f"{ctx}.migrate"
+                if not isinstance(migrate, dict):
+                    raise ScenarioError(f"{ctx}: migrate must be an object {{method, args, gas}}")
+                _check_keys(migrate, MIGRATE_KEYS, mctx)
+                _req_str(migrate, "method", mctx)
+                _check_args(migrate, mctx)
+                _check_gas(migrate, mctx)
+            if expect_kind not in ("ok", "fail_contains"):
+                raise ScenarioError(f"{ctx}: an upgrade step supports ok, fail_contains")
         else:
             if step["balance"] not in known:
                 raise ScenarioError(f"{ctx}: unknown account {step['balance']!r} in 'balance' "
                                     f"(known: {', '.join(known)})")
             if expect_kind in ("fail_contains", "contains"):
                 raise ScenarioError(f"{ctx}: a balance step supports ok, equals, at_least, at_most")
-    return {"name": name, "accounts": len(accounts), "wasm": wasm, "steps": len(steps)}
+    return {"name": name, "accounts": len(accounts), "wasm": wasm, "steps": len(steps), "upgrades": upgrades}
 
 
 # ----------------------------------------------------------------------------- hashing, paths
@@ -319,6 +342,9 @@ def _step_label(s: dict) -> str:
         return f"view {s.get('method')}"
     if kind == "balance":
         return f"balance {s.get('account')}"
+    if kind == "upgrade":
+        label = f"upgrade {Path(str(s.get('wasm'))).name}"
+        return label + (f" + {s.get('method')}" if s.get("method") else " (code only)")
     return kind
 
 
@@ -350,6 +376,8 @@ def render_summary(report: dict, path: str | None = None) -> str:
     lines.append(f"{sm.get('scenarios', 0)} scenario(s): {sm.get('passed', 0)} passed, {sm.get('failed', 0)} failed; "
                  f"{sm.get('steps_failed', 0)} of {sm.get('steps', 0)} step(s) failed")
     lines.append(f"wasm_sha256 {report.get('wasm_sha256')}  scenario_sha256 {report.get('scenario_sha256')}")
+    if report.get("upgrade_wasm_sha256"):
+        lines.append(f"upgrade_wasm_sha256 {report['upgrade_wasm_sha256']}")
     if path:
         lines.append(f"report: {path}")
     return "\n".join(lines)
@@ -391,16 +419,22 @@ def load_scenarios(paths: list[str]) -> tuple[list[tuple[Path, dict, str]], list
 
 
 def run_simulate(paths: list[str], wasm: str | None = None, out: str | None = None, runner: str | None = None,
-                 validate_only: bool = False, env: dict | None = None) -> SimulateOutcome:
+                 validate_only: bool = False, env: dict | None = None,
+                 upgrade_wasm: str | None = None) -> SimulateOutcome:
     loaded, errors = load_scenarios(paths)
     if errors:
         return SimulateOutcome(2, errors=errors)
     if wasm and not Path(wasm).is_file():
         return SimulateOutcome(2, errors=[f"bumm-guard: wasm not found: {wasm} ({BUILD_WASM_HINT})"])
+    if upgrade_wasm and not Path(upgrade_wasm).is_file():
+        return SimulateOutcome(2, errors=[f"bumm-guard: upgrade wasm not found: {upgrade_wasm} "
+                                          f"({BUILD_UPGRADE_WASM_HINT})"])
 
     out_lines: list[str] = []
     warnings: list[str] = []
     wasm_hashes: list[str | None] = []
+    upgrade_hashes: list[str] = []  # one per scenario that has upgrade steps and a shared hash
+    upgrade_ambiguous = False
     for path, data, digest in loaded:
         w = resolve_wasm(data["contract"]["wasm"], path, wasm)
         exists = w.is_file()
@@ -410,6 +444,19 @@ def run_simulate(paths: list[str], wasm: str | None = None, out: str | None = No
                          + ("" if exists else " (missing)"))
         if not exists:
             warnings.append(f"bumm-guard: {path}: wasm not found: {w} ({BUILD_WASM_HINT})")
+        specs = [s["upgrade"] for s in data["steps"] if "upgrade" in s]
+        hashes = set()
+        for u in dict.fromkeys(resolve_wasm(spec, path, upgrade_wasm) for spec in specs):
+            if u.is_file():
+                hashes.add(sha256_file(u))
+                out_lines.append(f"       upgrade wasm {u}")
+            else:
+                out_lines.append(f"       upgrade wasm {u} (missing)")
+                warnings.append(f"bumm-guard: {path}: upgrade wasm not found: {u} ({BUILD_UPGRADE_WASM_HINT})")
+        if len(hashes) == 1:
+            upgrade_hashes.append(hashes.pop())
+        elif hashes:
+            upgrade_ambiguous = True
     scenario_sha = combined_sha256([d for _, _, d in loaded])
     out_lines.append(f"scenario_sha256 {scenario_sha}")
 
@@ -438,6 +485,8 @@ def run_simulate(paths: list[str], wasm: str | None = None, out: str | None = No
     cmd += ["--out", str(rpath)]
     if wasm:
         cmd += ["--wasm", wasm]
+    if upgrade_wasm:
+        cmd += ["--upgrade-wasm", upgrade_wasm]
     try:
         proc = subprocess.run(cmd, check=False, capture_output=True, text=True)
     except OSError as e:
@@ -461,6 +510,12 @@ def run_simulate(paths: list[str], wasm: str | None = None, out: str | None = No
     expected_wasm = wasm_hashes[0] if len(distinct) == 1 else None
     if expected_wasm and report.get("wasm_sha256") != expected_wasm:
         res.errors.append(f"bumm-guard: report wasm_sha256 {report.get('wasm_sha256')} != {expected_wasm}")
+        res.exit_code = 1
+    # Same rule as bumm-sim: the upgrade wasm shared by every scenario that has an upgrade step.
+    expected_upgrade = upgrade_hashes[0] if len(set(upgrade_hashes)) == 1 and not upgrade_ambiguous else None
+    if report.get("upgrade_wasm_sha256") != expected_upgrade and (expected_upgrade or not upgrade_hashes):
+        res.errors.append(f"bumm-guard: report upgrade_wasm_sha256 {report.get('upgrade_wasm_sha256')} "
+                          f"!= {expected_upgrade}")
         res.exit_code = 1
     summary = report.get("summary", {})
     all_passed = summary.get("failed", 1) == 0 and summary.get("scenarios", 0) == len(loaded)

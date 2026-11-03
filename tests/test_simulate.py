@@ -19,6 +19,7 @@ from bumm_guard.simulate import ScenarioError, parse_gas, parse_near_amount, val
 
 ROOT = Path(__file__).resolve().parent.parent
 N06 = ROOT / "scenarios" / "n06"
+UPGRADE = ROOT / "scenarios" / "upgrade"
 
 EXAMPLE = {
     "name": "N06 capacity 2, third refused, cancel frees a seat",
@@ -124,6 +125,42 @@ class ValidationTests(unittest.TestCase):
             with self.subTest(step=step):
                 self.assertInvalid(with_step(step), needle)
 
+    def test_repo_upgrade_scenarios_valid(self):
+        with_migrate = json.loads((UPGRADE / "n06_to_n10_with_migrate.json").read_text())
+        code_only = json.loads((UPGRADE / "n06_to_n10_code_only.json").read_text())
+        wasm = "tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration_waitlist.wasm"
+        for data in (with_migrate, code_only):
+            info = validate_scenario(data)
+            self.assertEqual(info["upgrades"], [wasm])
+        self.assertEqual(with_migrate["steps"][3]["migrate"], {"method": "migrate", "args": {}})
+        self.assertNotIn("migrate", code_only["steps"][3])
+        self.assertEqual(validate_scenario(EXAMPLE)["upgrades"], [])
+
+    def test_upgrade_step(self):
+        validate_scenario(with_step({"upgrade": "n.wasm"}))
+        validate_scenario(with_step({"upgrade": "n.wasm", "migrate": None, "expect": "ok"}))
+        validate_scenario(with_step({"upgrade": "n.wasm", "migrate": {"method": "migrate", "args": {"a": 1},
+                                                                       "gas": "200 Tgas"},
+                                     "expect": {"fail_contains": "No old state"}}))
+        cases = [
+            ({"upgrade": ""}, "'upgrade' must be a non-empty string"),
+            ({"upgrade": 1}, "'upgrade' must be a non-empty string"),
+            ({"upgrade": "n.wasm", "by": "alice"}, "unknown field 'by'"),
+            ({"upgrade": "n.wasm", "call": "x", "by": "alice"}, "more than one step kind"),
+            ({"upgrade": "n.wasm", "migrate": "migrate"}, "migrate must be an object"),
+            ({"upgrade": "n.wasm", "migrate": {}}, "step 0.migrate: missing 'method'"),
+            ({"upgrade": "n.wasm", "migrate": {"method": "m", "deposit": "1"}}, "step 0.migrate: unknown field 'deposit'"),
+            ({"upgrade": "n.wasm", "migrate": {"method": "m", "args": [1]}}, "step 0.migrate: 'args' must be a JSON object"),
+            ({"upgrade": "n.wasm", "migrate": {"method": "m", "gas": "lots"}}, "step 0.migrate: gas: bad gas"),
+            ({"upgrade": "n.wasm", "migrate": {"method": "m", "gas": 5}}, "step 0.migrate: gas must be a string"),
+            ({"upgrade": "n.wasm", "expect": {"equals": 1}}, "upgrade step supports ok, fail_contains"),
+            ({"upgrade": "n.wasm", "expect": {"at_least": "1 NEAR"}}, "upgrade step supports ok, fail_contains"),
+            ({"transfer": "alice"}, "call, view, balance, upgrade"),
+        ]
+        for step, needle in cases:
+            with self.subTest(step=step):
+                self.assertInvalid(with_step(step), needle)
+
     def test_contract_caller_and_default_expect(self):
         validate_scenario(with_step({"call": "new", "by": "contract"}))
         validate_scenario(with_step({"balance": "contract", "expect": {"at_most": "100 NEAR"}}))
@@ -192,23 +229,40 @@ class HashAndSummaryTests(unittest.TestCase):
         self.assertIn("1 step(s) not executed", text)
         self.assertIn("2 scenario(s): 1 passed, 1 failed; 3 of 4 step(s) failed", text)
         self.assertIn("report: r.json", text)
+        self.assertNotIn("upgrade_wasm_sha256", text)
+
+    def test_render_summary_upgrade(self):
+        report = {
+            "wasm_sha256": "w" * 64, "scenario_sha256": "s" * 64, "upgrade_wasm_sha256": "u" * 64,
+            "scenarios": [{"name": "code only", "passed": False, "duration_s": 9.0, "steps": [
+                {"index": 3, "kind": "upgrade", "by": "contract", "wasm": "t/new.wasm", "passed": False,
+                 "expected": "ok", "actual": {"status": "failure", "error": "boom", "code_sha256": "u" * 64}},
+                {"index": 4, "kind": "upgrade", "by": "contract", "wasm": "t/new.wasm", "method": "migrate",
+                 "passed": False, "expected": "ok", "actual": {"status": "failure", "error": "No old state"}}]}],
+            "summary": {"scenarios": 1, "passed": 0, "failed": 1, "steps": 2, "steps_failed": 2},
+        }
+        text = simulate.render_summary(report)
+        self.assertIn('step 3 upgrade new.wasm (code only): expected ok, actual failure: boom', text)
+        self.assertIn("step 4 upgrade new.wasm + migrate: expected", text)
+        self.assertIn("upgrade_wasm_sha256 " + "u" * 64, text)
 
 
 FAKE_RUNNER = textwrap.dedent('''\
     import hashlib, json, os, sys
     args = sys.argv[1:]
     assert args[0] == "run", args
-    files, out, wasm = [], None, None
+    files, out, wasm, upgrade_wasm = [], None, None, None
     i = 1
     while i < len(args):
         if args[i] == "--scenario": files.append(args[i + 1])
         elif args[i] == "--out": out = args[i + 1]
         elif args[i] == "--wasm": wasm = args[i + 1]
+        elif args[i] == "--upgrade-wasm": upgrade_wasm = args[i + 1]
         i += 2
     mode = os.environ.get("FAKE_MODE", "pass")
     if mode == "noreport":
         sys.stderr.write("bumm-sim: boom\\n"); sys.exit(1)
-    hashes, scenarios = [], []
+    hashes, scenarios, up_hashes = [], [], []
     for f in files:
         raw = open(f, "rb").read()
         h = hashlib.sha256(raw).hexdigest(); hashes.append(h)
@@ -217,7 +271,16 @@ FAKE_RUNNER = textwrap.dedent('''\
         if not os.path.exists(w): w = os.path.join(os.path.dirname(f), w)
         wh = hashlib.sha256(open(w, "rb").read()).hexdigest()
         failed = mode == "fail"
+        uh = None
+        for s in data["steps"]:
+            if "upgrade" in s:
+                u = upgrade_wasm or s["upgrade"]
+                if not os.path.exists(u): u = os.path.join(os.path.dirname(f), u)
+                uh = hashlib.sha256(open(u, "rb").read()).hexdigest()
+        if uh: up_hashes.append(uh)
+        if mode == "badupgrade" and uh: uh = "0" * 64
         scenarios.append({"name": data["name"], "file": f, "scenario_sha256": h, "wasm": w, "wasm_sha256": wh,
+            "upgrade_wasm_sha256": uh,
             "passed": not failed, "duration_s": 1.5, "accounts": {},
             "steps": [{"index": 0, "kind": "call", "method": "register", "by": "carol", "passed": not failed,
                        "expected": {"fail_contains": "Event is full"},
@@ -227,7 +290,10 @@ FAKE_RUNNER = textwrap.dedent('''\
     combined = hashes[0] if len(hashes) == 1 else hashlib.sha256("\\n".join(sorted(hashes)).encode()).hexdigest()
     if mode == "badhash": combined = "0" * 64
     n_failed = sum(1 for s in scenarios if not s["passed"])
+    shared_up = up_hashes[0] if len(set(up_hashes)) == 1 else None
+    if mode == "badupgrade": shared_up = "0" * 64
     report = {"tool": "bumm-guard", "version": "0.4.0", "runner": "fake", "wasm_sha256": wh,
+              "upgrade_wasm_sha256": shared_up,
               "scenario_sha256": combined, "sandbox": {"near_workspaces": "0.24.0", "near_sandbox": "0.4.0"},
               "scenarios": scenarios,
               "summary": {"scenarios": len(scenarios), "passed": len(scenarios) - n_failed, "failed": n_failed,
@@ -329,6 +395,76 @@ class FakeRunnerCliTests(unittest.TestCase):
         self.assertIn("2 scenario file(s) valid", out)
         want = simulate.combined_sha256([simulate.sha256_file(p) for p in self.scen])
         self.assertIn(f"scenario_sha256 {want}", out)
+
+    def write_upgrade_scenario(self, migrate=True):
+        (self.dir / "n.wasm").write_bytes(b"\0asm\x01\0\0\0new")
+        d = copy.deepcopy(EXAMPLE)
+        d["name"] = "upgrade"
+        step = {"upgrade": "n.wasm", "expect": "ok"}
+        if migrate:
+            step["migrate"] = {"method": "migrate"}
+        d["steps"].insert(3, step)
+        p = self.dir / "up.json"
+        p.write_text(json.dumps(d))
+        return str(p)
+
+    def test_upgrade_pass_and_hash_check(self):
+        up = self.write_upgrade_scenario()
+        code, out, err = run_cli("simulate", up, self.scen[0], "--runner", str(self.runner), "--out", self.out,
+                                 env=self.env())
+        self.assertEqual(code, 0, err)
+        self.assertIn("upgrade wasm " + str(self.dir / "n.wasm"), out)
+        want = simulate.sha256_file(self.dir / "n.wasm")
+        self.assertIn(f"upgrade_wasm_sha256 {want}", out)
+        argv = json.loads(Path(self.out + ".argv").read_text())
+        self.assertNotIn("--upgrade-wasm", argv)
+
+    def test_upgrade_wasm_override(self):
+        up = self.write_upgrade_scenario(migrate=False)
+        cand = self.dir / "candidate.wasm"
+        cand.write_bytes(b"\0asm\x01\0\0\0candidate")
+        code, out, err = run_cli("simulate", up, "--upgrade-wasm", str(cand), "--runner", str(self.runner),
+                                 "--out", self.out, env=self.env())
+        self.assertEqual(code, 0, err)
+        argv = json.loads(Path(self.out + ".argv").read_text())
+        self.assertEqual(argv[-2:], ["--upgrade-wasm", str(cand)])
+        self.assertIn(f"upgrade_wasm_sha256 {simulate.sha256_file(cand)}", out)
+        self.assertEqual(json.loads(Path(self.out).read_text())["wasm_sha256"],
+                         simulate.sha256_file(self.dir / "c.wasm"), "--upgrade-wasm leaves contract.wasm alone")
+
+    def test_upgrade_hash_mismatch_exit_1(self):
+        up = self.write_upgrade_scenario()
+        code, _, err = run_cli("simulate", up, "--runner", str(self.runner), "--out", self.out,
+                               env=self.env(FAKE_MODE="badupgrade"))
+        self.assertEqual(code, 1)
+        self.assertIn("report upgrade_wasm_sha256", err)
+
+    def test_report_without_upgrade_must_have_null(self):
+        code, _, err = run_cli("simulate", self.scen[0], "--runner", str(self.runner), "--out", self.out,
+                               env=self.env(FAKE_MODE="badupgrade"))
+        self.assertEqual(code, 1)
+        self.assertIn("report upgrade_wasm_sha256 " + "0" * 64 + " != None", err)
+
+    def test_missing_upgrade_wasm_exit_2(self):
+        up = self.write_upgrade_scenario()
+        (self.dir / "n.wasm").unlink()
+        code, out, err = run_cli("simulate", up, "--runner", str(self.runner), "--out", self.out, env=self.env())
+        self.assertEqual(code, 2)
+        self.assertIn("upgrade wasm not found", err)
+        self.assertIn("-p event_registration_waitlist", err)
+        self.assertFalse(Path(self.out).exists())
+        code, _, err = run_cli("simulate", up, "--upgrade-wasm", str(self.dir / "nope.wasm"),
+                               "--runner", str(self.runner), "--out", self.out, env=self.env())
+        self.assertEqual(code, 2)
+        self.assertIn("upgrade wasm not found", err)
+
+    def test_validate_only_reports_missing_upgrade_wasm(self):
+        up = self.write_upgrade_scenario()
+        (self.dir / "n.wasm").unlink()
+        code, out, err = run_cli("simulate", "--validate-only", up, env=self.env())
+        self.assertEqual(code, 0, err)
+        self.assertIn("(missing)", out)
+        self.assertIn("upgrade wasm not found", err)
 
     def test_missing_wasm_exit_2(self):
         (self.dir / "c.wasm").unlink()
