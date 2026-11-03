@@ -1,0 +1,107 @@
+{
+ "name": "B1 duplicate register while registered/waitlisted, cancel unknown",
+ "accounts": {
+  "alice": "10 NEAR",
+  "bob": "10 NEAR",
+  "carol": "10 NEAR",
+  "dave": "10 NEAR"
+ },
+ "contract": {
+  "wasm": "ab/runs/B1/target/wasm32-unknown-unknown/release/event_registration.wasm",
+  "init": {
+   "method": "new",
+   "args": {
+    "capacity": 2
+   }
+  }
+ },
+ "steps": [
+  {
+   "call": "register",
+   "by": "alice",
+   "expect": "ok"
+  },
+  {
+   "call": "register",
+   "by": "bob",
+   "expect": "ok"
+  },
+  {
+   "call": "register",
+   "by": "carol",
+   "expect": "ok"
+  },
+  {
+   "call": "register",
+   "by": "alice",
+   "expect": {
+    "fail_contains": "already registered"
+   }
+  },
+  {
+   "call": "register",
+   "by": "carol",
+   "expect": {
+    "fail_contains": "already on the waitlist"
+   }
+  },
+  {
+   "call": "cancel",
+   "by": "dave",
+   "expect": {
+    "fail_contains": "not registered"
+   }
+  },
+  {
+   "view": "get_waitlist",
+   "expect": {
+    "equals": [
+     "carol"
+    ]
+   }
+  },
+  {
+   "view": "get_registered_count",
+   "expect": {
+    "equals": 2
+   }
+  },
+  {
+   "call": "cancel",
+   "by": "carol",
+   "expect": "ok"
+  },
+  {
+   "call": "cancel",
+   "by": "carol",
+   "expect": {
+    "fail_contains": "not registered"
+   }
+  },
+  {
+   "view": "get_waitlist",
+   "expect": {
+    "equals": []
+   }
+  },
+  {
+   "call": "cancel",
+   "by": "alice",
+   "expect": "ok"
+  },
+  {
+   "view": "get_seats_left",
+   "expect": {
+    "equals": 1
+   }
+  },
+  {
+   "view": "get_registered",
+   "expect": {
+    "equals": [
+     "bob"
+    ]
+   }
+  }
+ ]
+}
