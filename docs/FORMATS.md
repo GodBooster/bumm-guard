@@ -128,6 +128,34 @@ Existing fields stay. Added:
 human has run the printed deploy command with their own key (deploy needs a
 full-access key; the gate never holds one).
 
+**Upgrade proof (v0.2, 2026-11-03).** With `--account` and `--wasm` the gate reads the
+account's code (read-only RPC `view_code`). No code (`NO_CONTRACT_CODE` / `UNKNOWN_ACCOUNT`):
+a fresh deploy, `"upgrade": null`, judged as above. The same code as `--wasm`: nothing changes,
+`"upgrade": null`. Other code: an upgrade of a live contract. The gate then needs
+`--simulate-report` with a **passing** scenario that has an `upgrade` step (§2a) whose scenario
+`wasm_sha256` equals the on-chain code hash and whose `upgrade_wasm_sha256` (and the step's
+`code_sha256`) equals the `--wasm` hash; otherwise exit 3 (`DEPLOY BLOCKED: account X already
+runs code <hash>; this is an upgrade and no passing upgrade scenario proves <onchain> -> <candidate>`).
+An unreadable `view_code` answer also blocks (exit 3): unknown is never treated as empty.
+```json
+{
+  "upgrade": {
+    "onchain_code_sha256": "c3f50addfb06…",
+    "candidate_sha256": "…",
+    "scenario": "Upgrade N06 → N10 (upgrade with migrate()): …",
+    "migrate": {"method": "migrate", "args": {}, "gas": "100 Tgas"},
+    "passed": true
+  }
+}
+```
+`migrate` is copied from the upgrade step's `migrate` in the §3 report (`{method, args, gas}`,
+args as written in the scenario), or `null` for a code-only upgrade. The printed command is
+then one batch transaction like the simulated step: `near contract deploy <acc> use-file <wasm>
+with-init-call <method> json-args '<args>' prepaid-gas '<gas>' attached-deposit '0 NEAR'
+network-config <net> sign-with-keychain send` (`without-init-call` when `migrate` is `null`).
+In upgrade mode `simulate.passed` is true only if every scenario in the report passed (a
+deliberately failing code-only scenario is allowed next to the proof and noted).
+
 ## 5. ABI panel inputs (`ui/`, static page, no backend)
 
 Reads `artifact.abi` (or a URL to it) plus `{network, contract_id}`. Renders one form

@@ -1,8 +1,8 @@
 """Deploy gate: scan a crate, refuse to hand out a deploy command while blocking findings exist.
 
 ``run_gate`` returns a ``GateOutcome`` (exit code + lines to print); the CLI does the printing.
-Exit codes: 0 clean, 2 refused/bad input, 3 DEPLOY BLOCKED (high/critical finding, or a simulate
-report that does not match the wasm / has failed scenarios), 4 ``--execute`` but ``near`` not on PATH,
+Exit codes: 0 clean, 2 refused/bad input, 3 DEPLOY BLOCKED (high/critical finding, a simulate
+report that does not match the wasm / has failed scenarios, or an upgrade without proof), 4 ``--execute`` but ``near`` not on PATH,
 5 ``near`` ran and failed (deploy mode) or post-deploy verification failed (``--verify-deployed`` mode:
 code hash mismatch, a failed smoke view, or RPC unreachable).
 
@@ -10,6 +10,12 @@ Nothing is executed by default: the exact ``near contract deploy`` command (near
 syntax) is only printed. ``--execute`` runs it, testnet only. When the gate blocks, no deploy
 is ever started and a stale ``gate-report.json`` from an earlier clean run is removed so it
 cannot be mistaken for a pass.
+
+With ``--account`` and ``--wasm`` the gate first reads the account's code (read-only ``view_code``).
+No code: a fresh deploy, judged as before. Other code: an upgrade of a live contract with state,
+allowed only if ``--simulate-report`` holds a passing scenario with an ``upgrade`` step
+(docs/FORMATS.md §2a) from exactly that on-chain code to exactly this wasm; the printed command then
+repeats that scenario's migration call (``with-init-call``) or has none (``without-init-call``).
 """
 
 from __future__ import annotations
@@ -28,8 +34,8 @@ from pathlib import Path
 from . import __version__
 from .rulepack.near import RULES
 from .scanner import ScanResult, discover, scan
-from .storage import RPC_URLS, estimate_storage, simulate_state_bytes  # noqa: F401  (RPC_URLS re-exported)
-from .verify import SmokeSpecError, parse_smoke, post_deploy_ok, verify_deployed
+from .storage import RPC_URLS, RpcError, estimate_storage, simulate_state_bytes  # noqa: F401  (RPC_URLS re-exported)
+from .verify import SmokeSpecError, onchain_code_sha256, parse_smoke, post_deploy_ok, verify_deployed
 
 BLOCKING = ("critical", "high")
 REPORT_DIR = ".bumm-guard"
@@ -50,6 +56,7 @@ class GateOutcome:
     blocked: bool = False
     report_path: str | None = None
     command: list[str] | None = None
+    upgrade: dict | None = None                          # the gate report's ``upgrade`` block
 
 
 def sha256_file(path: str | Path) -> str:
@@ -64,10 +71,19 @@ def valid_account(account: str) -> bool:
     return 2 <= len(account) <= 64 and bool(_ACCOUNT_RE.match(account))
 
 
-def deploy_command(account: str, wasm: str, network: str) -> list[str]:
-    """near-cli-rs 0.30 argv; a leading ``-`` in the path is neutralised so it is not read as a flag."""
+def deploy_command(account: str, wasm: str, network: str, migrate: dict | None = None) -> list[str]:
+    """near-cli-rs 0.30 argv; a leading ``-`` in the path is neutralised so it is not read as a flag.
+
+    ``migrate`` (``{method, args, gas}``) makes it one batch transaction: deploy + that call, the
+    same shape as the simulated upgrade step (if the call fails, the deploy is rolled back too).
+    """
     path = "./" + wasm if wasm.startswith("-") else wasm
-    return ["near", "contract", "deploy", account, "use-file", path, "without-init-call",
+    init = ["without-init-call"]
+    if migrate:
+        init = ["with-init-call", migrate["method"], "json-args",
+                json.dumps(migrate.get("args") or {}, separators=(",", ":"), sort_keys=True),
+                "prepaid-gas", migrate.get("gas") or "100 Tgas", "attached-deposit", "0 NEAR"]
+    return ["near", "contract", "deploy", account, "use-file", path, *init,
             "network-config", network, "sign-with-keychain", "send"]
 
 
@@ -99,6 +115,7 @@ def build_report(crate: Path, res: ScanResult, wasm: str | None, network: str, a
         "artifact": {"wasm_sha256": wasm_info["sha256"] if wasm_info else None,
                      "abi_sha256": sha256_file(abi) if abi else None},
         "simulate": None,
+        "upgrade": None,
         "storage_estimate": None,
         "post_deploy": None,
     }
@@ -129,6 +146,63 @@ def load_simulate_report(path: str, wasm_sha256: str) -> tuple[dict | None, list
     return {"report": path, "passed": True, "scenarios": len(rep["scenarios"])}, [], 0
 
 
+def _upgrade_steps(sc: dict) -> list[dict]:
+    return [st for st in sc.get("steps") or [] if isinstance(st, dict) and st.get("kind") == "upgrade"]
+
+
+def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | None, list[str]]:
+    """The first passing scenario of a §3 report whose upgrade step goes from ``onchain`` (the
+    scenario's ``wasm_sha256``) to ``candidate`` (``upgrade_wasm_sha256`` and the step's
+    ``code_sha256``). Returns ``(upgrade block, notes)``; notes explain near misses."""
+    notes, proofs = [], []
+    for sc in rep.get("scenarios") or []:
+        if not isinstance(sc, dict) or not _upgrade_steps(sc):
+            continue
+        name = str(sc.get("name", "?"))
+        frm, to = sc.get("wasm_sha256"), sc.get("upgrade_wasm_sha256")
+        if (frm, to) != (onchain, candidate):
+            notes.append(f"upgrade scenario {name!r} proves {frm} -> {to}, not {onchain} -> {candidate}")
+            continue
+        step = _upgrade_steps(sc)[0]
+        if (step.get("actual") or {}).get("code_sha256", candidate) != candidate:
+            notes.append(f"upgrade scenario {name!r}: deployed code_sha256 differs from the candidate")
+            continue
+        if not sc.get("passed"):
+            notes.append(f"upgrade scenario {name!r} for this pair did not pass")
+            continue
+        if step.get("method") and not isinstance(step.get("migrate"), dict):
+            notes.append(f"upgrade scenario {name!r} has a migration call but the report does not record its "
+                         "args (bumm-sim older than this gate): re-run `bumm-guard simulate`")
+            continue
+        m = step.get("migrate")
+        proofs.append({"onchain_code_sha256": onchain, "candidate_sha256": candidate, "scenario": name,
+                       "migrate": {"method": m["method"], "args": m.get("args") or {}, "gas": m.get("gas")}
+                       if m else None,
+                       "passed": True})
+    if len({json.dumps(p["migrate"], sort_keys=True) for p in proofs}) > 1:
+        notes.append(f"several passing upgrade scenarios with different migrations; using {proofs[0]['scenario']!r}")
+    return (proofs[0] if proofs else None), notes
+
+
+def _blocked(out: GateOutcome, report: Path, dry_run: bool, lines: list[str]) -> GateOutcome:
+    """Exit 3; keeps the lines printed so far and removes a stale report."""
+    out.exit_code, out.blocked = 3, True
+    out.lines.extend(lines)
+    if not dry_run and report.is_file():
+        report.unlink()
+        out.lines.append(f"removed stale {report}")
+    return out
+
+
+def _refused(res: ScanResult, report: Path, dry_run: bool, errors: list[str]) -> GateOutcome:
+    """Exit 2 (unusable input); removes a stale report."""
+    out = GateOutcome(2, scan=res, errors=errors)
+    if not dry_run and report.is_file():
+        report.unlink()
+        out.lines.append(f"removed stale {report}")
+    return out
+
+
 def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", account: str | None = None,
              dry_run: bool = False, execute: bool = False, abi: str | None = None,
              simulate_report: str | None = None, estimate_storage_flag: bool = False,
@@ -136,7 +210,9 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
     """Scan, decide, optionally write the report and (testnet only) run the deploy.
 
     ``simulate_report`` binds a §3 report to ``wasm``; ``estimate_storage_flag`` adds the read-only
-    storage estimate (one RPC call, plus one with ``account``).
+    storage estimate (one RPC call, plus one with ``account``). ``account`` together with an existing
+    ``wasm`` adds one read-only ``view_code`` call: code on the account makes this an upgrade, which
+    needs a passing upgrade scenario for exactly (on-chain code -> ``wasm``) in ``simulate_report``.
     """
     crate = Path(crate_dir)
     if not crate.is_dir():
@@ -174,17 +250,65 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
     out = GateOutcome(0, scan=res)
     data = build_report(crate, res, wasm, network, account, abi)
     sim_block, sim_report = None, None
+    onchain, upgrade, rep = None, None, None
     if simulate_report:
+        try:
+            rep = json.loads(Path(simulate_report).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            return _refused(res, report, dry_run, [f"bumm-guard: cannot read simulate report {simulate_report}: {e}"])
+    upgrade_names = [str(sc.get("name", "?")) for sc in (rep or {}).get("scenarios") or []
+                     if isinstance(sc, dict) and _upgrade_steps(sc)] if isinstance(rep, dict) else []
+    if account and wasm and Path(wasm).is_file():
+        candidate = data["artifact"]["wasm_sha256"]
+        try:
+            onchain = onchain_code_sha256(account, network, rpc_url)
+        except RpcError as e:
+            return _blocked(out, report, dry_run, [
+                f"DEPLOY BLOCKED: cannot read the code on {account} ({network}): {e}. Without it the gate cannot "
+                "tell a fresh deploy from an upgrade; retry, or pass --rpc-url."])
+        if onchain is None:
+            out.lines.append(f"account {account} ({network}) has no contract code: fresh deploy")
+            if upgrade_names:
+                out.lines.append(f"warning: simulate report has upgrade scenario(s) ({', '.join(upgrade_names)}) but "
+                                 f"{account} has no code: this is a fresh deploy, the upgrade evidence is not used")
+        elif onchain == candidate:
+            out.lines.append(f"account {account} ({network}) already runs this exact wasm ({onchain}): "
+                             "deploying it again changes no code")
+        else:
+            upgrade, notes = find_upgrade_proof(rep, onchain, candidate) if isinstance(rep, dict) else (None, [])
+            if upgrade is None:
+                how = ("pass --simulate-report with a passing upgrade scenario (docs/FORMATS.md §2a): contract.wasm = "
+                       "the code now on the account, then `bumm-guard simulate <scenario> --upgrade-wasm "
+                       f"{wasm}`" if not simulate_report else
+                       "the simulate report has no passing upgrade scenario for this pair")
+                return _blocked(out, report, dry_run, [
+                    f"DEPLOY BLOCKED: account {account} already runs code {onchain}; this is an upgrade and no "
+                    f"passing upgrade scenario proves {onchain} -> {candidate}", f"  {how}"]
+                    + [f"  {n}" for n in notes])
+            out.upgrade = data["upgrade"] = upgrade
+            m = upgrade["migrate"]
+            out.lines.append(f"upgrade of {account}: {onchain} -> {candidate}, proved by passing scenario "
+                             f"{upgrade['scenario']!r}; "
+                             + (f"migration {m['method']}({json.dumps(m['args'])}) in the same transaction"
+                                if m else "code only (no migration call)"))
+            out.lines.extend(f"note: {n}" for n in notes)
+    elif account:
+        out.lines.append(f"warning: no --wasm: the code on {account} was not checked; an upgrade of a live "
+                         "contract needs --wasm and a --simulate-report with a passing upgrade scenario")
+    if upgrade:
+        scen = rep.get("scenarios") or []
+        failing = [str(sc.get("name", "?")) for sc in scen if isinstance(sc, dict) and not sc.get("passed")]
+        data["simulate"] = {"report": simulate_report, "passed": not failing, "scenarios": len(scen)}
+        if failing:
+            out.lines.append(f"note: other scenario(s) in the report did not pass: {', '.join(failing)}")
+        sim_report = rep
+    elif simulate_report:
         sim_block, errs, code = load_simulate_report(simulate_report, data["artifact"]["wasm_sha256"])
+        if code == 2:
+            return _refused(res, report, dry_run, errs)
         if code:
-            out = GateOutcome(code, scan=res, blocked=(code == 3), errors=errs if code == 2 else [])
-            if code == 3:
-                out.lines.extend(errs)
-            if not dry_run and report.is_file():
-                report.unlink()
-                out.lines.append(f"removed stale {report}")
-            return out
-        sim_report = json.loads(Path(simulate_report).read_text(encoding="utf-8"))
+            return _blocked(out, report, dry_run, errs)
+        sim_report = rep
         data["simulate"] = sim_block
         out.lines.append(f"simulate report ok: {sim_block['scenarios']} scenario(s) passed for this wasm")
     else:
@@ -210,7 +334,8 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
         report.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         out.report_path = str(report)
         out.lines.append(f"gate passed: report written to {report}")
-    cmd = deploy_command(account or ACCOUNT_PLACEHOLDER, wasm or WASM_PLACEHOLDER, network)
+    cmd = deploy_command(account or ACCOUNT_PLACEHOLDER, wasm or WASM_PLACEHOLDER, network,
+                         upgrade["migrate"] if upgrade else None)
     out.command = cmd
     if not execute:
         out.lines.append("deploy command (NOT executed; pass --execute with --network testnet to run it):")

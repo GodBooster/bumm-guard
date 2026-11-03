@@ -92,6 +92,10 @@ class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+        # Default: every account is empty (fresh deploy); tests that need RPC answers patch again.
+        patcher = mock.patch("urllib.request.urlopen", FakeRpc(code=None))
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.root = Path(self.tmp.name)
         self.wasm = self.root / "c.wasm"
         self.wasm.write_bytes(WASM_BYTES)

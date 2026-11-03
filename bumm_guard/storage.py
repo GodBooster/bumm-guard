@@ -28,7 +28,12 @@ STORAGE_NOTE = ("storage staking is a locked balance, not a fee; state bytes are
 
 
 class RpcError(Exception):
-    """Transport failure or an error object returned by the RPC node."""
+    """Transport failure or an error object returned by the RPC node. ``cause`` is the node's
+    error cause name (``UNKNOWN_ACCOUNT``, ``NO_CONTRACT_CODE``, ...) when it sent one."""
+
+    def __init__(self, message: str, cause: str | None = None):
+        super().__init__(message)
+        self.cause = cause
 
 
 def resolve_rpc_url(network: str, rpc_url: str | None = None) -> str:
@@ -57,7 +62,8 @@ def rpc_call(url: str, method: str, params, timeout: float = RPC_TIMEOUT_S):
     if payload.get("error"):
         err = payload["error"]
         msg = err.get("data") or err.get("message") or err if isinstance(err, dict) else err
-        raise RpcError(f"{method} on {url}: {msg}")
+        cause = err.get("cause") if isinstance(err, dict) else None
+        raise RpcError(f"{method} on {url}: {msg}", cause.get("name") if isinstance(cause, dict) else None)
     result = payload.get("result")
     if isinstance(result, dict) and result.get("error"):
         raise RpcError(f"{method} on {url}: {result['error']}")

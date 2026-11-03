@@ -51,8 +51,11 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
             tools = (await s.list_tools()).tools
             self.assertEqual({t.name for t in tools}, EXPECTED_TOOLS)
             gate = next(t for t in tools if t.name == "gate_deploy")
-            self.assertNotIn("execute", (getattr(gate, "input_schema", None) or gate.inputSchema)["properties"])
+            props = (getattr(gate, "input_schema", None) or gate.inputSchema)["properties"]
+            self.assertNotIn("execute", props)
+            self.assertTrue({"simulate_report", "account", "network"} <= set(props), props)
             self.assertIn("NEVER EXECUTES", gate.description)
+            self.assertIn("UPGRADE", gate.description)
             fix = next(t for t in tools if t.name == "fix_contract")
             self.assertIn("DRY-RUN", fix.description)
             for t in tools:
