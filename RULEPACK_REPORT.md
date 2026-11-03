@@ -4,7 +4,7 @@ Date: 2026-10-30. Spec: `research/06_near_detectors_spec_2026-10-29.md`. Python 
 
 ## What was built
 
-- `bumm_guard/model.py`: `Finding(rule_id, severity, file, line, message, fix_hint, snippet, rule_name)` + `to_dict()`; `to_bumm_vulnerability()` maps to the BUMM backend `Vulnerability` schema (severity lower-case, category, title, description, code_location, suggested_fix, source).
+- `bumm_guard/model.py`: `Finding(rule_id, severity, file, line, message, fix_hint, snippet, rule_name)` + `to_dict()` (a `to_bumm_vulnerability()` mapper existed at the time of this report; removed in 0.5.0 as unused).
 - `bumm_guard/rulepack/near/rust_src.py`: shared helper. Masks comments, nested block comments, strings, raw strings and char literals while keeping offsets; brace/paren matching; attribute collection (forward in impl bodies, backward before `impl`); `#[cfg(test)]` item removal; `impl` detection (exported = `#[near]`/`#[near_bindgen]`, trait impls); method extraction (name, attrs, `pub`, receiver, params, body).
 - `bumm_guard/rulepack/near/project.py`: crate-level view, callback index from `.then(Self::ext(..)[.with_*(..)]*.cb(..))`, shared self-check exclusion.
 - `non_private_callback.py` (BG-NEAR-001), `callback_ignores_failure.py` (BG-NEAR-002), `signer_auth.py` (BG-NEAR-003), registry in `rulepack/near/__init__.py`.
