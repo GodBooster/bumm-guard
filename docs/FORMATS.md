@@ -171,6 +171,8 @@ with-init-call <method> json-args '<args>' prepaid-gas '<gas>' attached-deposit 
 network-config <net> sign-with-keychain send` (`without-init-call` when `migrate` is `null`).
 In upgrade mode `simulate.passed` is true only if every scenario in the report passed (a
 deliberately failing code-only scenario is allowed next to the proof and noted).
+Added 2026-11-03: `migration_guard` (`{method, status, file, line}`, `null` without a migration call); `status` is
+`private`, `owner-check`, `not-found` (warning) or, when the gate blocked, `unprotected` / `ambiguous`.
 
 ## 5. ABI panel inputs (`ui/`, static page, no backend)
 

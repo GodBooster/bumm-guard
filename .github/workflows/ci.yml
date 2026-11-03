@@ -35,6 +35,15 @@ jobs:
           print("fixtures OK:", ids)
           EOF
           test "$code" -eq 1
+      - name: migration guard on the real fixtures (expect private)
+        run: |
+          python - <<'EOF'
+          from bumm_guard.gate import migration_guard
+          for crate in ("tests/fixtures/near/escrow_v2", "tests/fixtures/near/event_registration_waitlist"):
+              status, detail = migration_guard(crate, "migrate")
+              assert status == "private", (crate, status, detail)
+              print(f"{crate}: migrate is #[private] at {detail['file']}:{detail['line']}")
+          EOF
 
   ui-panel:
     name: ABI panel tests (node)
