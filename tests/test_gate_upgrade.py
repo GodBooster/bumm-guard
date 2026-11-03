@@ -20,7 +20,7 @@ from unittest import mock
 from bumm_guard import cli
 from bumm_guard.gate import REPORT_DIR, REPORT_NAME, deploy_command, find_upgrade_proof
 from bumm_guard.storage import RpcError
-from bumm_guard.verify import onchain_code_sha256
+from bumm_guard.verify import global_contract, onchain_code_sha256
 
 FIXTURES = Path(__file__).parent / "fixtures" / "near"
 OLD = b"\0asm\x01\0\0\0old-n06"
@@ -40,31 +40,56 @@ def run_cli(*argv):
 class Node:
     """urlopen stub answering ``view_code`` like rpc.testnet.near.org (2026-11-03 shapes)."""
 
-    def __init__(self, code=None, cause="NO_CONTRACT_CODE", down=False):
+    def __init__(self, code=None, cause="NO_CONTRACT_CODE", down=False,
+                 global_hash=None, global_account=None, account_down=False, account_cause=None):
         self.code, self.cause, self.down, self.calls = code, cause, down, []
+        self.global_hash, self.global_account = global_hash, global_account
+        self.account_down, self.account_cause = account_down, account_cause
+
+    @staticmethod
+    def _error(cause, p):
+        return {"jsonrpc": "2.0", "id": "x", "error": {
+            "name": "HANDLER_ERROR", "cause": {"name": cause, "info": {}}, "code": -32000,
+            "message": "Server error", "data": f"{cause.lower()} for {p['params']['account_id']}"}}
 
     def __call__(self, req, timeout=None):
         p = json.loads(req.data)
         self.calls.append(p)
         if self.down:
             raise OSError("network down")
-        assert p["method"] == "query" and p["params"]["request_type"] == "view_code", p
-        if self.code is None:
-            body = {"jsonrpc": "2.0", "id": "x", "error": {
-                "name": "HANDLER_ERROR", "cause": {"name": self.cause, "info": {}}, "code": -32000,
-                "message": "Server error", "data": f"{self.cause.lower()} for {p['params']['account_id']}"}}
+        rt = p["params"]["request_type"]
+        assert p["method"] == "query" and rt in ("view_code", "view_account"), p
+        if rt == "view_account":
+            if self.account_down:
+                raise OSError("network down")
+            if self.account_cause:
+                body = self._error(self.account_cause, p)
+            else:  # shape of a real testnet reply; the global_* fields exist only on such accounts
+                result = {"amount": "9996658206019321400000000", "block_hash": "B" * 44, "block_height": 276050083,
+                          "code_hash": "9xkv" + "1" * 40, "locked": "0", "storage_paid_at": 0, "storage_usage": 207262}
+                if self.global_hash:
+                    result["global_contract_hash"] = self.global_hash
+                if self.global_account:
+                    result["global_contract_account_id"] = self.global_account
+                body = {"jsonrpc": "2.0", "id": "x", "result": result}
+        elif self.code is None:
+            body = self._error(self.cause, p)
         else:
             body = {"jsonrpc": "2.0", "id": "x", "result": {"code_base64": base64.b64encode(self.code).decode()}}
         return io.BytesIO(json.dumps(body).encode())
 
 
-def upgrade_scenario(name="with migrate", frm=OLD_SHA, to=NEW_SHA, passed=True, migrate=MIGRATE):
+def upgrade_scenario(name="with migrate", frm=OLD_SHA, to=NEW_SHA, passed=True, migrate=MIGRATE, after=True):
     step = {"index": 3, "kind": "upgrade", "by": "contract", "wasm": "new.wasm", "passed": passed,
             "expected": "ok", "actual": {"status": "success", "code_sha256": to, "gas_burnt_tgas": 16.7}}
     if migrate:
         step["method"] = migrate["method"]
         step["migrate"] = migrate
-    return {"name": name, "passed": passed, "wasm_sha256": frm, "upgrade_wasm_sha256": to, "steps": [step]}
+    steps = [step]
+    if after:  # the proof needs something checked on the migrated state
+        steps.append({"index": 4, "kind": "view", "method": "get_registered_count", "passed": True,
+                      "expected": {"equals": 2}, "actual": {"status": "success", "value": 2}})
+    return {"name": name, "passed": passed, "wasm_sha256": frm, "upgrade_wasm_sha256": to, "steps": steps}
 
 
 def report(*scenarios):
@@ -118,12 +143,48 @@ class UpgradeGateTests(Fixture):
         self.assertIn("has no contract code: fresh deploy", out)
         self.assertIn("without-init-call", out)
         self.assertIsNone(self.gate_report()["upgrade"])
-        self.assertEqual([c["params"]["account_id"] for c in node.calls], ["demo.testnet"])
+        self.assertEqual([c["params"]["request_type"] for c in node.calls], ["view_code", "view_account"])
+        self.assertEqual([c["params"]["account_id"] for c in node.calls], ["demo.testnet"] * 2)
 
     def test_unknown_account_is_empty_too(self):
         code, out, _ = self.gate(Node(code=None, cause="UNKNOWN_ACCOUNT"))
         self.assertEqual(code, 0, out)
         self.assertIn("fresh deploy", out)
+
+    # --- no code but a global contract (NEP-591): not empty
+
+    GLOBAL = ("DEPLOY BLOCKED: demo.testnet uses a global contract (NEP-591): upgrades of global-contract "
+              "accounts are not supported by this gate")
+
+    def assertGlobalBlocked(self, result, detail):
+        code, out, _ = result
+        self.assertEqual(code, 3, out)
+        self.assertIn(self.GLOBAL, out)
+        self.assertIn(detail, out)
+        self.assertNotIn("near contract deploy", out)
+        self.assertNotIn("fresh deploy", out)
+        self.assertFalse((self.crate / REPORT_DIR / REPORT_NAME).exists())
+
+    def test_global_contract_by_hash_blocks(self):
+        h = "H" * 43 + "1"
+        self.assertGlobalBlocked(self.gate(Node(code=None, global_hash=h)), f"global contract hash {h}")
+
+    def test_global_contract_by_account_blocks(self):
+        self.assertGlobalBlocked(self.gate(Node(code=None, global_account="lib.testnet")),
+                                 "global contract of account lib.testnet")
+
+    def test_unknown_account_skips_global_check_or_treats_as_empty(self):
+        code, out, _ = self.gate(Node(code=None, cause="UNKNOWN_ACCOUNT", account_cause="UNKNOWN_ACCOUNT"))
+        self.assertEqual(code, 0, out)
+        self.assertIn("fresh deploy", out)
+
+    def test_view_account_failure_blocks(self):
+        code, out, _ = self.gate(Node(code=None, account_down=True))
+        self.assertEqual(code, 3, out)
+        self.assertIn("DEPLOY BLOCKED: cannot read account demo.testnet", out)
+        self.assertIn("global contract (NEP-591)", out)
+        self.assertNotIn("near contract deploy", out)
+        self.assertFalse((self.crate / REPORT_DIR / REPORT_NAME).exists())
 
     def test_fresh_deploy_with_upgrade_report_warns_not_blocks(self):
         rep = report(upgrade_scenario(frm=NEW_SHA, to="9" * 64))  # report bound to this wasm as the start code
@@ -167,6 +228,16 @@ class UpgradeGateTests(Fixture):
         self.assertEqual(self.gate_report()["upgrade"], {
             "onchain_code_sha256": OLD_SHA, "candidate_sha256": NEW_SHA, "scenario": "with migrate",
             "migrate": {"method": "migrate", "args": {}, "gas": "100 Tgas"}, "passed": True})
+
+    def test_upgrade_scenario_without_steps_after_upgrade_blocks(self):
+        sc = upgrade_scenario(after=False)
+        self.assertBlocked(self.gate(Node(code=OLD), report(sc)),
+                           "has no steps after the upgrade: nothing was proven on the migrated state")
+
+    def test_report_without_code_sha256_blocks(self):
+        sc = upgrade_scenario()
+        del sc["steps"][0]["actual"]["code_sha256"]  # report from a bumm-sim that did not record it
+        self.assertBlocked(self.gate(Node(code=OLD), report(sc)), "report does not record the deployed code hash")
 
     def test_passing_code_only_proof_prints_without_init_call(self):
         code, out, _ = self.gate(Node(code=OLD), report(upgrade_scenario(name="code only", migrate=None)))
@@ -279,6 +350,47 @@ class HelperTests(unittest.TestCase):
         with mock.patch("urllib.request.urlopen", Node(down=True)):
             with self.assertRaises(RpcError):
                 onchain_code_sha256("a.testnet")
+
+    def test_find_upgrade_proof_rejects_empty_proofs(self):
+        no_after = report(upgrade_scenario(after=False))
+        proof, notes = find_upgrade_proof(no_after, OLD_SHA, NEW_SHA)
+        self.assertIsNone(proof)
+        self.assertEqual(notes, ["upgrade scenario 'with migrate' has no steps after the upgrade: "
+                                 "nothing was proven on the migrated state"])
+        sc = upgrade_scenario()
+        sc["steps"][1]["index"] = 2  # earlier than the upgrade step: does not count
+        self.assertIsNone(find_upgrade_proof(report(sc), OLD_SHA, NEW_SHA)[0])
+        sc = upgrade_scenario()
+        sc["steps"][1]["index"] = None  # no int index: does not count
+        self.assertIsNone(find_upgrade_proof(report(sc), OLD_SHA, NEW_SHA)[0])
+        sc = upgrade_scenario()
+        del sc["steps"][0]["actual"]["code_sha256"]
+        proof, notes = find_upgrade_proof(report(sc), OLD_SHA, NEW_SHA)
+        self.assertIsNone(proof)
+        self.assertEqual(notes, ["upgrade scenario 'with migrate': report does not record the deployed code hash "
+                                 "(bumm-sim older than this gate): re-run `bumm-guard simulate`"])
+        sc = upgrade_scenario()
+        sc["steps"][0]["actual"]["code_sha256"] = "0" * 64
+        self.assertIn("deployed code_sha256 differs from the candidate",
+                      find_upgrade_proof(report(sc), OLD_SHA, NEW_SHA)[1][0])
+
+    def test_global_contract(self):
+        def probe(**kw):
+            with mock.patch("urllib.request.urlopen", Node(code=None, **kw)):
+                return global_contract("a.testnet")
+        self.assertEqual(probe(global_hash="HASH"), "global contract hash HASH")
+        self.assertEqual(probe(global_account="lib.testnet"), "global contract of account lib.testnet")
+        self.assertEqual(probe(global_hash="HASH", global_account="lib.testnet"), "global contract hash HASH")
+        self.assertIsNone(probe())
+        self.assertIsNone(probe(account_cause="UNKNOWN_ACCOUNT"))
+        with self.assertRaises(RpcError):
+            probe(account_cause="TIMEOUT_ERROR")
+        with self.assertRaises(RpcError):
+            probe(account_down=True)
+        malformed = io.BytesIO(json.dumps({"jsonrpc": "2.0", "id": "x", "result": "nope"}).encode())
+        with mock.patch("urllib.request.urlopen", lambda req, timeout=None: malformed):
+            with self.assertRaises(RpcError):
+                global_contract("a.testnet")
 
     def test_deploy_command_shapes(self):
         self.assertEqual(deploy_command("a.testnet", "c.wasm", "testnet")[6], "without-init-call")

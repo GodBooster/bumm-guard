@@ -86,6 +86,31 @@ def onchain_code_sha256(account: str, network: str = "testnet", rpc_url: str | N
         raise RpcError(f"view_code on {url}: malformed reply: {e}") from None
 
 
+def global_contract(account: str, network: str = "testnet", rpc_url: str | None = None) -> str | None:
+    """Short description if ``account`` uses a global contract (NEP-591), else ``None``.
+
+    One read-only ``view_account`` query. The field names ``global_contract_hash`` and
+    ``global_contract_account_id`` come from nearcore's ``AccountView`` (near-primitives 0.37
+    ``views.rs``); both are optional and absent for normal accounts, and both are checked (the hash
+    wins). A non-existent account (``UNKNOWN_ACCOUNT``) cannot use a global contract: ``None``. Any
+    other ``RpcError`` propagates, and so does a malformed reply: "unknown" is not "no".
+    """
+    url = resolve_rpc_url(network, rpc_url)
+    try:
+        r = rpc_call(url, "query", {"request_type": "view_account", "finality": "final", "account_id": account})
+    except RpcError as e:
+        if e.cause == "UNKNOWN_ACCOUNT" or (e.cause is None and "does not exist" in str(e)):
+            return None
+        raise
+    if not isinstance(r, dict):
+        raise RpcError(f"view_account on {url}: malformed reply")
+    if r.get("global_contract_hash"):
+        return f"global contract hash {r['global_contract_hash']}"
+    if r.get("global_contract_account_id"):
+        return f"global contract of account {r['global_contract_account_id']}"
+    return None
+
+
 def verify_deployed(account: str, wasm: str | Path, network: str = "testnet", smoke: list[str] | None = None,
                     rpc_url: str | None = None) -> dict:
     """The ``post_deploy`` block (docs/FORMATS.md §4). ``smoke`` entries must already parse (``parse_smoke``).

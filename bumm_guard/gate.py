@@ -12,9 +12,11 @@ is ever started and a stale ``gate-report.json`` from an earlier clean run is re
 cannot be mistaken for a pass.
 
 With ``--account`` and ``--wasm`` the gate first reads the account's code (read-only ``view_code``).
-No code: a fresh deploy, judged as before. Other code: an upgrade of a live contract with state,
+No code: a fresh deploy, judged as before, unless the account uses a global contract (NEP-591; one
+read-only ``view_account``), which blocks: its upgrades are not supported. Other code: an upgrade of a live contract with state,
 allowed only if ``--simulate-report`` holds a passing scenario with an ``upgrade`` step
-(docs/FORMATS.md §2a) from exactly that on-chain code to exactly this wasm; the printed command then
+(docs/FORMATS.md §2a) from exactly that on-chain code to exactly this wasm, that records the deployed
+code hash and has at least one step after the upgrade; the printed command then
 repeats that scenario's migration call (``with-init-call``) or has none (``without-init-call``).
 """
 
@@ -35,7 +37,7 @@ from . import __version__
 from .rulepack.near import RULES
 from .scanner import ScanResult, discover, scan
 from .storage import RPC_URLS, RpcError, estimate_storage, simulate_state_bytes  # noqa: F401  (RPC_URLS re-exported)
-from .verify import SmokeSpecError, onchain_code_sha256, parse_smoke, post_deploy_ok, verify_deployed
+from .verify import SmokeSpecError, global_contract, onchain_code_sha256, parse_smoke, post_deploy_ok, verify_deployed
 
 BLOCKING = ("critical", "high")
 REPORT_DIR = ".bumm-guard"
@@ -150,10 +152,16 @@ def _upgrade_steps(sc: dict) -> list[dict]:
     return [st for st in sc.get("steps") or [] if isinstance(st, dict) and st.get("kind") == "upgrade"]
 
 
+def _is_int(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
 def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | None, list[str]]:
     """The first passing scenario of a §3 report whose upgrade step goes from ``onchain`` (the
     scenario's ``wasm_sha256``) to ``candidate`` (``upgrade_wasm_sha256`` and the step's
-    ``code_sha256``). Returns ``(upgrade block, notes)``; notes explain near misses."""
+    ``code_sha256``, which must be recorded) and that has at least one step after the upgrade
+    (otherwise nothing was proven on the migrated state). Returns ``(upgrade block, notes)``;
+    notes explain near misses."""
     notes, proofs = [], []
     for sc in rep.get("scenarios") or []:
         if not isinstance(sc, dict) or not _upgrade_steps(sc):
@@ -164,7 +172,19 @@ def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | 
             notes.append(f"upgrade scenario {name!r} proves {frm} -> {to}, not {onchain} -> {candidate}")
             continue
         step = _upgrade_steps(sc)[0]
-        if (step.get("actual") or {}).get("code_sha256", candidate) != candidate:
+        up_idx = step.get("index")
+        later = [st for st in sc.get("steps") or [] if isinstance(st, dict) and _is_int(st.get("index"))
+                 and _is_int(up_idx) and st["index"] > up_idx]
+        if not later:
+            notes.append(f"upgrade scenario {name!r} has no steps after the upgrade: "
+                         "nothing was proven on the migrated state")
+            continue
+        deployed = (step.get("actual") or {}).get("code_sha256")
+        if deployed is None:
+            notes.append(f"upgrade scenario {name!r}: report does not record the deployed code hash "
+                         "(bumm-sim older than this gate): re-run `bumm-guard simulate`")
+            continue
+        if deployed != candidate:
             notes.append(f"upgrade scenario {name!r}: deployed code_sha256 differs from the candidate")
             continue
         if not sc.get("passed"):
@@ -211,7 +231,8 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
 
     ``simulate_report`` binds a §3 report to ``wasm``; ``estimate_storage_flag`` adds the read-only
     storage estimate (one RPC call, plus one with ``account``). ``account`` together with an existing
-    ``wasm`` adds one read-only ``view_code`` call: code on the account makes this an upgrade, which
+    ``wasm`` adds one read-only ``view_code`` call (plus a ``view_account`` call if it has no code, to
+    rule out a global contract): code on the account makes this an upgrade, which
     needs a passing upgrade scenario for exactly (on-chain code -> ``wasm``) in ``simulate_report``.
     """
     crate = Path(crate_dir)
@@ -267,6 +288,17 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
                 f"DEPLOY BLOCKED: cannot read the code on {account} ({network}): {e}. Without it the gate cannot "
                 "tell a fresh deploy from an upgrade; retry, or pass --rpc-url."])
         if onchain is None:
+            # No code is not the same as empty: an account can use a global contract (NEP-591).
+            try:
+                glob = global_contract(account, network, rpc_url)
+            except RpcError as e:
+                return _blocked(out, report, dry_run, [
+                    f"DEPLOY BLOCKED: cannot read account {account} ({network}): {e}. Without it the gate cannot "
+                    "tell an empty account from one that uses a global contract (NEP-591); retry, or pass --rpc-url."])
+            if glob is not None:
+                return _blocked(out, report, dry_run, [
+                    f"DEPLOY BLOCKED: {account} uses a global contract (NEP-591): upgrades of global-contract "
+                    f"accounts are not supported by this gate ({glob})"])
             out.lines.append(f"account {account} ({network}) has no contract code: fresh deploy")
             if upgrade_names:
                 out.lines.append(f"warning: simulate report has upgrade scenario(s) ({', '.join(upgrade_names)}) but "
