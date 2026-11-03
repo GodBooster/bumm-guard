@@ -16,6 +16,10 @@ on:
       scenarios:
         description: "space-separated scenario files or globs, relative to the repo root"
         required: true
+      upgrade:
+        description: "set to 'candidate' to use the built crate as the upgrade target (initial wasm then comes from each scenario's contract.wasm)"
+        required: false
+        default: "initial"
       label:
         description: "free text, copied into the report artifact name"
         required: false
@@ -51,6 +55,9 @@ jobs:
           wasm=$(ls target/wasm32-unknown-unknown/release/*.wasm | head -1)
           echo "wasm=${{ inputs.crate_dir }}/$wasm" >> "$GITHUB_OUTPUT"
           sha256sum "$wasm"
+      - name: build the fixture wasm files used by upgrade scenarios (rustc 1.85.0)
+        working-directory: tests/fixtures/near
+        run: cargo build --release --locked --target wasm32-unknown-unknown -p event_registration -p event_registration_waitlist
       - name: build bumm-sim (rustc 1.99.1)
         working-directory: contracts
         run: cargo build --release --locked -p bumm-sim
@@ -58,8 +65,12 @@ jobs:
         run: |
           mkdir -p eval-out
           set +e
-          python -m bumm_guard simulate ${{ inputs.scenarios }} \
-            --wasm "${{ steps.build.outputs.wasm }}" \
+          if [ "${{ inputs.upgrade }}" = "candidate" ]; then
+            WASM_FLAG=(--upgrade-wasm "${{ steps.build.outputs.wasm }}")
+          else
+            WASM_FLAG=(--wasm "${{ steps.build.outputs.wasm }}")
+          fi
+          python -m bumm_guard simulate ${{ inputs.scenarios }} "${WASM_FLAG[@]}" \
             --runner contracts/target/release/bumm-sim --out eval-out/simulate-report.json
           echo "simulate exit=$?" | tee eval-out/exit.txt
           exit 0
