@@ -1,0 +1,23 @@
+{
+  "name": "Escrow v1: create a deal with a deposit, buyer releases it to the seller",
+  "accounts": {"alice": "10 NEAR", "bob": "10 NEAR"},
+  "contract": {"wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/escrow_v1.wasm",
+               "init": {"method": "new", "args": {}}},
+  "steps": [
+    {"view": "get_owner", "expect": {"equals": "contract"}},
+    {"view": "deal_count", "expect": {"equals": 0}},
+    {"call": "create_deal", "by": "alice", "args": {"seller": "bob"}, "deposit": "2 NEAR", "gas": "30 Tgas",
+     "expect": {"equals": 0}},
+    {"view": "deal_count", "expect": {"equals": 1}},
+    {"view": "get_deal", "args": {"id": 0},
+     "expect": {"equals": {"id": 0, "buyer": "alice", "seller": "bob", "amount": "2000000000000000000000000", "released": false}}},
+    {"view": "get_deal", "args": {"id": 1}, "expect": {"equals": null}},
+    {"balance": "contract", "expect": {"at_least": "52 NEAR"}},
+    {"balance": "alice", "expect": {"at_most": "8 NEAR"}},
+    {"call": "release", "by": "alice", "args": {"id": 0}, "expect": "ok"},
+    {"view": "get_deal", "args": {"id": 0}, "expect": {"contains": {"released": true}}},
+    {"balance": "bob", "expect": {"at_least": "11.9 NEAR"}},
+    {"balance": "contract", "expect": {"at_least": "50 NEAR"}},
+    {"balance": "contract", "expect": {"at_most": "50.1 NEAR"}}
+  ]
+}
