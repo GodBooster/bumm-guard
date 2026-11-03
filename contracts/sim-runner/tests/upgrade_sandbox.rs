@@ -50,6 +50,22 @@ fn upgrade_scenarios_on_near_sandbox() -> Result<()> {
         .context("run bumm-sim")?;
     let report: Value = serde_json::from_str(&std::fs::read_to_string(&out).context("read report")?)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
+    // Written straight to stderr (not captured by libtest), so a passing CI run still shows
+    // what the chain returned for every step.
+    let mut trace = String::new();
+    for sc in report["scenarios"].as_array().into_iter().flatten() {
+        trace += &format!("{} passed={}\n", sc["name"], sc["passed"]);
+        for s in sc["steps"].as_array().into_iter().flatten() {
+            let a = &s["actual"];
+            let err: String = a["error"].as_str().unwrap_or("").chars().take(160).collect();
+            trace += &format!(
+                "  {:>2} {:<7} {:<22} passed={:<5} {} gas={} value={} {err}\n",
+                s["index"], s["kind"].as_str().unwrap_or(""), s["method"].as_str().unwrap_or(""),
+                s["passed"], a["status"].as_str().unwrap_or(""), a["gas_burnt_tgas"], a["value"]
+            );
+        }
+    }
+    std::io::Write::write_all(&mut std::io::stderr(), trace.as_bytes())?;
     assert_eq!(status.code(), Some(1), "code-only scenario must fail, so bumm-sim exits 1");
 
     assert_eq!(report["wasm_sha256"], old_sha);
