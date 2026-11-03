@@ -409,3 +409,44 @@ class HelperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UpgradeCheckTests(Fixture):
+    """``upgrade_check``: the structured reason for a refused upgrade (what gate_deploy returns to agents)."""
+
+    def run_gate(self, rep=None):
+        from bumm_guard.gate import run_gate
+        kw = {}
+        if rep is not None:
+            p = self.root / "sim.json"
+            p.write_text(json.dumps(rep))
+            kw["simulate_report"] = str(p)
+        with mock.patch("urllib.request.urlopen", Node(code=OLD)):
+            return run_gate(str(self.crate), wasm=str(self.wasm), account="demo.testnet", dry_run=True, **kw)
+
+    def test_no_report(self):
+        out = self.run_gate()
+        self.assertTrue(out.blocked)
+        self.assertEqual(out.upgrade_check["status"], "no-report")
+        self.assertEqual(out.upgrade_check["onchain_code_sha256"], OLD_SHA)
+        self.assertEqual(out.upgrade_check["candidate_sha256"], NEW_SHA)
+        self.assertEqual(out.upgrade_check["proven_pairs"], [])
+
+    def test_report_proves_other_pair(self):
+        other = hashlib.sha256(b"other").hexdigest()
+        out = self.run_gate(report(upgrade_scenario(name="escrow", frm=other, to=NEW_SHA)))
+        self.assertTrue(out.blocked)
+        self.assertEqual(out.upgrade_check["status"], "report-proves-other-pair")
+        self.assertEqual(out.upgrade_check["proven_pairs"],
+                         [{"from": other, "to": NEW_SHA, "scenario": "escrow", "passed": True}])
+
+    def test_pair_present_but_failed(self):
+        out = self.run_gate(report(upgrade_scenario(passed=False)))
+        self.assertTrue(out.blocked)
+        self.assertEqual(out.upgrade_check["status"], "no-proof")
+        self.assertFalse(out.upgrade_check["proven_pairs"][0]["passed"])
+
+    def test_absent_on_pass(self):
+        out = self.run_gate(report(upgrade_scenario()))
+        self.assertFalse(out.blocked)
+        self.assertIsNone(out.upgrade_check)

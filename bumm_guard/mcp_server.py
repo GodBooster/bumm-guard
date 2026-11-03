@@ -118,6 +118,7 @@ def gate_deploy(crate_dir: str, wasm: str | None = None, account: str | None = N
         "deploy_command": shlex.join(out.command) if out.command else None,
         "deploy_executed": False,
         "upgrade": out.upgrade,
+        "upgrade_check": out.upgrade_check,
         "messages": out.lines + out.errors,
         "note": ("DEPLOY BLOCKED: fix the findings (fix_contract), run the crate tests, then call gate_deploy again. "
                  "Do not deploy around the gate." if out.blocked and blocking else

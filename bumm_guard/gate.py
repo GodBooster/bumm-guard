@@ -64,6 +64,7 @@ class GateOutcome:
     report_path: str | None = None
     command: list[str] | None = None
     upgrade: dict | None = None                          # the gate report's ``upgrade`` block
+    upgrade_check: dict | None = None                    # why an upgrade was refused (on-chain, candidate, proven pairs)
 
 
 def sha256_file(path: str | Path) -> str:
@@ -208,6 +209,24 @@ def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | 
     if len({json.dumps(p["migrate"], sort_keys=True) for p in proofs}) > 1:
         notes.append(f"several passing upgrade scenarios with different migrations; using {proofs[0]['scenario']!r}")
     return (proofs[0] if proofs else None), notes
+
+def upgrade_check(rep, account: str, onchain: str, candidate: str, simulate_report: str | None) -> dict:
+    """Structured reason for a refused upgrade, for agents (``gate_deploy`` returns it as ``upgrade_check``):
+    what runs on the account, what the candidate is, and every pair the report proves or tried to prove."""
+    pairs = []
+    for sc in (rep or {}).get("scenarios") or [] if isinstance(rep, dict) else []:
+        if isinstance(sc, dict) and _upgrade_steps(sc):
+            pairs.append({"from": sc.get("wasm_sha256"), "to": sc.get("upgrade_wasm_sha256"),
+                          "scenario": str(sc.get("name", "?")), "passed": bool(sc.get("passed"))})
+    if not simulate_report:
+        status = "no-report"
+    elif any(p["from"] == onchain and p["to"] == candidate for p in pairs):
+        status = "no-proof"
+    else:
+        status = "report-proves-other-pair" if pairs else "no-proof"
+    return {"account": account, "onchain_code_sha256": onchain, "candidate_sha256": candidate,
+            "status": status, "proven_pairs": pairs}
+
 
 # --- migration guard -----------------------------------------------------------------------------
 
@@ -373,6 +392,7 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
         else:
             upgrade, notes = find_upgrade_proof(rep, onchain, candidate) if isinstance(rep, dict) else (None, [])
             if upgrade is None:
+                out.upgrade_check = upgrade_check(rep, account, onchain, candidate, simulate_report)
                 how = ("pass --simulate-report with a passing upgrade scenario (docs/FORMATS.md §2a): contract.wasm = "
                        "the code now on the account, then `bumm-guard simulate <scenario> --upgrade-wasm "
                        f"{wasm}`" if not simulate_report else
