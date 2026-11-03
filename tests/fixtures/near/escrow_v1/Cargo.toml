@@ -1,0 +1,15 @@
+[package]
+name = "escrow_v1"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Escrow v1: deals in an IterableMap with a bool `released` flag (acceptance scenarios in scenarios/escrow/; upgrade target escrow_v2)."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { version = "=5.17.2", features = ["non-contract-usage"] }
+
+[dev-dependencies]
+near-sdk = { version = "=5.17.2", features = ["unit-testing"] }
