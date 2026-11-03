@@ -1,0 +1,8 @@
+# Fixtures pin near-sdk 5.17.2, whose wasm host-function imports do not link with
+# rustc >= 1.9x (undefined symbol: promise_batch_then ...). 1.85.0 is the last
+# toolchain verified to build these fixtures to wasm32. The sandbox test in
+# contracts/ builds the fixtures as a subprocess and therefore picks this file up.
+[toolchain]
+channel = "1.85.0"
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"
