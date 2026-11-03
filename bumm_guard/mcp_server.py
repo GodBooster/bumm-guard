@@ -121,8 +121,8 @@ def gate_deploy(crate_dir: str, wasm: str | None = None, account: str | None = N
         "messages": out.lines + out.errors,
         "note": ("DEPLOY BLOCKED: fix the findings (fix_contract), run the crate tests, then call gate_deploy again. "
                  "Do not deploy around the gate." if out.blocked and blocking else
-                 "DEPLOY BLOCKED: see messages (an upgrade without a passing upgrade scenario, or a simulate report "
-                 "that does not match). Do not deploy around the gate." if out.blocked else
+                 "DEPLOY BLOCKED: see messages (an upgrade without a passing upgrade scenario, a migration method "
+                 "callable by anyone, or a simulate report that does not match). Do not deploy around the gate." if out.blocked else
                  "Gate passed. The deploy command above was NOT executed and this tool cannot execute it: "
                  "show it to the human, who runs it. Placeholders (<account-id>, <path/to/contract.wasm>) must be "
                  "replaced by the human."
