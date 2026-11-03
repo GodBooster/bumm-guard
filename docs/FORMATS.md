@@ -51,6 +51,31 @@ Step kinds: `call` (change method; defaults `deposit: "0"`, `gas: "30 Tgas"`), `
 `{"contains": json}`, `{"at_least"|"at_most": amount}`. `by` is an account from
 `accounts`; `"contract"` may be used as the caller for self-calls.
 
+### 2a. Upgrade step (v0.2, 2026-11-03)
+
+Proves a code upgrade of a contract that already holds state. Deploys new code to the
+**same** contract account, signed by the contract account itself, optionally followed by
+a migration call in the same transaction (a NEAR batch: `DeployContract` + `FunctionCall`).
+State written by earlier steps stays in place, so the steps after it run against migrated
+state.
+
+```json
+{"upgrade": "path/to/new.wasm",
+ "migrate": {"method": "migrate", "args": {}, "gas": "100 Tgas"},
+ "expect": "ok"}
+```
+- `upgrade` (required): wasm path, resolved like `contract.wasm`; `bumm-guard simulate
+  --upgrade-wasm PATH` overrides it for every upgrade step (used to score a candidate build).
+- `migrate` (optional): omit for a code-only upgrade. `args` default `{}`, `gas` default
+  `"100 Tgas"`.
+- `expect`: same vocabulary as `call` (`"ok"`, `{"fail_contains": …}`), applied to the
+  deploy transaction. A code-only upgrade "succeeds" even when the new code cannot read the
+  old state; the failure then shows up in the following steps, which is exactly what the
+  scenario is for.
+- Result (`actual`): `status`, `error`, `gas_burnt_tgas`, plus `code_sha256` of the wasm that
+  was deployed. The report carries `upgrade_wasm_sha256` at scenario and top level (null when
+  a scenario has no upgrade step), so a gate can bind evidence to both the old and new wasm.
+
 ## 3. Scenario result (`<out>/simulate-report.json`, output of `bumm-guard simulate`)
 
 ```json

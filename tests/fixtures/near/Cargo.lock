@@ -583,6 +583,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "event_registration_waitlist"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

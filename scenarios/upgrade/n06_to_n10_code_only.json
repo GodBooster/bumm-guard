@@ -1,0 +1,24 @@
+{
+  "name": "Upgrade N06 → N10 (code-only upgrade): registrations survive, waitlist works on migrated state",
+  "accounts": {"alice": "10 NEAR", "bob": "10 NEAR", "carol": "10 NEAR", "dave": "10 NEAR"},
+  "contract": {"wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration.wasm",
+               "init": {"method": "new", "args": {"capacity": 2}}},
+  "steps": [
+    {"call": "register", "by": "alice", "expect": "ok"},
+    {"call": "register", "by": "bob", "expect": "ok"},
+    {"call": "register", "by": "carol", "expect": {"fail_contains": "Event is full"}},
+    {"upgrade": "tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration_waitlist.wasm", "expect": "ok"},
+    {"view": "get_capacity", "expect": {"equals": 2}},
+    {"view": "get_registered_count", "expect": {"equals": 2}},
+    {"view": "get_registered", "expect": {"contains": ["alice", "bob"]}},
+    {"view": "is_registered", "args": {"account_id": "alice"}, "expect": {"equals": true}},
+    {"call": "register", "by": "alice", "expect": {"fail_contains": "already registered"}},
+    {"call": "register", "by": "carol", "expect": "ok"},
+    {"view": "get_waitlist", "expect": {"equals": ["carol"]}},
+    {"call": "cancel", "by": "bob", "expect": "ok"},
+    {"view": "is_registered", "args": {"account_id": "carol"}, "expect": {"equals": true}},
+    {"view": "get_waitlist", "expect": {"equals": []}},
+    {"call": "register", "by": "dave", "expect": "ok"},
+    {"view": "get_waitlist", "expect": {"equals": ["dave"]}}
+  ]
+}
