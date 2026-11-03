@@ -20,6 +20,8 @@ pub const NEAR_SANDBOX_VERSION: &str = "0.4.0";
 pub const YOCTO_PER_NEAR: u128 = 1_000_000_000_000_000_000_000_000;
 pub const GAS_PER_TGAS: u64 = 1_000_000_000_000;
 pub const DEFAULT_GAS: u64 = 30 * GAS_PER_TGAS;
+/// Default gas of the `migrate` call in an upgrade step (FORMATS section 2a).
+pub const DEFAULT_MIGRATE_GAS: u64 = 100 * GAS_PER_TGAS;
 /// The contract is deployed to the sub-account `contract.<root>`; scenarios refer to it as
 /// `"contract"` (caller for self-calls, `balance` target, alias in args/expectations).
 pub const CONTRACT_ALIAS: &str = "contract";
@@ -145,6 +147,16 @@ pub enum StepKind {
     Call { method: String, by: String, args: Value, deposit: u128, gas: u64 },
     View { method: String, args: Value },
     Balance { account: String },
+    /// FORMATS section 2a: deploy `wasm` to the contract account (signed by itself), plus an
+    /// optional migration call in the same batch transaction.
+    Upgrade { wasm: String, migrate: Option<Migrate> },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Migrate {
+    pub method: String,
+    pub args: Value,
+    pub gas: u64,
 }
 
 impl StepKind {
@@ -153,6 +165,7 @@ impl StepKind {
             StepKind::Call { .. } => "call",
             StepKind::View { .. } => "view",
             StepKind::Balance { .. } => "balance",
+            StepKind::Upgrade { .. } => "upgrade",
         }
     }
 }
@@ -173,7 +186,9 @@ const INIT_KEYS: &[&str] = &["method", "args"];
 const CALL_KEYS: &[&str] = &["call", "by", "args", "deposit", "gas", "expect"];
 const VIEW_KEYS: &[&str] = &["view", "args", "expect"];
 const BALANCE_KEYS: &[&str] = &["balance", "expect"];
-const STEP_KINDS: &[&str] = &["call", "view", "balance"];
+const UPGRADE_KEYS: &[&str] = &["upgrade", "migrate", "expect"];
+const MIGRATE_KEYS: &[&str] = &["method", "args", "gas"];
+const STEP_KINDS: &[&str] = &["call", "view", "balance", "upgrade"];
 
 fn check_keys(obj: &Map<String, Value>, allowed: &[&str], ctx: &str) -> Result<(), String> {
     for k in obj.keys() {
@@ -212,6 +227,14 @@ pub fn valid_alias(a: &str) -> bool {
         && !a.contains("__")
         && !a.contains("-_")
         && !a.contains("_-")
+}
+
+fn gas_of(obj: &Map<String, Value>, default: u64, ctx: &str) -> Result<u64, String> {
+    match obj.get("gas") {
+        None => Ok(default),
+        Some(Value::String(g)) => parse_gas(g).map_err(|e| format!("{ctx}: gas: {e}")),
+        Some(_) => Err(format!("{ctx}: gas must be a string like \"30 Tgas\"")),
+    }
 }
 
 fn amount_value(v: &Value, ctx: &str) -> Result<u128, String> {
@@ -331,7 +354,7 @@ pub fn parse_scenario(text: &str) -> Result<Scenario, String> {
             [] => {
                 let keys: Vec<&str> = s.keys().map(String::as_str).collect();
                 return Err(format!(
-                    "{ctx}: unknown step kind (expected exactly one of call, view, balance; got keys: {})",
+                    "{ctx}: unknown step kind (expected exactly one of call, view, balance, upgrade; got keys: {})",
                     keys.join(", ")
                 ));
             }
@@ -351,12 +374,26 @@ pub fn parse_scenario(text: &str) -> Result<Scenario, String> {
                     Some(Value::String(d)) => parse_near_amount(d).map_err(|e| format!("{ctx}: deposit: {e}"))?,
                     Some(_) => return Err(format!("{ctx}: deposit must be a string like \"0\" or \"1 NEAR\"")),
                 };
-                let gas = match s.get("gas") {
-                    None => DEFAULT_GAS,
-                    Some(Value::String(g)) => parse_gas(g).map_err(|e| format!("{ctx}: gas: {e}"))?,
-                    Some(_) => return Err(format!("{ctx}: gas must be a string like \"30 Tgas\"")),
-                };
+                let gas = gas_of(s, DEFAULT_GAS, &ctx)?;
                 StepKind::Call { method, by, args: args_of(s, &ctx)?, deposit, gas }
+            }
+            "upgrade" => {
+                check_keys(s, UPGRADE_KEYS, &ctx)?;
+                let wasm = req_str(s, "upgrade", &ctx)?.to_string();
+                let migrate = match s.get("migrate") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::Object(m)) => {
+                        let mctx = format!("{ctx}.migrate");
+                        check_keys(m, MIGRATE_KEYS, &mctx)?;
+                        Some(Migrate {
+                            method: req_str(m, "method", &mctx)?.to_string(),
+                            args: args_of(m, &mctx)?,
+                            gas: gas_of(m, DEFAULT_MIGRATE_GAS, &mctx)?,
+                        })
+                    }
+                    Some(_) => return Err(format!("{ctx}: migrate must be an object {{method, args, gas}}")),
+                };
+                StepKind::Upgrade { wasm, migrate }
             }
             "view" => {
                 check_keys(s, VIEW_KEYS, &ctx)?;
@@ -375,6 +412,9 @@ pub fn parse_scenario(text: &str) -> Result<Scenario, String> {
             && matches!(expect, Expect::FailContains(_) | Expect::Contains(_))
         {
             return Err(format!("{ctx}: a balance step supports ok, equals, at_least, at_most"));
+        }
+        if matches!(kind, StepKind::Upgrade { .. }) && !matches!(expect, Expect::Ok | Expect::FailContains(_)) {
+            return Err(format!("{ctx}: an upgrade step supports ok, fail_contains"));
         }
         steps.push(Step { index, kind, expect, expect_raw });
     }
@@ -417,6 +457,9 @@ pub struct Actual {
     pub gas_burnt_tgas: Option<f64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub logs: Vec<String>,
+    /// Upgrade steps: sha256 of the wasm sent in the `DeployContract` action.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code_sha256: Option<String>,
     /// Debug form of the error, only used for matching when `error` (Display) misses the text.
     #[serde(skip)]
     pub error_debug: Option<String>,
@@ -548,6 +591,10 @@ pub struct StepResult {
     pub by: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+    /// Upgrade steps: the wasm path as written in the scenario (the resolved path, after any
+    /// `--upgrade-wasm` override, is the scenario's `upgrade_wasm`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wasm: Option<String>,
     pub passed: bool,
     pub expected: Value,
     pub actual: Actual,
@@ -558,10 +605,16 @@ pub struct StepResult {
 impl StepResult {
     pub fn new(step: &Step, actual: Actual, aliases: &BTreeMap<String, String>) -> Self {
         let (passed, reason) = evaluate(&step.expect, &actual, aliases);
-        let (method, by, account) = match &step.kind {
-            StepKind::Call { method, by, .. } => (Some(method.clone()), Some(by.clone()), None),
-            StepKind::View { method, .. } => (Some(method.clone()), None, None),
-            StepKind::Balance { account } => (None, None, Some(account.clone())),
+        let (method, by, account, wasm) = match &step.kind {
+            StepKind::Call { method, by, .. } => (Some(method.clone()), Some(by.clone()), None, None),
+            StepKind::View { method, .. } => (Some(method.clone()), None, None, None),
+            StepKind::Balance { account } => (None, None, Some(account.clone()), None),
+            StepKind::Upgrade { wasm, migrate } => (
+                migrate.as_ref().map(|m| m.method.clone()),
+                Some(CONTRACT_ALIAS.to_string()),
+                None,
+                Some(wasm.clone()),
+            ),
         };
         StepResult {
             index: step.index,
@@ -569,6 +622,7 @@ impl StepResult {
             method,
             by,
             account,
+            wasm,
             passed,
             expected: step.expect_raw.clone(),
             actual,
@@ -591,6 +645,11 @@ pub struct ScenarioResult {
     pub scenario_sha256: String,
     pub wasm: String,
     pub wasm_sha256: Option<String>,
+    /// FORMATS section 2a: resolved wasm of the upgrade step(s); `null` without an upgrade step.
+    pub upgrade_wasm: Option<String>,
+    /// Shared sha256 of the upgrade wasm(s); `null` without an upgrade step (or, with several
+    /// upgrade steps, if their wasm files differ: see each step's `actual.code_sha256`).
+    pub upgrade_wasm_sha256: Option<String>,
     pub passed: bool,
     pub duration_s: f64,
     /// Infrastructure error (sandbox start, account creation, deploy, missing wasm).
@@ -644,6 +703,9 @@ pub struct Report {
     pub runner: String,
     /// Shared wasm hash of all scenarios; `null` if they use different wasm files or none was read.
     pub wasm_sha256: Option<String>,
+    /// Shared upgrade wasm hash of the scenarios that have an upgrade step; `null` if none has
+    /// one or they differ. Scenarios without an upgrade step do not count.
+    pub upgrade_wasm_sha256: Option<String>,
     /// See [`combined_sha256`].
     pub scenario_sha256: String,
     pub sandbox: SandboxInfo,
@@ -670,11 +732,13 @@ pub fn build_report(results: Vec<ScenarioResult>) -> Report {
         _ => None,
     };
     let file_hashes: Vec<String> = results.iter().map(|r| r.scenario_sha256.clone()).collect();
+    let upgrade_wasm_sha256 = shared_hash(results.iter().filter_map(|r| r.upgrade_wasm_sha256.as_deref()));
     Report {
         tool: TOOL,
         version: RUNNER_VERSION,
         runner: format!("bumm-sim {RUNNER_VERSION}"),
         wasm_sha256,
+        upgrade_wasm_sha256,
         scenario_sha256: combined_sha256(&file_hashes),
         sandbox: SandboxInfo { near_workspaces: NEAR_WORKSPACES_VERSION, near_sandbox: NEAR_SANDBOX_VERSION },
         summary: summarize(&results),
@@ -685,6 +749,12 @@ pub fn build_report(results: Vec<ScenarioResult>) -> Report {
 // ---------------------------------------------------------------------------------------
 // Hashing, paths, CLI
 // ---------------------------------------------------------------------------------------
+
+/// The one hash all items share; `None` for no items or differing hashes.
+pub fn shared_hash<'a>(mut hashes: impl Iterator<Item = &'a str>) -> Option<String> {
+    let first = hashes.next()?;
+    hashes.all(|h| h == first).then(|| first.to_string())
+}
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
@@ -723,16 +793,17 @@ pub fn resolve_wasm(spec: &str, scenario_file: &Path, override_path: Option<&Pat
     p.to_path_buf()
 }
 
-pub const USAGE: &str = "usage: bumm-sim run --scenario <file.json> [--scenario <file.json> ...] --out <report.json> [--wasm <file.wasm>]
+pub const USAGE: &str = "usage: bumm-sim run --scenario <file.json> [--scenario <file.json> ...] --out <report.json> [--wasm <file.wasm>] [--upgrade-wasm <file.wasm>]
 
 Runs each scenario file (docs/FORMATS.md section 2) in its own fresh near-sandbox and writes
-the section 3 report. Exit: 0 all scenarios passed, 1 a scenario failed, 2 usage/parse error.";
+the section 3 report. --wasm replaces contract.wasm; --upgrade-wasm replaces the wasm of every
+upgrade step (section 2a). Exit: 0 all scenarios passed, 1 a scenario failed, 2 usage/parse error.";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Help,
     Version,
-    Run { scenarios: Vec<PathBuf>, out: PathBuf, wasm: Option<PathBuf> },
+    Run { scenarios: Vec<PathBuf>, out: PathBuf, wasm: Option<PathBuf>, upgrade_wasm: Option<PathBuf> },
 }
 
 pub fn parse_args(args: &[String]) -> Result<Command, String> {
@@ -744,13 +815,14 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
         Some("run") => {}
         Some(other) => return Err(format!("unknown command {other:?}")),
     }
-    let (mut scenarios, mut out, mut wasm) = (Vec::new(), None, None);
+    let (mut scenarios, mut out, mut wasm, mut upgrade_wasm) = (Vec::new(), None, None, None);
     while let Some(a) = it.next() {
         let mut value = |flag: &str| it.next().cloned().ok_or_else(|| format!("{flag} needs a value"));
         match a.as_str() {
             "--scenario" => scenarios.push(PathBuf::from(value("--scenario")?)),
             "--out" => out = Some(PathBuf::from(value("--out")?)),
             "--wasm" => wasm = Some(PathBuf::from(value("--wasm")?)),
+            "--upgrade-wasm" => upgrade_wasm = Some(PathBuf::from(value("--upgrade-wasm")?)),
             "-h" | "--help" => return Ok(Command::Help),
             other => return Err(format!("unknown argument {other:?}")),
         }
@@ -759,7 +831,7 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
         return Err("at least one --scenario is required".into());
     }
     let out = out.ok_or("--out is required")?;
-    Ok(Command::Run { scenarios, out, wasm })
+    Ok(Command::Run { scenarios, out, wasm, upgrade_wasm })
 }
 
 // ---------------------------------------------------------------------------------------
@@ -957,6 +1029,8 @@ mod tests {
             scenario_sha256: sha256_hex(N06.as_bytes()),
             wasm: sc.wasm.clone(),
             wasm_sha256: Some("ab".into()),
+            upgrade_wasm: None,
+            upgrade_wasm_sha256: None,
             passed: false,
             duration_s: 0.0,
             error: None,
@@ -978,6 +1052,8 @@ mod tests {
         let v = serde_json::to_value(&report).unwrap();
         assert_eq!(v["tool"], "bumm-guard");
         assert_eq!(v["wasm_sha256"], "ab");
+        assert_eq!(v["upgrade_wasm_sha256"], Value::Null, "present and null without an upgrade step");
+        assert_eq!(v["scenarios"][0]["upgrade_wasm_sha256"], Value::Null);
         assert_eq!(v["sandbox"]["near_workspaces"], "0.24.0");
         let s2 = &v["scenarios"][0]["steps"][2];
         assert_eq!(s2["index"], 2);
@@ -988,6 +1064,122 @@ mod tests {
         assert_eq!(s2["actual"]["status"], "failure");
         assert!(s2["actual"].get("error_debug").is_none());
         assert_eq!(v["scenarios"][0]["steps"][7]["account"], "bob");
+    }
+
+    /// The repository's acceptance scenarios for FORMATS section 2a must parse.
+    #[test]
+    fn parses_the_repo_upgrade_scenarios() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scenarios/upgrade");
+        let with = parse_scenario(&std::fs::read_to_string(dir.join("n06_to_n10_with_migrate.json")).unwrap()).unwrap();
+        let code_only = parse_scenario(&std::fs::read_to_string(dir.join("n06_to_n10_code_only.json")).unwrap()).unwrap();
+        let wasm = "tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration_waitlist.wasm";
+        assert_eq!(
+            with.steps[3].kind,
+            StepKind::Upgrade {
+                wasm: wasm.into(),
+                migrate: Some(Migrate { method: "migrate".into(), args: json!({}), gas: DEFAULT_MIGRATE_GAS })
+            }
+        );
+        assert_eq!(code_only.steps[3].kind, StepKind::Upgrade { wasm: wasm.into(), migrate: None });
+        assert_eq!(with.steps.len(), code_only.steps.len());
+        let upgrades = |sc: &Scenario| sc.steps.iter().filter(|s| matches!(s.kind, StepKind::Upgrade { .. })).count();
+        assert_eq!((upgrades(&with), upgrades(&code_only)), (1, 1));
+    }
+
+    #[test]
+    fn upgrade_step_parsing() {
+        let sc = parse_scenario(&with_step(
+            r#"{"upgrade": "new.wasm", "migrate": {"method": "migrate", "args": {"x": "alice"}, "gas": "200 Tgas"}, "expect": {"fail_contains": "No old state"}}"#,
+        ))
+        .unwrap();
+        let step = &sc.steps[0];
+        assert_eq!(step.kind.kind_name(), "upgrade");
+        assert_eq!(
+            step.kind,
+            StepKind::Upgrade {
+                wasm: "new.wasm".into(),
+                migrate: Some(Migrate { method: "migrate".into(), args: json!({"x": "alice"}), gas: 200 * GAS_PER_TGAS })
+            }
+        );
+        assert_eq!(step.expect, Expect::FailContains("No old state".into()));
+
+        let sc = parse_scenario(&with_step(r#"{"upgrade": "new.wasm", "migrate": {"method": "m"}}"#)).unwrap();
+        assert!(
+            matches!(&sc.steps[0].kind, StepKind::Upgrade { migrate: Some(m), .. } if m.args == json!({}) && m.gas == DEFAULT_MIGRATE_GAS),
+            "args default {{}}, gas default 100 Tgas"
+        );
+        assert_eq!(sc.steps[0].expect, Expect::Ok, "missing expect defaults to ok");
+        let sc = parse_scenario(&with_step(r#"{"upgrade": "new.wasm", "migrate": null}"#)).unwrap();
+        assert_eq!(sc.steps[0].kind, StepKind::Upgrade { wasm: "new.wasm".into(), migrate: None });
+    }
+
+    #[test]
+    fn upgrade_step_errors() {
+        let cases = [
+            (r#"{"upgrade": ""}"#, "\"upgrade\" must be a non-empty string"),
+            (r#"{"upgrade": 1}"#, "\"upgrade\" must be a non-empty string"),
+            (r#"{"upgrade": "n.wasm", "by": "alice"}"#, "unknown field \"by\""),
+            (r#"{"upgrade": "n.wasm", "call": "x", "by": "alice"}"#, "more than one step kind"),
+            (r#"{"upgrade": "n.wasm", "migrate": "migrate"}"#, "migrate must be an object"),
+            (r#"{"upgrade": "n.wasm", "migrate": {}}"#, "step 0.migrate: missing \"method\""),
+            (r#"{"upgrade": "n.wasm", "migrate": {"method": "m", "deposit": "1"}}"#, "step 0.migrate: unknown field \"deposit\""),
+            (r#"{"upgrade": "n.wasm", "migrate": {"method": "m", "args": [1]}}"#, "step 0.migrate: \"args\" must be a JSON object"),
+            (r#"{"upgrade": "n.wasm", "migrate": {"method": "m", "gas": "lots"}}"#, "step 0.migrate: gas: bad gas"),
+            (r#"{"upgrade": "n.wasm", "migrate": {"method": "m", "gas": 5}}"#, "step 0.migrate: gas must be a string"),
+            (r#"{"upgrade": "n.wasm", "expect": {"equals": 1}}"#, "upgrade step supports ok, fail_contains"),
+            (r#"{"upgrade": "n.wasm", "expect": {"at_least": "1 NEAR"}}"#, "upgrade step supports ok, fail_contains"),
+        ];
+        for (step, want) in cases {
+            let err = parse_scenario(&with_step(step)).unwrap_err();
+            assert!(err.contains(want), "{step}: got {err:?}, want {want:?}");
+        }
+        let err = parse_scenario(&with_step(r#"{"transfer": "alice"}"#)).unwrap_err();
+        assert!(err.contains("call, view, balance, upgrade"), "{err}");
+    }
+
+    #[test]
+    fn upgrade_report_fields() {
+        let sc = parse_scenario(&with_step(r#"{"upgrade": "new.wasm", "migrate": {"method": "migrate"}}"#)).unwrap();
+        let a = aliases();
+        let ok = Actual { code_sha256: Some("cd".into()), gas_burnt_tgas: Some(5.1), ..Actual::success(Some(Value::Null)) };
+        let step = StepResult::new(&sc.steps[0], ok, &a);
+        assert!(step.passed);
+        let v = serde_json::to_value(&step).unwrap();
+        assert_eq!(v["kind"], "upgrade");
+        assert_eq!(v["method"], "migrate");
+        assert_eq!(v["by"], "contract");
+        assert_eq!(v["wasm"], "new.wasm");
+        assert_eq!(v["actual"]["code_sha256"], "cd");
+        let code_only = parse_scenario(&with_step(r#"{"upgrade": "new.wasm"}"#)).unwrap();
+        let v = serde_json::to_value(StepResult::new(&code_only.steps[0], Actual::failure("x"), &a)).unwrap();
+        assert!(v.get("method").is_none());
+        assert_eq!(v["passed"], false);
+
+        let result = |name: &str, up: Option<&str>| ScenarioResult {
+            name: name.into(),
+            file: format!("{name}.json"),
+            scenario_sha256: sha256_hex(name.as_bytes()),
+            wasm: "old.wasm".into(),
+            wasm_sha256: Some("aa".into()),
+            upgrade_wasm: up.map(|_| "new.wasm".into()),
+            upgrade_wasm_sha256: up.map(str::to_string),
+            passed: true,
+            duration_s: 1.0,
+            error: None,
+            accounts: BTreeMap::new(),
+            init: None,
+            steps: vec![],
+        };
+        let r = build_report(vec![result("a", Some("bb")), result("b", None), result("c", Some("bb"))]);
+        assert_eq!(r.wasm_sha256.as_deref(), Some("aa"));
+        assert_eq!(r.upgrade_wasm_sha256.as_deref(), Some("bb"), "scenarios without upgrade do not count");
+        let r = build_report(vec![result("a", Some("bb")), result("c", Some("cc"))]);
+        assert_eq!(r.upgrade_wasm_sha256, None, "differing upgrade wasm");
+        let v = serde_json::to_value(build_report(vec![result("b", None)])).unwrap();
+        assert_eq!(v["upgrade_wasm_sha256"], Value::Null);
+        assert_eq!(v["scenarios"][0]["upgrade_wasm"], Value::Null);
+        assert_eq!(shared_hash(["x", "x"].into_iter()).as_deref(), Some("x"));
+        assert_eq!(shared_hash(std::iter::empty()), None);
     }
 
     #[test]
@@ -1006,7 +1198,12 @@ mod tests {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         assert_eq!(
             parse_args(&s(&["run", "--scenario", "a.json", "--scenario", "b.json", "--out", "r.json"])).unwrap(),
-            Command::Run { scenarios: vec!["a.json".into(), "b.json".into()], out: "r.json".into(), wasm: None }
+            Command::Run {
+                scenarios: vec!["a.json".into(), "b.json".into()],
+                out: "r.json".into(),
+                wasm: None,
+                upgrade_wasm: None
+            }
         );
         assert!(matches!(
             parse_args(&s(&["run", "--scenario", "a.json", "--out", "r.json", "--wasm", "c.wasm"])).unwrap(),
@@ -1018,6 +1215,13 @@ mod tests {
         assert!(parse_args(&s(&["run", "--scenario", "a.json"])).unwrap_err().contains("--out"));
         assert!(parse_args(&s(&["run", "--scenario"])).unwrap_err().contains("needs a value"));
         assert!(parse_args(&s(&["walk"])).is_err());
+        assert!(matches!(
+            parse_args(&s(&["run", "--scenario", "a.json", "--out", "r.json", "--upgrade-wasm", "n.wasm"])).unwrap(),
+            Command::Run { wasm: None, upgrade_wasm: Some(p), .. } if p == Path::new("n.wasm")
+        ));
+        assert!(parse_args(&s(&["run", "--scenario", "a.json", "--out", "r.json", "--upgrade-wasm"]))
+            .unwrap_err()
+            .contains("needs a value"));
     }
 
     #[test]

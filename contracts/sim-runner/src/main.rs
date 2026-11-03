@@ -1,18 +1,21 @@
-//! `bumm-sim run --scenario <file.json> [--scenario ...] --out <report.json> [--wasm PATH]`
+//! `bumm-sim run --scenario <file.json> [--scenario ...] --out <report.json> [--wasm PATH] [--upgrade-wasm PATH]`
 //!
 //! One fresh near-sandbox per scenario file (near-workspaces 0.24). Accounts are created as
 //! sub-accounts of the sandbox root with the requested balances, the wasm is deployed to the
 //! sub-account `contract`, `init` is called by the contract account itself, then the steps run
-//! in order. Every step is executed and recorded even after a failed expectation, so the
+//! in order. An `upgrade` step (FORMATS section 2a) is one batch transaction signed by the
+//! contract account to itself: `DeployContract` plus, with `migrate`, a `FunctionCall`; the
+//! sandbox state stays, so later steps run against the upgraded code. Every step is executed and recorded even after a failed expectation, so the
 //! report shows the full trace. Exit: 0 all passed, 1 a scenario failed, 2 usage/parse error.
 
 use anyhow::{Context, Result};
 use bumm_sim::{
     build_report, format_near, gas_to_tgas, parse_args, parse_scenario, resolve_aliases, resolve_wasm, sha256_hex,
-    Actual, Command, InitResult, Scenario, ScenarioResult, StepKind, StepResult, CONTRACT_ALIAS,
+    shared_hash, Actual, Command, InitResult, Scenario, ScenarioResult, StepKind, StepResult, CONTRACT_ALIAS,
     CONTRACT_INITIAL_BALANCE, DEFAULT_GAS, RUNNER_VERSION, USAGE,
 };
 use near_workspaces::network::Sandbox;
+use near_workspaces::operations::Function;
 use near_workspaces::result::{ExecutionFinalResult, ViewResultDetails};
 use near_workspaces::types::{Gas, NearToken};
 use near_workspaces::{Account, Contract, Worker};
@@ -33,7 +36,7 @@ async fn main() {
 
 async fn real_main() -> i32 {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    let (files, out, wasm_override) = match parse_args(&argv) {
+    let (files, out, wasm_override, upgrade_override) = match parse_args(&argv) {
         Ok(Command::Help) => {
             println!("{USAGE}");
             return 0;
@@ -42,7 +45,7 @@ async fn real_main() -> i32 {
             println!("bumm-sim {RUNNER_VERSION}");
             return 0;
         }
-        Ok(Command::Run { scenarios, out, wasm }) => (scenarios, out, wasm),
+        Ok(Command::Run { scenarios, out, wasm, upgrade_wasm }) => (scenarios, out, wasm, upgrade_wasm),
         Err(e) => {
             eprintln!("bumm-sim: {e}\n{USAGE}");
             return 2;
@@ -77,7 +80,7 @@ async fn real_main() -> i32 {
 
     let mut results = Vec::new();
     for l in &loaded {
-        let r = run_scenario(l, wasm_override.as_deref()).await;
+        let r = run_scenario(l, wasm_override.as_deref(), upgrade_override.as_deref()).await;
         println!(
             "{} {} ({}/{} steps passed, {:.1}s){}",
             if r.passed { "PASS" } else { "FAIL" },
@@ -118,17 +121,41 @@ fn write_report(out: &Path, report: &bumm_sim::Report) -> Result<()> {
     Ok(())
 }
 
-async fn run_scenario(l: &Loaded, wasm_override: Option<&Path>) -> ScenarioResult {
+/// Upgrade wasm bytes by step index, read before the sandbox starts.
+type UpgradeCode = BTreeMap<usize, Vec<u8>>;
+
+async fn run_scenario(l: &Loaded, wasm_override: Option<&Path>, upgrade_override: Option<&Path>) -> ScenarioResult {
     let start = Instant::now();
     let sc = &l.scenario;
     let wasm_path = resolve_wasm(&sc.wasm, &l.file, wasm_override);
     let wasm = std::fs::read(&wasm_path);
+    // Every upgrade wasm is read up front: a missing file is an input error, not a step result.
+    let mut upgrade_code = UpgradeCode::new();
+    let mut upgrade_paths = Vec::new();
+    let mut upgrade_error = None;
+    for step in &sc.steps {
+        if let StepKind::Upgrade { wasm: spec, .. } = &step.kind {
+            let p = resolve_wasm(spec, &l.file, upgrade_override);
+            match std::fs::read(&p) {
+                Ok(b) => {
+                    upgrade_code.insert(step.index, b);
+                }
+                Err(e) => {
+                    upgrade_error.get_or_insert(format!("upgrade wasm not found or unreadable: {}: {e}", p.display()));
+                }
+            }
+            upgrade_paths.push(p.display().to_string());
+        }
+    }
+    let upgrade_hashes: Vec<String> = upgrade_code.values().map(|b| sha256_hex(b)).collect();
     let mut res = ScenarioResult {
         name: sc.name.clone(),
         file: l.file.display().to_string(),
         scenario_sha256: l.sha256.clone(),
         wasm: wasm_path.display().to_string(),
         wasm_sha256: wasm.as_ref().ok().map(|b| sha256_hex(b)),
+        upgrade_wasm: shared_hash(upgrade_paths.iter().map(String::as_str)),
+        upgrade_wasm_sha256: if upgrade_error.is_none() { shared_hash(upgrade_hashes.iter().map(String::as_str)) } else { None },
         passed: false,
         duration_s: 0.0,
         error: None,
@@ -136,10 +163,11 @@ async fn run_scenario(l: &Loaded, wasm_override: Option<&Path>) -> ScenarioResul
         init: None,
         steps: Vec::new(),
     };
-    match wasm {
-        Err(e) => res.error = Some(format!("wasm not found or unreadable: {}: {e}", wasm_path.display())),
-        Ok(bytes) => {
-            if let Err(e) = execute(sc, &bytes, &mut res).await {
+    match (wasm, upgrade_error) {
+        (Err(e), _) => res.error = Some(format!("wasm not found or unreadable: {}: {e}", wasm_path.display())),
+        (Ok(_), Some(e)) => res.error = Some(e),
+        (Ok(bytes), None) => {
+            if let Err(e) = execute(sc, &bytes, &upgrade_code, &mut res).await {
                 res.error = Some(format!("{e:#}"));
             }
         }
@@ -149,7 +177,7 @@ async fn run_scenario(l: &Loaded, wasm_override: Option<&Path>) -> ScenarioResul
     res
 }
 
-async fn execute(sc: &Scenario, wasm: &[u8], res: &mut ScenarioResult) -> Result<()> {
+async fn execute(sc: &Scenario, wasm: &[u8], upgrade_code: &UpgradeCode, res: &mut ScenarioResult) -> Result<()> {
     let worker: Worker<Sandbox> = near_workspaces::sandbox().await.context("start near-sandbox")?;
     let root = worker.root_account().context("sandbox root account")?;
 
@@ -224,6 +252,19 @@ async fn execute(sc: &Scenario, wasm: &[u8], res: &mut ScenarioResult) -> Result
                     }
                     Err(e) => Actual::failure(e.to_string()),
                 }
+            }
+            StepKind::Upgrade { migrate, .. } => {
+                let code = &upgrade_code[&step.index];
+                // One batch: if the migration call fails, the deploy is rolled back with it.
+                let mut tx = contract.batch().deploy(code);
+                if let Some(m) = migrate {
+                    tx = tx.call(
+                        Function::new(&m.method)
+                            .args_json(resolve_aliases(&m.args, &aliases))
+                            .gas(Gas::from_gas(m.gas)),
+                    );
+                }
+                Actual { code_sha256: Some(sha256_hex(code)), ..call_actual(tx.transact().await) }
             }
         };
         res.steps.push(StepResult::new(step, actual, &aliases));

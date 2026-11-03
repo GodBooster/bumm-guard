@@ -170,7 +170,7 @@ def _cmd_gate(args: argparse.Namespace) -> int:
 
 def _cmd_simulate(args: argparse.Namespace) -> int:
     out = run_simulate(args.scenarios, wasm=args.wasm, out=args.out, runner=args.runner,
-                       validate_only=args.validate_only)
+                       validate_only=args.validate_only, upgrade_wasm=args.upgrade_wasm)
     for line in out.lines:
         print(line)
     for line in out.errors:
@@ -230,6 +230,8 @@ def build_parser() -> argparse.ArgumentParser:
     smp = sub.add_parser("simulate", help="run scenario files (docs/FORMATS.md §2) on a local near-sandbox via bumm-sim")
     smp.add_argument("scenarios", nargs="+", metavar="scenario.json")
     smp.add_argument("--wasm", metavar="PATH", help="use this wasm instead of each scenario's contract.wasm")
+    smp.add_argument("--upgrade-wasm", metavar="PATH",
+                     help="use this wasm in every upgrade step (§2a) instead of the path in the scenario")
     smp.add_argument("--out", metavar="PATH", help=f"report path or directory (default: {DEFAULT_OUT})")
     smp.add_argument("--runner", metavar="PATH", help="bumm-sim binary (default: $BUMM_SIM, then contracts/target/release/bumm-sim)")
     smp.add_argument("--validate-only", action="store_true", help="check the files against the format; run nothing")
