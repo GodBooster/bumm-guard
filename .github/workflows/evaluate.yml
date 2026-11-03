@@ -46,7 +46,8 @@ jobs:
         working-directory: ${{ inputs.crate_dir }}
         run: |
           set -o pipefail
-          cargo +1.85.0 build --release --target wasm32-unknown-unknown 2>&1 | tee ../build.log
+          mkdir -p "$GITHUB_WORKSPACE/eval-out"
+          cargo +1.85.0 build --release --target wasm32-unknown-unknown 2>&1 | tee "$GITHUB_WORKSPACE/eval-out/build.log"
           wasm=$(ls target/wasm32-unknown-unknown/release/*.wasm | head -1)
           echo "wasm=${{ inputs.crate_dir }}/$wasm" >> "$GITHUB_OUTPUT"
           sha256sum "$wasm"
@@ -66,7 +67,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: eval-${{ inputs.label }}
-          path: |
-            eval-out/
-            ${{ inputs.crate_dir }}/../build.log
+          path: eval-out/
           if-no-files-found: warn
