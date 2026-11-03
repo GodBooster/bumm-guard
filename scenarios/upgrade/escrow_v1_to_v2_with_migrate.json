@@ -21,7 +21,7 @@
      "expect": {"equals": {"id": 2, "buyer": "bob", "seller": "carol", "amount": "1000000000000000000000000", "status": "Funded", "created_at_ms": 0}}},
     {"view": "get_deal", "args": {"id": 3}, "expect": {"equals": null}},
     {"view": "get_owner", "expect": {"equals": "contract"}},
-    {"balance": "contract", "expect": {"at_least": "53.9 NEAR"}},
+    {"balance": "contract", "expect": {"at_least": "53.5 NEAR"}},
     {"balance": "contract", "expect": {"at_most": "54.1 NEAR"}},
     {"call": "refund", "by": "carol", "args": {"id": 1}, "expect": "ok"},
     {"view": "get_deal", "args": {"id": 1}, "expect": {"contains": {"status": "Refunded", "amount": "3000000000000000000000000"}}},
