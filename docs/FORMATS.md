@@ -4,7 +4,12 @@ These formats are the contract between the three parts built in parallel: the sc
 runner (`bumm-guard simulate`), the ABI interaction panel (`ui/`), and the gate
 (`bumm-guard gate`). Change them here first; code follows the file.
 
-## 1. Build artifact (`artifact.json`, produced by `bumm-guard build`)
+## 1. Build artifact (`artifact.json`)
+
+**Not implemented in this release:** there is no `bumm-guard build` subcommand (the CLI has
+`scan`, `rules`, `fix`, `gate`, `simulate`). `artifact.json` is produced by CI or written by
+hand; `gate` takes `--wasm` and `--abi` paths directly and records both hashes in its report.
+The format stays here because the panel and the runner read its fields.
 
 ```json
 {
@@ -96,6 +101,8 @@ state.
   "summary": {"scenarios": 1, "passed": 1, "failed": 0, "steps": 8, "steps_failed": 0}
 }
 ```
+`version` is the version of the runner's report format (`bumm-sim` writes `0.4.0`), not the
+version of the Python package (`pyproject.toml`: `0.5.0`).
 `actual` always carries what the chain returned (status, error text, return value,
 gas), so a failed expectation is auditable without re-running. The hashes bind the
 report to one wasm and one scenario file; the gate refuses a report whose

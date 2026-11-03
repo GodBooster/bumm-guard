@@ -96,13 +96,11 @@ class CliTests(unittest.TestCase):
 
 
 class ModelTests(unittest.TestCase):
-    def test_to_dict_and_bumm_mapping(self):
+    def test_to_dict_and_code_location(self):
         f = Finding("BG-NEAR-001", "high", "a.rs", 3, "m", "h", "s", "non-private-callback")
         self.assertEqual(f.to_dict()["line"], 3)
-        v = f.to_bumm_vulnerability()
-        self.assertEqual(v["category"], "non_private_callback")
-        self.assertEqual(v["code_location"], "a.rs:3")
-        self.assertEqual(v["source"], "custom_check")
+        self.assertEqual(f.to_dict()["rule_name"], "non-private-callback")
+        self.assertEqual(f.code_location, "a.rs:3")
 
 
 if __name__ == "__main__":
