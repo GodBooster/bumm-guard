@@ -41,7 +41,7 @@ changed. Nothing merged into `main`. No NEAR accounts, no testnet.
 
 ## CI run (real near-sandbox)
 
-Pushed to `claude/upgrade-step-e0bdc1`. CI `on: push` passed **all 5 jobs** in two runs: [41615654220](https://github.com/GodBooster/bumm-guard/actions/runs/41615654220) (commit `cf3fdca`) and [41616014833](https://github.com/GodBooster/bumm-guard/actions/runs/41616014833) (commit `b4c0ba1`, the same code with a step trace printed to stderr). The existing `simulate` job (N06 + gate) is green too, so the runner has no regression.
+Pushed to `claude/upgrade-step-e0bdc1`. CI `on: push` passed **all 5 jobs** in two runs: [41615654220](https://github.com/GodBooster/bumm-guard/actions/runs/41615654220) (commit `cf3fdca`) and [41616014833](https://github.com/GodBooster/bumm-guard/actions/runs/41616014833) (commit `0b2ab9e`, the same code with a step trace printed to stderr). The existing `simulate` job (N06 + gate) is green too, so the runner has no regression.
 
 In the `sandbox` job, `tests/upgrade_sandbox.rs` built both wasm files with rustc 1.85.0 and ran **a real upgrade in near-sandbox** (`test upgrade_scenarios_on_near_sandbox ... ok`, about 41 s). bumm-sim output:
 ```
