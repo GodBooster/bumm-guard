@@ -18,6 +18,10 @@ allowed only if ``--simulate-report`` holds a passing scenario with an ``upgrade
 (docs/FORMATS.md §2a) from exactly that on-chain code to exactly this wasm, that records the deployed
 code hash and has at least one step after the upgrade; the printed command then
 repeats that scenario's migration call (``with-init-call``) or has none (``without-init-call``).
+When the proof has a migration call, ``migration_guard`` also checks in the crate's Rust sources that
+the migration method is not callable by anyone (``#[private]`` or a ``predecessor_account_id()`` check
+in its body); an unprotected one blocks, because after the upgrade any account could call it and
+rewrite the state.
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ from pathlib import Path
 
 from . import __version__
 from .rulepack.near import RULES
+from .rulepack.near.rust_src import SourceFile
 from .scanner import ScanResult, discover, scan
 from .storage import RPC_URLS, RpcError, estimate_storage, simulate_state_bytes  # noqa: F401  (RPC_URLS re-exported)
 from .verify import SmokeSpecError, global_contract, onchain_code_sha256, parse_smoke, post_deploy_ok, verify_deployed
@@ -118,6 +123,7 @@ def build_report(crate: Path, res: ScanResult, wasm: str | None, network: str, a
                      "abi_sha256": sha256_file(abi) if abi else None},
         "simulate": None,
         "upgrade": None,
+        "migration_guard": None,
         "storage_estimate": None,
         "post_deploy": None,
     }
@@ -202,6 +208,64 @@ def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | 
     if len({json.dumps(p["migrate"], sort_keys=True) for p in proofs}) > 1:
         notes.append(f"several passing upgrade scenarios with different migrations; using {proofs[0]['scenario']!r}")
     return (proofs[0] if proofs else None), notes
+
+# --- migration guard -----------------------------------------------------------------------------
+
+_PRED_RE = re.compile(r"\b(?:\w+::)*predecessor_account_id\s*\(\s*\)")
+_GUARD_RE = re.compile(r"\b(?:require|assert|assert_eq|assert_ne|require_eq|require_ne)\s*!\s*\(|\bif\b|\bmatch\b")
+_OWNER_CHECK_LINES = 15
+
+
+def _owner_check(body: str) -> bool:
+    """A ``predecessor_account_id()`` guard in the first ``_OWNER_CHECK_LINES`` lines of a (masked) body:
+    inside ``assert!``/``require!``/``assert_eq!``/``require_eq!`` arguments or an ``if``/``match`` condition.
+    What it is compared with (``self.owner``, a constant, ``current_account_id()``) is not judged.
+    ``signer_account_id()`` does not count (BG-NEAR-003)."""
+    head = "\n".join(body.splitlines()[:_OWNER_CHECK_LINES])
+    for stmt in re.split(r"[;{}]", head):
+        if _PRED_RE.search(stmt) and _GUARD_RE.search(stmt):
+            return True
+    return False
+
+
+def migration_guard(crate_dir: str | Path, method: str) -> tuple[str, dict | None]:
+    """Is the migration method ``method`` of the crate in ``crate_dir`` protected from arbitrary callers?
+
+    Returns ``(status, detail)`` with status one of ``private`` (``#[private]`` among the attributes
+    directly above the ``fn``, in any order with ``#[init(ignore_state)]``), ``owner-check`` (a
+    ``predecessor_account_id()`` guard in the first 15 lines of the body), ``unprotected`` (found, neither),
+    ``not-found`` (no ``fn <method>`` in any ``impl`` of the crate's ``*.rs`` files outside ``target/``) or
+    ``ambiguous`` (several definitions whose statuses differ). ``detail`` is ``{file, line}`` of the
+    definition (for ``ambiguous``: ``{definitions: [{file, line, status}, ...]}``), ``None`` when not found.
+
+    Regex and brace level, not a parser: comments, string literals and ``#[cfg(test)]`` items are
+    blanked before matching (same helper as the rules); free functions outside an ``impl``, methods
+    produced by macros and a check delegated to a helper (``self.assert_owner()``) or to a DAO policy
+    are not recognised, so such a method is reported ``unprotected`` unless it carries ``#[private]``.
+    """
+    crate = Path(crate_dir)
+    defs: list[dict] = []
+    for disp, _root in discover([str(crate)]):
+        try:
+            sf = SourceFile.from_path(disp, disp)
+        except OSError:
+            continue
+        for m in sf.methods:
+            if m.name != method:
+                continue
+            if m.has_attr("private"):
+                st = "private"
+            elif m.has_body and _owner_check(m.body):
+                st = "owner-check"
+            else:
+                st = "unprotected"
+            defs.append({"file": Path(os.path.relpath(disp, crate)).as_posix(), "line": m.line, "status": st})
+    if not defs:
+        return "not-found", None
+    if len({d["status"] for d in defs}) > 1:
+        return "ambiguous", {"definitions": defs}
+    d = defs[0]
+    return d["status"], {"file": d["file"], "line": d["line"]}
 
 
 def _blocked(out: GateOutcome, report: Path, dry_run: bool, lines: list[str]) -> GateOutcome:
@@ -324,6 +388,31 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
                              + (f"migration {m['method']}({json.dumps(m['args'])}) in the same transaction"
                                 if m else "code only (no migration call)"))
             out.lines.extend(f"note: {n}" for n in notes)
+            if m:
+                status, detail = migration_guard(crate, m["method"])
+                data["migration_guard"] = {"method": m["method"], "status": status,
+                                           "file": (detail or {}).get("file"), "line": (detail or {}).get("line")}
+                where = f"{detail['file']}:{detail['line']}" if detail and "file" in detail else None
+                if status == "private":
+                    out.lines.append(f"migration {m['method']}: #[private] ({where})")
+                elif status == "owner-check":
+                    out.lines.append(f"migration {m['method']}: owner check at {where}")
+                elif status == "not-found":
+                    out.lines.append(f"warning: migration method {m['method']} not found in {crate_dir} sources; "
+                                     "its access control was not checked")
+                else:
+                    fix = ("  fix: add `#[private]` above `#[init(ignore_state)]`, or "
+                           "`require!(env::predecessor_account_id() == self.owner, \"only owner\")` as the first "
+                           "line of the body")
+                    if status == "ambiguous":
+                        defs = ", ".join(f"{d['file']}:{d['line']} ({d['status']})" for d in detail["definitions"])
+                        return _blocked(out, report, dry_run, [
+                            f"DEPLOY BLOCKED: migration method {m['method']} is defined several times with "
+                            f"different access control: {defs}; make every definition #[private]", fix])
+                    return _blocked(out, report, dry_run, [
+                        f"DEPLOY BLOCKED: migration method {m['method']} in {where} is callable by anyone: it has "
+                        "no #[private] and no predecessor check; after the upgrade any account could call it and "
+                        "rewrite the state", fix])
     elif account:
         out.lines.append(f"warning: no --wasm: the code on {account} was not checked; an upgrade of a live "
                          "contract needs --wasm and a --simulate-report with a passing upgrade scenario")
