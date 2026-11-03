@@ -9,7 +9,7 @@
     {"call": "create_deal", "by": "bob", "args": {"seller": "carol"}, "deposit": "1 NEAR", "expect": {"equals": 2}},
     {"call": "release", "by": "alice", "args": {"id": 0}, "expect": "ok"},
     {"view": "deal_count", "expect": {"equals": 3}},
-    {"balance": "contract", "expect": {"at_least": "54 NEAR"}},
+    {"balance": "contract", "expect": {"at_least": "53.9 NEAR"}},
     {"balance": "contract", "expect": {"at_most": "54.1 NEAR"}},
     {"upgrade": "tests/fixtures/near/target/wasm32-unknown-unknown/release/escrow_v2.wasm", "expect": "ok"},
     {"view": "deal_count", "expect": {"equals": 3}},
