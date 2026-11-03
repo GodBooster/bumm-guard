@@ -1,36 +1,33 @@
-# BG-NEAR-001 — передача на приймання, 2026-10-30
+# contracts/: sandbox tests and the scenario runner
 
-Додано workspace `contracts/` з near-workspaces 0.24.0, Cargo.lock та
-rust-toolchain.toml (1.99.1, wasm32-unknown-unknown). Пакет розміщений у
-`sandbox/`, тому наявна перевірка `contracts/*/Cargo.toml` у CI його підхопить.
+A Rust workspace on near-workspaces 0.24.0 (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`:
+rustc 1.99.1 with the `wasm32-unknown-unknown` target). Two crates:
 
-Тест `sandbox/tests/bg_near_001.rs` компілює оригінальні d1_vuln, d1_safe
-і proxy. Перевіряє підробку callback від Mallory, успіх атаки лише на d1_vuln,
-конкретну помилку private на d1_safe, paid-стан і відсутність платежу продавцю.
-Окремі свіжі розгортання перевіряють легітимний pay → on_paid для обох версій,
-включно з точним приростом балансу продавця.
+- `sandbox/` — `tests/bg_near_001.rs` builds the real fixtures `d1_vuln`, `d1_safe` and `proxy`
+  from `tests/fixtures/near/` as a cargo subprocess (so the fixtures' own pinned rustc 1.85.0 is
+  used) and checks on a local near-sandbox that a third account calling the callback through the
+  proxy is accepted on `d1_vuln` (state flips to paid) and rejected on `d1_safe` with
+  `Method on_paid is private`, that the seller's balance is untouched by the spoof, and that the
+  legitimate `pay -> on_paid` path works on both, including the seller's balance increase.
+- `sim-runner/` — crate `bumm-sim`, the runner behind `bumm-guard simulate` (formats:
+  `docs/FORMATS.md` §2, §2a, §3). 17 lib tests, plus `tests/upgrade_sandbox.rs`, which runs the two
+  upgrade scenarios in `scenarios/upgrade/` on a real sandbox and checks the report (with `migrate`
+  all steps pass; code-only, every step after the upgrade fails). Design notes and limits:
+  `SIMULATE_REPORT.md` and `UPGRADE_REPORT.md` at the repository root.
 
-Посилання на вихідні матеріали:
-- Спека: ../../research/06_near_detectors_spec_2026-10-29.md, розділ 3, BG-NEAR-001.
-- Раннер: ../scripts/linux-test.sh.
-- Тулчейн тестів: rust-toolchain.toml.
-- Попередній тулчейн: ../../spike-escrow/rust-toolchain.toml (stable).
-
-Важлива розбіжність: реальні фікстури закріплюють near-sdk 5.17.2, а не
-зазначену в передачі 5.30.0. Їх та їхній lockfile не змінено.
-
-Перевірка: rustfmt +stable та git diff --check пройшли. Docker-запуск
-дійшов до отримання залежностей і створив Cargo.lock. Перший запуск мав
-збій встановлення wasm-компонента Rust через паралельне встановлення;
-повторний пройшов цей етап. Повний cargo test не завершено: контейнер
-зупинено перед передачею користувачу. Компіляція тесту і sandbox-поведінка
-залишаються НЕ ПІДТВЕРДЖЕНИМИ; це не звіт про успішний прогін.
-
-Запуск із кореня bumm-guard:
+Run everything (Linux; macOS x86_64 has no near-sandbox binary, hence the Docker wrapper):
 
 ```sh
 scripts/linux-test.sh contracts test --workspace --locked
 ```
 
-Немає комітів, пушу, публікації чи звернень до testnet. Акаунти у коді тесту
-створюються виключно в локальному sandbox.
+CI runs the same workspace in the job `sandbox tests (near-workspaces, linux only)` and builds
+`bumm-sim` for the job `scenario runner` (`.github/workflows/ci.yml`); both were green on run
+41627653109 (2026-11-03, commit `17e9bb3`). The fixtures pin near-sdk 5.17.2 and rustc 1.85.0
+(`tests/fixtures/near/rust-toolchain.toml`); the detector that `bg_near_001.rs` exercises is
+described in `RULEPACK_REPORT.md`. Accounts in these tests exist only in the local sandbox;
+nothing in `contracts/` touches testnet or holds a key.
+
+History: `sandbox/` was handed over on 2026-10-30 with the sandbox run still unverified; it was
+first verified green in CI on 2026-11-02 (run 41422672919). `sim-runner/` and the `upgrade` step
+followed on 2026-11-02 and 2026-11-03.

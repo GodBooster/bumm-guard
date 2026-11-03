@@ -1,4 +1,8 @@
-# MCP_REPORT (BUMM Guard 0.3.0)
+# MCP_REPORT (BUMM Guard 0.3.0, updated for 0.5.0)
+
+## Update for 0.5.0 (2026-11-03)
+
+The server now has **six** tools: `list_rules`, `scan_contract`, `fix_contract`, `gate_deploy`, `estimate_storage`, `verify_deployed` (`bumm_guard/mcp_server.py`). `gate_deploy` gained `simulate_report` (a `bumm-guard simulate` report) and returns an `upgrade` block: with `account` and `wasm` it reads the account's code over read-only RPC and, if the account already runs other code, blocks unless the report has a passing upgrade scenario for exactly that pair of hashes; the returned `deploy_command` then repeats the scenario's `migrate` call. `estimate_storage` and `verify_deployed` are read-only (one RPC query; `verify_deployed` refuses init/migrate/change methods as smoke targets). No tool has an `execute` parameter; `deploy_executed` is always `false`. `tests/test_mcp.py` asserts six tools (`test_lists_six_tools_without_execute`); without the `mcp` package 13 of its tests are skipped, and `python3 -m unittest discover -s tests` reports `Ran 170 tests`, `OK (skipped=14)` (the 14th is the live-RPC test in `tests/test_gate_ext.py`). The skill `clients/claude-plugin/skills/near-deploy-gate/SKILL.md` describes all six tools and the upgrade step. The sections below are the original report for 0.3.0 and keep its numbers (4 tools, 83 tests).
 
 ## Built
 - `bumm_guard/mcp_server.py`, entry point `bumm-guard-mcp` (stdio). Tools: `list_rules`, `scan_contract(path, exclude?)`, `fix_contract(path, apply=false, exclude?)`, `gate_deploy(crate_dir, wasm?, account?, network="testnet")`. Tool logic is plain stdlib Python; the `mcp` SDK is imported lazily in `build_server()`. Works with the mcp 2.x class (`MCPServer`) and the 1.x class (`FastMCP`).

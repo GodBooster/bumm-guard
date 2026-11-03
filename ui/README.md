@@ -45,9 +45,9 @@ deployed and initialised (`new` called with a capacity). View calls need nothing
 
 Steps 1-6 need no wallet. Steps 7-8 are the unverified part (see below).
 
-To use your own contract, build with `bumm-guard build` (or `cargo near abi`) and load
-`target/near/<name>_abi.json` instead of the fixture. The fixture is hand-written, see
-`fixtures/README.md`.
+To use your own contract, run `cargo near abi` and load `target/near/<name>_abi.json`
+instead of the fixture (there is no `bumm-guard build` command in this release). The fixture
+is hand-written, see `fixtures/README.md`.
 
 ## What a card shows
 

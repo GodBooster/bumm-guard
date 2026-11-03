@@ -1,9 +1,7 @@
 """Finding data model.
 
-Field names follow the BUMM backend where sensible (``severity`` is lower-case
-``critical|high|medium|low|info``; ``Finding.to_bumm_vulnerability`` yields a dict
-with the exact keys of ``app.pipeline.state.Vulnerability``: severity, category,
-title, description, code_location, suggested_fix, source).
+``severity`` is lower-case ``critical|high|medium|low|info``; ``to_dict()`` is the
+JSON shape used by the CLI, the gate report and the MCP tools.
 """
 
 from __future__ import annotations
@@ -30,15 +28,3 @@ class Finding:
     @property
     def code_location(self) -> str:
         return f"{self.file}:{self.line}"
-
-    def to_bumm_vulnerability(self) -> dict:
-        """Map to the BUMM ``Vulnerability`` schema (for backend integration)."""
-        return {
-            "severity": self.severity,
-            "category": self.rule_name.replace("-", "_") or self.rule_id,
-            "title": f"{self.rule_id} {self.rule_name}".strip(),
-            "description": self.message,
-            "code_location": self.code_location,
-            "suggested_fix": self.fix_hint,
-            "source": "custom_check",
-        }
