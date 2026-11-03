@@ -65,6 +65,27 @@ def _smoke_one(url: str, account: str, method: str, args: str) -> dict:
     return entry
 
 
+_NO_CODE_CAUSES = ("UNKNOWN_ACCOUNT", "NO_CONTRACT_CODE")
+_NO_CODE_TEXT = ("has not been deployed", "does not exist while viewing")
+
+
+def onchain_code_sha256(account: str, network: str = "testnet", rpc_url: str | None = None) -> str | None:
+    """sha256 of the code deployed on ``account`` (read-only ``view_code``), ``None`` if the account
+    has no code or does not exist. Raises ``RpcError`` when the answer is anything else (node
+    unreachable, malformed reply): the caller must not mistake "unknown" for "empty"."""
+    url = resolve_rpc_url(network, rpc_url)
+    try:
+        r = rpc_call(url, "query", {"request_type": "view_code", "finality": "final", "account_id": account})
+    except RpcError as e:
+        if e.cause in _NO_CODE_CAUSES or (e.cause is None and any(t in str(e) for t in _NO_CODE_TEXT)):
+            return None
+        raise
+    try:
+        return hashlib.sha256(base64.b64decode(r["code_base64"], validate=True)).hexdigest()
+    except (KeyError, TypeError, ValueError) as e:
+        raise RpcError(f"view_code on {url}: malformed reply: {e}") from None
+
+
 def verify_deployed(account: str, wasm: str | Path, network: str = "testnet", smoke: list[str] | None = None,
                     rpc_url: str | None = None) -> dict:
     """The ``post_deploy`` block (docs/FORMATS.md §4). ``smoke`` entries must already parse (``parse_smoke``).

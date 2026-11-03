@@ -82,6 +82,7 @@ fn upgrade_scenarios_on_near_sandbox() -> Result<()> {
     assert_eq!((up["kind"].as_str(), up["method"].as_str()), (Some("upgrade"), Some("migrate")));
     assert_eq!(up["actual"]["status"], "success");
     assert_eq!(up["actual"]["code_sha256"], new_sha);
+    assert_eq!(up["migrate"], serde_json::json!({"method": "migrate", "args": {}, "gas": "100 Tgas"}));
 
     let code_only = &scenarios[1];
     assert!(code_only["name"].as_str().unwrap().contains("code-only"), "{}", code_only["name"]);
@@ -89,6 +90,7 @@ fn upgrade_scenarios_on_near_sandbox() -> Result<()> {
     let steps = code_only["steps"].as_array().context("steps")?;
     assert_eq!(steps[UPGRADE_INDEX]["kind"], "upgrade");
     assert_eq!(steps[UPGRADE_INDEX]["actual"]["code_sha256"], new_sha);
+    assert!(steps[UPGRADE_INDEX].get("migrate").is_none(), "code-only upgrade has no migrate");
     for s in &steps[..=UPGRADE_INDEX] {
         assert_eq!(s["passed"], true, "code only, up to and including the upgrade: {s:#}");
     }

@@ -221,7 +221,10 @@ def build_parser() -> argparse.ArgumentParser:
     gp.add_argument("--smoke", action="append", metavar="METHOD[:ARGS_JSON]",
                     help="view method to call after --verify-deployed (repeatable; args default {}; init/migrate refused)")
     gp.add_argument("--network", choices=NETWORKS, default="testnet")
-    gp.add_argument("--account", metavar="ID", help="NEAR account to deploy to")
+    gp.add_argument("--account", metavar="ID",
+                    help="NEAR account to deploy to; with --wasm its current code is read (read-only view_code): "
+                         "other code there makes this an upgrade, which needs a passing upgrade scenario in "
+                         "--simulate-report")
     mode = gp.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="scan and print only; do not write gate-report.json")
     mode.add_argument("--execute", action="store_true",

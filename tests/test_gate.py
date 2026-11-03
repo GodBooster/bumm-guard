@@ -24,10 +24,20 @@ def run_cli(*argv):
     return code, out.getvalue(), err.getvalue()
 
 
+def _empty_account(req, timeout=None):
+    """urlopen stub: every account is empty (NEAR RPC ``NO_CONTRACT_CODE``), so --account means a fresh deploy."""
+    body = {"jsonrpc": "2.0", "id": "x", "error": {"name": "HANDLER_ERROR", "cause": {"name": "NO_CONTRACT_CODE"},
+                                                   "message": "Server error", "data": "no contract code"}}
+    return io.BytesIO(json.dumps(body).encode())
+
+
 class GateTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+        patcher = mock.patch("urllib.request.urlopen", _empty_account)  # no test touches the network
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def crate(self, name):
         dst = Path(self.tmp.name) / name

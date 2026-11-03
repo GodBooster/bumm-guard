@@ -1,4 +1,4 @@
-# Upgrade step (`upgrade`, FORMATS §2a): report, 2026-11-03
+# Upgrade step (`upgrade`, FORMATS §2a) and upgrade proof in the gate: report, 2026-11-03
 
 Branch `claude/upgrade-step-e0bdc1`. Spec: `docs/FORMATS.md` §2a (not changed). `.github/` not
 changed. Nothing merged into `main`. No NEAR accounts, no testnet.
@@ -112,8 +112,57 @@ Once these steps are in `simulate`, the integration test `contracts/sim-runner/t
 
 - **Locally**, a real upgrade cannot run: near-sandbox does not work on this Intel Mac. The only real run is CI (above). `bumm-guard simulate` (Python) has not been run against the real `bumm-sim` with upgrade scenarios. Only the binary was run directly, from the integration test. The Python path was checked with the fake runner. The YAML steps above are the first real check of it.
 - **A failed view after a broken upgrade reads poorly.** `actual.error` for a view holds the RPC's Display text, `unable to fulfill the query request`. The real panic (`Cannot deserialize the contract state`) is only in `error_debug`, which `fail_contains` can see but which is not serialized into the report. This is the existing runner behaviour for all views, not new. Improving it (for example, serializing the root cause) is a separate small task.
-- **The gate does not yet see the upgrade.** `bumm-guard gate --simulate-report` compares only `wasm_sha256` with `--wasm`. To gate an upgrade it would need to compare `upgrade_wasm_sha256` with the candidate wasm (for example `gate --wasm NEW --simulate-report R`, accepting `R.upgrade_wasm_sha256 == sha(NEW)`). That is a separate task for the coordinator (the gate and FORMATS §4).
+- **The gate and the upgrade**: done, see "Gate: upgrade proof" below (branch `claude/gate-upgrade-proof`).
 - **`evaluate.yml` cannot score an upgrade candidate as is.** It passes the built wasm as `--wasm`, which replaces the **old** code. Upgrade scenarios need `--upgrade-wasm`, for example a new input `wasm_flag` (default `--wasm`) substituted into `python -m bumm_guard simulate … ${{ inputs.wasm_flag }} "<wasm>"`. Also, `crate_dir=tests/fixtures/near` would not work: `ls …/*.wasm | head -1` picks `d1_safe.wasm`.
 - `migrate` has no `deposit` (§2a does not provide one); the call goes with 0 yocto.
 - Only the final transaction status is checked, as with `call`. The upgrade transaction has a single receipt, so there are no hidden partial failures.
 - The `README.md` / `SIMULATE_REPORT.md` text does not describe `upgrade` yet. I left them alone to avoid conflicts; this report is the description.
+
+## Gate: upgrade proof (branch `claude/gate-upgrade-proof`, from `origin/main` 71c3065)
+
+### What the gate does now
+- **`--account` + `--wasm`** → one read-only RPC call, `view_code` (`verify.onchain_code_sha256`). The RPC cause `NO_CONTRACT_CODE` / `UNKNOWN_ACCOUNT` (and the old text `has not been deployed`) means an empty account. Any other answer (network down, timeout, malformed reply) is **exit 3**, because "unknown" never counts as "empty". `RpcError` now carries `cause`.
+  - **Empty** → a fresh deploy, exactly as before (`--simulate-report` is bound to `--wasm`). If the report contains upgrade scenarios: a warning, not a block.
+  - **The same code as `--wasm`** → the line "already runs this exact wasm", exit 0, `upgrade: null`.
+  - **Other code** → an upgrade. It needs `--simulate-report` with a **passing** scenario that has an `upgrade` step, where scenario `wasm_sha256` == the on-chain hash and `upgrade_wasm_sha256` == step `actual.code_sha256` == sha256 `--wasm`. Otherwise exit 3: `DEPLOY BLOCKED: account X already runs code <onchain>; this is an upgrade and no passing upgrade scenario proves <onchain> -> <candidate>`, plus a hint and the "near misses" (which pair each upgrade scenario in the report proves, whether it failed). A stale gate-report is removed.
+  - With proof → `upgrade: {onchain_code_sha256, candidate_sha256, scenario, migrate: {method, args, gas} | null, passed: true}`. The printed command is one batch transaction: `… use-file <wasm> with-init-call <method> json-args '<args>' prepaid-gas '<gas>' attached-deposit '0 NEAR' network-config <net> sign-with-keychain send`, or `without-init-call` if the proven upgrade is code-only. Still print-only; `--execute` remains testnet-only.
+  - A failing code-only negative check next to the proof does not block. It is noted, and `simulate.passed` = false (every scenario in the report is counted).
+- **`--account` without `--wasm`** → no RPC call, and a warning that the code on the account was not checked. This is deliberate: the existing MCP stdio test, and runs without an artifact, must not go to the network. The command in this case contains the `<path/to/contract.wasm>` placeholder and cannot be run as is.
+- Scan findings still block **before** any RPC call.
+- **bumm-sim**: the upgrade step result now has `migrate: {method, args, gas}`: args as written in the scenario, gas as `"100 Tgas"` (`format_tgas`, a lossless round trip with `parse_gas`). Without this the gate could not repeat the exact migration call. A report from an older bumm-sim with `method` but no `migrate` → block with "re-run `bumm-guard simulate`". The real sandbox test checks the field (`upgrade_sandbox.rs`).
+- **MCP `gate_deploy`**: new parameter `simulate_report` (path checked like the others). `account`/`network` were already there and now drive the read-only `view_code`. The result has `upgrade`. A blocked gate with no findings gets its own `note`. Still no execute.
+- **`docs/FORMATS.md` §4**: "Upgrade proof" paragraph with an `upgrade` block example and the command template (the only FORMATS edit, as allowed).
+
+### Verified
+- `python3 -m unittest discover -s tests`: **Ran 170 tests, OK (skipped=14)**. The new `tests/test_gate_upgrade.py` (24 tests, urlopen stub shaped like rpc.testnet.near.org answers) covers: empty account; `UNKNOWN_ACCOUNT`; fresh deploy + upgrade report → warning; code without a report → 3; report without an upgrade scenario → 3; proof for a different on-chain hash → 3; proof for a different candidate → 3; failed upgrade scenario → 3; passing proof with migrate → 0 and `with-init-call migrate json-args '{}' prepaid-gas '100 Tgas' …`; code-only proof → `without-init-call`; proof + failing code-only → 0 with a note; non-trivial args/gas/mainnet; report without `migrate` → 3; the same code → 0; RPC down → 3; stale report removed; no RPC without account/wasm; findings block before RPC; MCP `gate_deploy` (block, proof, path). In `test_gate.py` / `test_gate_ext.py`, urlopen is stubbed by default ("empty account"): before this, tests with `--account` would have reached the real RPC.
+- Container: `scripts/linux-test.sh contracts test -p bumm-sim --lib --bins --offline`: 17 passed, 0 warnings; `--no-run` compiles `tests/upgrade_sandbox.rs`.
+- CI on the branch (commit `84ba278`, run [41624341317](https://github.com/GodBooster/bumm-guard/actions/runs/41624341317)): all 5 jobs green, including the real sandbox with the `migrate` check and the MCP stdio tests (the `simulate_report` schema).
+
+### Live read-only check (testnet, 2026-11-03, no transactions)
+The local N10 was built with `cargo build --offline --locked --release --target wasm32-unknown-unknown -p event_registration_waitlist` (rustc 1.85.0, macOS): sha256 `3fc543dd…fdfc`.
+
+1. No proof:
+```
+$ python3 -m bumm_guard gate tests/fixtures/near/event_registration_waitlist --wasm …/event_registration_waitlist.wasm \
+    --account bumm-guard-demo.testnet --network testnet --dry-run
+0 finding(s) in 1 file(s)
+DEPLOY BLOCKED: account bumm-guard-demo.testnet already runs code c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617; this is an upgrade and no passing upgrade scenario proves c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617 -> 3fc543dd966afb3ceddecf04b8c1e591d35570b644b2d180daa30cbbfd65fdfc
+  pass --simulate-report with a passing upgrade scenario (docs/FORMATS.md §2a): contract.wasm = the code now on the account, then `bumm-guard simulate <scenario> --upgrade-wasm …/event_registration_waitlist.wasm`
+exit=3
+```
+2. With the real proof from CI (`upgrade-with-migrate.json`, artifact `simulate-report` of run 41624341317). Its scenario `wasm_sha256` = `c3f50addfb06…`, the on-chain code: a fact, the CI-built N06 is what is deployed. It proves `c3f50a… -> 8526195a51a5…` (the CI-built N10) and records `migrate: {method: migrate, args: {}, gas: "100 Tgas"}`. The gate with the **local** N10:
+```
+DEPLOY BLOCKED: account bumm-guard-demo.testnet already runs code c3f50add…f617; this is an upgrade and no passing upgrade scenario proves c3f50add…f617 -> 3fc543dd…fdfc
+  the simulate report has no passing upgrade scenario for this pair
+  upgrade scenario 'Upgrade N06 → N10 (upgrade with migrate()): …' proves c3f50add…f617 -> 8526195a51a5f5d94f15fab7df1c685804eb419a01dc1a734ac1c76d6220e079, not c3f50add…f617 -> 3fc543dd…fdfc
+exit=3
+```
+So the proof is bound to the exact bytes. The same N10 source built on another machine is different bytes and needs its own proof.
+3. The local rebuild of **N06** (`825ddd4d…`, the same source as on-chain `c3f50a…`) is also treated as an upgrade without proof (exit 3).
+
+### Not verified / limits
+- **No positive live run (exit 0 with `with-init-call`).** It needs the very wasm the proof was made for (CI N10, `8526195a…`), but the `simulate` job does not upload it as an artifact. It is covered by unit tests. To get it live, add an upload of `event_registration_waitlist.wasm` to `simulate` in `ci.yml` (next to `event_registration-wasm`). Then `gate … --wasm <downloaded N10> --simulate-report upgrade-with-migrate.json --account bumm-guard-demo.testnet` should give exit 0 and the command with `with-init-call migrate json-args '{}' prepaid-gas '100 Tgas'`.
+- **Non-reproducible builds.** The macOS and CI builds of the same source differ (N06: `825ddd…` vs `c3f50a…`). The gate compares bytes, so "redeploying the same source" from another machine is an upgrade needing proof. That is correct but strict. The practical rule: deploy the wasm the scenarios ran on (the CI artifact).
+- `migrate` with a deposit is not supported (§2a has no deposit); the command always has `attached-deposit '0 NEAR'`.
+- FORMATS §2a/§3 do not describe the step's new `migrate` field (I was allowed to edit only §4, where it is mentioned as the source). The coordinator may add one line to §2a "Result".
+- `README.md` is not updated.

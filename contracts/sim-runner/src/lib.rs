@@ -109,6 +109,16 @@ pub fn format_near(yocto: u128) -> String {
     format!("{int}.{}", f.trim_end_matches('0'))
 }
 
+/// `100_000_000_000_000` -> `"100 Tgas"`, `2_500_000_000_000` -> `"2.5 Tgas"` (exact; what
+/// near-cli-rs `prepaid-gas` accepts).
+pub fn format_tgas(gas: u64) -> String {
+    let (int, frac) = (gas / GAS_PER_TGAS, gas % GAS_PER_TGAS);
+    if frac == 0 {
+        return format!("{int} Tgas");
+    }
+    format!("{int}.{} Tgas", format!("{frac:012}").trim_end_matches('0'))
+}
+
 pub fn gas_to_tgas(gas: u64) -> f64 {
     ((gas as f64 / GAS_PER_TGAS as f64) * 1000.0).round() / 1000.0
 }
@@ -595,6 +605,11 @@ pub struct StepResult {
     /// `--upgrade-wasm` override, is the scenario's `upgrade_wasm`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wasm: Option<String>,
+    /// Upgrade steps with a migration: `{method, args, gas}` exactly as written in the scenario
+    /// (args before alias resolution, gas as `"<n> Tgas"`), so the deploy gate can print the
+    /// same batch call for the real account.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub migrate: Option<Value>,
     pub passed: bool,
     pub expected: Value,
     pub actual: Actual,
@@ -616,6 +631,14 @@ impl StepResult {
                 Some(wasm.clone()),
             ),
         };
+        let migrate = match &step.kind {
+            StepKind::Upgrade { migrate: Some(m), .. } => Some(serde_json::json!({
+                "method": m.method,
+                "args": m.args,
+                "gas": format_tgas(m.gas),
+            })),
+            _ => None,
+        };
         StepResult {
             index: step.index,
             kind: step.kind.kind_name().into(),
@@ -623,6 +646,7 @@ impl StepResult {
             by,
             account,
             wasm,
+            migrate,
             passed,
             expected: step.expect_raw.clone(),
             actual,
@@ -891,6 +915,12 @@ mod tests {
         assert!(parse_gas("30 Ggas").is_err());
         assert!(parse_gas("99999999999 Tgas").is_err(), "u64 overflow");
         assert_eq!(gas_to_tgas(2_912_345_678_901), 2.912);
+        assert_eq!(format_tgas(DEFAULT_MIGRATE_GAS), "100 Tgas");
+        assert_eq!(format_tgas(2_500_000_000_000), "2.5 Tgas");
+        assert_eq!(format_tgas(1), "0.000000000001 Tgas");
+        for g in [DEFAULT_GAS, 2_500_000_000_000, 1, 123_456_789_012_345] {
+            assert_eq!(parse_gas(&format_tgas(g)).unwrap(), g, "round trip");
+        }
     }
 
     #[test]
@@ -1150,9 +1180,17 @@ mod tests {
         assert_eq!(v["by"], "contract");
         assert_eq!(v["wasm"], "new.wasm");
         assert_eq!(v["actual"]["code_sha256"], "cd");
+        assert_eq!(v["migrate"], json!({"method": "migrate", "args": {}, "gas": "100 Tgas"}));
+        let aliased = parse_scenario(&with_step(
+            r#"{"upgrade": "n.wasm", "migrate": {"method": "m", "args": {"owner": "alice"}, "gas": "2.5 Tgas"}}"#,
+        ))
+        .unwrap();
+        let v = serde_json::to_value(StepResult::new(&aliased.steps[0], Actual::success(None), &a)).unwrap();
+        assert_eq!(v["migrate"], json!({"method": "m", "args": {"owner": "alice"}, "gas": "2.5 Tgas"}), "args as written");
         let code_only = parse_scenario(&with_step(r#"{"upgrade": "new.wasm"}"#)).unwrap();
         let v = serde_json::to_value(StepResult::new(&code_only.steps[0], Actual::failure("x"), &a)).unwrap();
         assert!(v.get("method").is_none());
+        assert!(v.get("migrate").is_none());
         assert_eq!(v["passed"], false);
 
         let result = |name: &str, up: Option<&str>| ScenarioResult {

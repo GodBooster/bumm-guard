@@ -10,7 +10,9 @@ Safety properties:
     directory, unless the environment variable ``BUMM_GUARD_ALLOW_ANY_PATH=1`` is set.
   * ``fix_contract`` is a dry run unless ``apply`` is true.
   * ``gate_deploy`` never runs a deploy: there is no ``execute`` parameter. It only returns the
-    command text.
+    command text. With ``account`` and ``wasm`` it makes one read-only ``view_code`` query; code on
+    the account makes the deploy an upgrade, which needs a passing upgrade scenario in
+    ``simulate_report``.
   * ``estimate_storage`` and ``verify_deployed`` are read-only: they make public-RPC queries
     (``EXPERIMENTAL_protocol_config``, ``view_code``, view calls), write nothing, and hold no key.
     ``verify_deployed`` refuses init/migrate smoke methods.
@@ -90,30 +92,37 @@ def fix_contract(path: str, apply: bool = False, exclude: list[str] | None = Non
 
 
 def gate_deploy(crate_dir: str, wasm: str | None = None, account: str | None = None,
-                network: str = "testnet") -> dict:
+                network: str = "testnet", simulate_report: str | None = None) -> dict:
     _check_path(crate_dir, "crate_dir")
     if wasm is not None:
         _check_path(wasm, "wasm")
+    if simulate_report is not None:
+        _check_path(simulate_report, "simulate_report")
     if network not in NETWORKS:
         raise ToolInputError(f"network must be one of {list(NETWORKS)}")
-    out = run_gate(crate_dir, wasm=wasm, network=network, account=account, dry_run=False, execute=False)
+    out = run_gate(crate_dir, wasm=wasm, network=network, account=account, dry_run=False, execute=False,
+                   simulate_report=simulate_report)
     if out.exit_code == 2 or out.scan is None:
         raise ToolInputError("; ".join(out.errors) or "gate refused the input")
     findings = [f.to_dict() for f in out.scan.findings]
+    blocking = sum(1 for f in out.scan.findings if f.severity in BLOCKING)
     return {
         "tool": "bumm-guard",
         "version": __version__,
         "blocked": out.blocked,
         "passed": not out.blocked,
         "network": network,
-        "blocking_findings": sum(1 for f in out.scan.findings if f.severity in BLOCKING),
+        "blocking_findings": blocking,
         "findings": findings,
         "report_path": os.path.abspath(out.report_path) if out.report_path else None,
         "deploy_command": shlex.join(out.command) if out.command else None,
         "deploy_executed": False,
+        "upgrade": out.upgrade,
         "messages": out.lines + out.errors,
         "note": ("DEPLOY BLOCKED: fix the findings (fix_contract), run the crate tests, then call gate_deploy again. "
-                 "Do not deploy around the gate." if out.blocked else
+                 "Do not deploy around the gate." if out.blocked and blocking else
+                 "DEPLOY BLOCKED: see messages (an upgrade without a passing upgrade scenario, or a simulate report "
+                 "that does not match). Do not deploy around the gate." if out.blocked else
                  "Gate passed. The deploy command above was NOT executed and this tool cannot execute it: "
                  "show it to the human, who runs it. Placeholders (<account-id>, <path/to/contract.wasm>) must be "
                  "replaced by the human."
@@ -212,11 +221,16 @@ def build_server():
         "THIS TOOL NEVER EXECUTES A DEPLOY and has no execute parameter; the human runs the command. "
         "A blocked gate must not be bypassed. Use network=mainnet only if the human asked for it; mainnet "
         "deployment is always the human's decision. `account` is a NEAR account id (optional, a placeholder "
-        "is used if absent). `wasm` is the built contract path (optional)."))
+        "is used if absent). `wasm` is the built contract path (optional). `simulate_report` is a "
+        "simulate-report.json from `bumm-guard simulate` (optional; must be for this wasm). With both `account` and "
+        "`wasm` the gate reads the account's code (one read-only RPC view_code on `network`): if the account "
+        "already runs other code this is an UPGRADE of a live contract with state, and the gate blocks unless "
+        "`simulate_report` has a passing upgrade scenario from exactly that on-chain code to exactly `wasm`; "
+        "then `deploy_command` repeats that scenario's migration call and `upgrade` describes the proof."))
     @readable_errors
     def gate_deploy_tool(crate_dir: str, wasm: str | None = None, account: str | None = None,
-                         network: str = "testnet") -> dict:
-        return gate_deploy(crate_dir, wasm, account, network)
+                         network: str = "testnet", simulate_report: str | None = None) -> dict:
+        return gate_deploy(crate_dir, wasm, account, network, simulate_report)
 
     @server.tool(name="estimate_storage", description=(
         "Estimate the storage-staking balance that deploying `wasm` locks on its account: code_bytes (file size), "
