@@ -25,7 +25,11 @@ def run_cli(*argv):
 
 
 def _empty_account(req, timeout=None):
-    """urlopen stub: every account is empty (NEAR RPC ``NO_CONTRACT_CODE``), so --account means a fresh deploy."""
+    """urlopen stub: every account is empty (NEAR RPC ``NO_CONTRACT_CODE`` for ``view_code``; ``view_account``
+    answers a normal account without global-contract fields), so --account means a fresh deploy."""
+    if json.loads(req.data)["params"]["request_type"] == "view_account":
+        return io.BytesIO(json.dumps({"jsonrpc": "2.0", "id": "x", "result": {
+            "amount": "1000000000000000000000000", "locked": "0", "code_hash": "1" * 32, "storage_usage": 182}}).encode())
     body = {"jsonrpc": "2.0", "id": "x", "error": {"name": "HANDLER_ERROR", "cause": {"name": "NO_CONTRACT_CODE"},
                                                    "message": "Server error", "data": "no contract code"}}
     return io.BytesIO(json.dumps(body).encode())

@@ -101,6 +101,15 @@ gas), so a failed expectation is auditable without re-running. The hashes bind t
 report to one wasm and one scenario file; the gate refuses a report whose
 `wasm_sha256` differs from the artifact it is gating.
 
+**`actual.error_detail` (optional, 2026-11-03).** A failed `view` step is answered by the RPC
+with a wrapper (`unable to fulfill the query request`); the contract's own text sits in the query
+error's `vm_error`. bumm-sim extracts it, appends it to `actual.error` (`<wrapper>: <vm_error>`,
+e.g. `… GuestPanic { panic_msg: "Cannot deserialize the contract state." }`) and repeats it alone in
+`actual.error_detail`. `call` steps already carry the panic text in `actual.error`
+(`Action #0: ExecutionError("Smart contract panicked: …")`) and have no `error_detail`; reports from
+older runners have none either. `fail_contains` keeps matching against `actual.error`. CI's code-only
+upgrade check requires `Cannot deserialize` in `actual.error` of every step after the upgrade step.
+
 ## 4. Gate report (`.bumm-guard/gate-report.json`, extended)
 
 Existing fields stay. Added:

@@ -302,6 +302,17 @@ fn view_actual(outcome: near_workspaces::Result<ViewResultDetails>) -> Actual {
             a.logs = v.logs;
             a
         }
-        Err(e) => Actual { error_debug: Some(format!("{e:?}")), ..Actual::failure(e.to_string()) },
+        // The Display text is only the RPC wrapper ("unable to fulfill the query request"); the
+        // contract's own panic text sits in the source chain / debug form (FORMATS section 3,
+        // `error_detail`).
+        Err(e) => {
+            let mut sources = Vec::new();
+            let mut src = std::error::Error::source(&e);
+            while let Some(s) = src {
+                sources.push(s.to_string());
+                src = s.source();
+            }
+            Actual::view_failure(e.to_string(), format!("{e:?}"), sources)
+        }
     }
 }
