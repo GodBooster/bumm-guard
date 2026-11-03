@@ -1,0 +1,21 @@
+{
+  "name": "N10 cancel promotes the first waitlisted account, order preserved",
+  "accounts": {"alice": "10 NEAR", "bob": "10 NEAR", "carol": "10 NEAR", "dave": "10 NEAR", "erin": "10 NEAR"},
+  "contract": {"wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration_waitlist.wasm",
+               "init": {"method": "new", "args": {"capacity": 2}}},
+  "steps": [
+    {"call": "register", "by": "alice", "expect": "ok"},
+    {"call": "register", "by": "bob", "expect": "ok"},
+    {"call": "register", "by": "carol", "expect": "ok"},
+    {"call": "register", "by": "dave", "expect": "ok"},
+    {"call": "register", "by": "erin", "expect": "ok"},
+    {"view": "get_waitlist", "expect": {"equals": ["carol", "dave", "erin"]}},
+    {"call": "cancel", "by": "alice", "expect": "ok"},
+    {"view": "is_registered", "args": {"account_id": "carol"}, "expect": {"equals": true}},
+    {"view": "get_waitlist", "expect": {"equals": ["dave", "erin"]}},
+    {"view": "get_registered_count", "expect": {"equals": 2}},
+    {"call": "cancel", "by": "bob", "expect": "ok"},
+    {"view": "get_waitlist", "expect": {"equals": ["erin"]}},
+    {"view": "get_registered", "expect": {"contains": ["carol", "dave"]}}
+  ]
+}

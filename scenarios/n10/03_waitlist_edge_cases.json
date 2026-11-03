@@ -1,0 +1,22 @@
+{
+  "name": "N10 waitlist edge cases: duplicate refused, waitlisted can leave, no promotion past capacity",
+  "accounts": {"alice": "10 NEAR", "bob": "10 NEAR", "carol": "10 NEAR", "dave": "10 NEAR"},
+  "contract": {"wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration_waitlist.wasm",
+               "init": {"method": "new", "args": {"capacity": 2}}},
+  "steps": [
+    {"call": "register", "by": "alice", "expect": "ok"},
+    {"call": "register", "by": "bob", "expect": "ok"},
+    {"call": "register", "by": "carol", "expect": "ok"},
+    {"call": "register", "by": "carol", "expect": {"fail_contains": "already on the waitlist"}},
+    {"call": "register", "by": "alice", "expect": {"fail_contains": "already registered"}},
+    {"call": "register", "by": "dave", "expect": "ok"},
+    {"call": "cancel", "by": "carol", "expect": "ok"},
+    {"view": "get_waitlist", "expect": {"equals": ["dave"]}},
+    {"view": "get_registered_count", "expect": {"equals": 2}},
+    {"call": "cancel", "by": "carol", "expect": {"fail_contains": "not registered"}},
+    {"call": "cancel", "by": "alice", "expect": "ok"},
+    {"view": "get_waitlist", "expect": {"equals": []}},
+    {"view": "get_registered", "expect": {"contains": ["bob", "dave"]}},
+    {"view": "get_seats_left", "expect": {"equals": 0}}
+  ]
+}
