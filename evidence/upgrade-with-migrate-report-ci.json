@@ -1,0 +1,283 @@
+{
+  "tool": "bumm-guard",
+  "version": "0.4.0",
+  "runner": "bumm-sim 0.4.0",
+  "wasm_sha256": "c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617",
+  "upgrade_wasm_sha256": "8526195a51a5f5d94f15fab7df1c685804eb419a01dc1a734ac1c76d6220e079",
+  "scenario_sha256": "32bebb6e17bf4dcca1490ba0f0a7df6e9c7deed38563f472edf82021e7a38d1e",
+  "sandbox": {
+    "near_workspaces": "0.24.0",
+    "near_sandbox": "0.4.0"
+  },
+  "scenarios": [
+    {
+      "name": "Upgrade N06 → N10 (upgrade with migrate()): registrations survive, waitlist works on migrated state",
+      "file": "scenarios/upgrade/n06_to_n10_with_migrate.json",
+      "scenario_sha256": "32bebb6e17bf4dcca1490ba0f0a7df6e9c7deed38563f472edf82021e7a38d1e",
+      "wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration.wasm",
+      "wasm_sha256": "c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617",
+      "upgrade_wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration_waitlist.wasm",
+      "upgrade_wasm_sha256": "8526195a51a5f5d94f15fab7df1c685804eb419a01dc1a734ac1c76d6220e079",
+      "passed": true,
+      "duration_s": 5.6,
+      "accounts": {
+        "alice": "alice.test.near",
+        "bob": "bob.test.near",
+        "carol": "carol.test.near",
+        "contract": "contract.test.near",
+        "dave": "dave.test.near"
+      },
+      "init": {
+        "method": "new",
+        "passed": true,
+        "actual": {
+          "status": "success",
+          "value": null,
+          "gas_burnt_tgas": 1.542
+        }
+      },
+      "steps": [
+        {
+          "index": 0,
+          "kind": "call",
+          "method": "register",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.799
+          }
+        },
+        {
+          "index": 1,
+          "kind": "call",
+          "method": "register",
+          "by": "bob",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.81
+          }
+        },
+        {
+          "index": 2,
+          "kind": "call",
+          "method": "register",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Event is full"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Event is full: capacity 2 reached, registration refused\")",
+            "gas_burnt_tgas": 1.577
+          }
+        },
+        {
+          "index": 3,
+          "kind": "upgrade",
+          "method": "migrate",
+          "by": "contract",
+          "wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/event_registration_waitlist.wasm",
+          "migrate": {
+            "args": {},
+            "gas": "100 Tgas",
+            "method": "migrate"
+          },
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 16.721,
+            "code_sha256": "8526195a51a5f5d94f15fab7df1c685804eb419a01dc1a734ac1c76d6220e079"
+          }
+        },
+        {
+          "index": 4,
+          "kind": "view",
+          "method": "get_capacity",
+          "passed": true,
+          "expected": {
+            "equals": 2
+          },
+          "actual": {
+            "status": "success",
+            "value": 2
+          }
+        },
+        {
+          "index": 5,
+          "kind": "view",
+          "method": "get_registered_count",
+          "passed": true,
+          "expected": {
+            "equals": 2
+          },
+          "actual": {
+            "status": "success",
+            "value": 2
+          }
+        },
+        {
+          "index": 6,
+          "kind": "view",
+          "method": "get_registered",
+          "passed": true,
+          "expected": {
+            "contains": [
+              "alice",
+              "bob"
+            ]
+          },
+          "actual": {
+            "status": "success",
+            "value": [
+              "alice.test.near",
+              "bob.test.near"
+            ]
+          }
+        },
+        {
+          "index": 7,
+          "kind": "view",
+          "method": "is_registered",
+          "passed": true,
+          "expected": {
+            "equals": true
+          },
+          "actual": {
+            "status": "success",
+            "value": true
+          }
+        },
+        {
+          "index": 8,
+          "kind": "call",
+          "method": "register",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "fail_contains": "already registered"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Account alice.test.near is already registered\")",
+            "gas_burnt_tgas": 1.604
+          }
+        },
+        {
+          "index": 9,
+          "kind": "call",
+          "method": "register",
+          "by": "carol",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.968
+          }
+        },
+        {
+          "index": 10,
+          "kind": "view",
+          "method": "get_waitlist",
+          "passed": true,
+          "expected": {
+            "equals": [
+              "carol"
+            ]
+          },
+          "actual": {
+            "status": "success",
+            "value": [
+              "carol.test.near"
+            ]
+          }
+        },
+        {
+          "index": 11,
+          "kind": "call",
+          "method": "cancel",
+          "by": "bob",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.389
+          }
+        },
+        {
+          "index": 12,
+          "kind": "view",
+          "method": "is_registered",
+          "passed": true,
+          "expected": {
+            "equals": true
+          },
+          "actual": {
+            "status": "success",
+            "value": true
+          }
+        },
+        {
+          "index": 13,
+          "kind": "view",
+          "method": "get_waitlist",
+          "passed": true,
+          "expected": {
+            "equals": []
+          },
+          "actual": {
+            "status": "success",
+            "value": []
+          }
+        },
+        {
+          "index": 14,
+          "kind": "call",
+          "method": "register",
+          "by": "dave",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.968
+          }
+        },
+        {
+          "index": 15,
+          "kind": "view",
+          "method": "get_waitlist",
+          "passed": true,
+          "expected": {
+            "equals": [
+              "dave"
+            ]
+          },
+          "actual": {
+            "status": "success",
+            "value": [
+              "dave.test.near"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "scenarios": 1,
+    "passed": 1,
+    "failed": 0,
+    "steps": 16,
+    "steps_failed": 0
+  }
+}

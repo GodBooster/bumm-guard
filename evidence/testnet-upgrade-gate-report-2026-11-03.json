@@ -1,0 +1,101 @@
+{
+  "tool": "bumm-guard",
+  "version": "0.5.0",
+  "timestamp_utc": "2026-11-03T11:19:28Z",
+  "crate_dir": "tests/fixtures/near/event_registration_waitlist",
+  "rule_ids_checked": [
+    "BG-NEAR-001",
+    "BG-NEAR-002",
+    "BG-NEAR-003"
+  ],
+  "findings_count": 0,
+  "findings_by_severity": {},
+  "blocking_findings": 0,
+  "network": "testnet",
+  "account": "bumm-guard-demo.testnet",
+  "rs_sha256": {
+    "src/lib.rs": "d41d41ecb3a6ad00c5bab2a7bc12e497c01d80509f9ff4e18ac02e0eaa112973"
+  },
+  "wasm": {
+    "path": "../e2e/upgrade/event_registration_waitlist.wasm",
+    "sha256": "8526195a51a5f5d94f15fab7df1c685804eb419a01dc1a734ac1c76d6220e079",
+    "exists": true
+  },
+  "artifact": {
+    "wasm_sha256": "8526195a51a5f5d94f15fab7df1c685804eb419a01dc1a734ac1c76d6220e079",
+    "abi_sha256": null
+  },
+  "simulate": {
+    "report": "../e2e/upgrade/upgrade-with-migrate.json",
+    "passed": true,
+    "scenarios": 1
+  },
+  "upgrade": {
+    "onchain_code_sha256": "c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617",
+    "candidate_sha256": "8526195a51a5f5d94f15fab7df1c685804eb419a01dc1a734ac1c76d6220e079",
+    "scenario": "Upgrade N06 \u2192 N10 (upgrade with migrate()): registrations survive, waitlist works on migrated state",
+    "migrate": {
+      "method": "migrate",
+      "args": {},
+      "gas": "100 Tgas"
+    },
+    "passed": true
+  },
+  "storage_estimate": {
+    "code_bytes": 206840,
+    "state_bytes_after_init": null,
+    "storage_amount_per_byte_yocto": "10000000000000000000",
+    "source": "EXPERIMENTAL_protocol_config via RPC testnet, 2026-11-03",
+    "locked_near_for_code": "2.0684",
+    "note": "storage staking is a locked balance, not a fee; state bytes are measured by simulate when available",
+    "account": {
+      "id": "bumm-guard-demo.testnet",
+      "storage_usage": 180873,
+      "amount_yocto": "9998517630470964200000000",
+      "amount_near": "9.9985"
+    }
+  },
+  "post_deploy": {
+    "account": "bumm-guard-demo.testnet",
+    "code_hash_on_chain": "8526195a51a5f5d94f15fab7df1c685804eb419a01dc1a734ac1c76d6220e079",
+    "matches_artifact": true,
+    "smoke": [
+      {
+        "view": "get_capacity",
+        "ok": true,
+        "result": 2
+      },
+      {
+        "view": "get_registered_count",
+        "ok": true,
+        "result": 1
+      },
+      {
+        "view": "get_registered",
+        "ok": true,
+        "result": [
+          "bumm-guard-demo.testnet"
+        ]
+      },
+      {
+        "view": "get_waitlist",
+        "ok": true,
+        "result": []
+      },
+      {
+        "view": "get_seats_left",
+        "ok": true,
+        "result": 1
+      },
+      {
+        "view": "is_registered",
+        "args": {
+          "account_id": "bumm-guard-demo.testnet"
+        },
+        "ok": true,
+        "result": true
+      }
+    ],
+    "note": "init is never re-called; a contract that fails the smoke view is reported, not fixed"
+  }
+}
