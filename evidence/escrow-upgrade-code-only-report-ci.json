@@ -1,0 +1,319 @@
+{
+  "tool": "bumm-guard",
+  "version": "0.4.0",
+  "runner": "bumm-sim 0.4.0",
+  "wasm_sha256": "ecd8a805ea3252f1ffa2a285964d3e035d6e3c6be16e6974c33c479c3e034443",
+  "upgrade_wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013",
+  "scenario_sha256": "5edd5823527caf51923446b78716dfa9ec3b66103d4c227be9249c0477b19eab",
+  "sandbox": {
+    "near_workspaces": "0.24.0",
+    "near_sandbox": "0.4.0"
+  },
+  "scenarios": [
+    {
+      "name": "Upgrade escrow v1 → v2 (code-only upgrade): deals survive with the right status, refund works, deposits stay locked",
+      "file": "scenarios/upgrade/escrow_v1_to_v2_code_only.json",
+      "scenario_sha256": "5edd5823527caf51923446b78716dfa9ec3b66103d4c227be9249c0477b19eab",
+      "wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/escrow_v1.wasm",
+      "wasm_sha256": "ecd8a805ea3252f1ffa2a285964d3e035d6e3c6be16e6974c33c479c3e034443",
+      "upgrade_wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/escrow_v2.wasm",
+      "upgrade_wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013",
+      "passed": false,
+      "duration_s": 7.2,
+      "accounts": {
+        "alice": "alice.test.near",
+        "bob": "bob.test.near",
+        "carol": "carol.test.near",
+        "contract": "contract.test.near"
+      },
+      "init": {
+        "method": "new",
+        "passed": true,
+        "actual": {
+          "status": "success",
+          "value": null,
+          "gas_burnt_tgas": 1.556
+        }
+      },
+      "steps": [
+        {
+          "index": 0,
+          "kind": "call",
+          "method": "create_deal",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "equals": 0
+          },
+          "actual": {
+            "status": "success",
+            "value": 0,
+            "gas_burnt_tgas": 1.837
+          }
+        },
+        {
+          "index": 1,
+          "kind": "call",
+          "method": "create_deal",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "equals": 1
+          },
+          "actual": {
+            "status": "success",
+            "value": 1,
+            "gas_burnt_tgas": 1.849
+          }
+        },
+        {
+          "index": 2,
+          "kind": "call",
+          "method": "create_deal",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "equals": 2
+          },
+          "actual": {
+            "status": "success",
+            "value": 2,
+            "gas_burnt_tgas": 1.851
+          }
+        },
+        {
+          "index": 3,
+          "kind": "call",
+          "method": "release",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.47
+          }
+        },
+        {
+          "index": 4,
+          "kind": "view",
+          "method": "deal_count",
+          "passed": true,
+          "expected": {
+            "equals": 3
+          },
+          "actual": {
+            "status": "success",
+            "value": 3
+          }
+        },
+        {
+          "index": 5,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_least": "53.9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "53998412986366466800000000",
+            "near": "53.9984129863664668"
+          }
+        },
+        {
+          "index": 6,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_most": "54.1 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "53998412986366466800000000",
+            "near": "53.9984129863664668"
+          }
+        },
+        {
+          "index": 7,
+          "kind": "upgrade",
+          "by": "contract",
+          "wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/escrow_v2.wasm",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 15.599,
+            "code_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+          }
+        },
+        {
+          "index": 8,
+          "kind": "view",
+          "method": "deal_count",
+          "passed": true,
+          "expected": {
+            "equals": 3
+          },
+          "actual": {
+            "status": "success",
+            "value": 3
+          }
+        },
+        {
+          "index": 9,
+          "kind": "view",
+          "method": "get_deal",
+          "passed": false,
+          "expected": {
+            "equals": {
+              "amount": "2000000000000000000000000",
+              "buyer": "alice",
+              "created_at_ms": 0,
+              "id": 0,
+              "seller": "bob",
+              "status": "Released"
+            }
+          },
+          "actual": {
+            "status": "failure",
+            "error": "unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize element\" })",
+            "error_detail": "wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize element\" })"
+          },
+          "reason": "expected success, got failure: unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize element\" })"
+        },
+        {
+          "index": 10,
+          "kind": "view",
+          "method": "get_deal",
+          "passed": false,
+          "expected": {
+            "equals": {
+              "amount": "3000000000000000000000000",
+              "buyer": "alice",
+              "created_at_ms": 0,
+              "id": 1,
+              "seller": "carol",
+              "status": "Funded"
+            }
+          },
+          "actual": {
+            "status": "failure",
+            "error": "unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize element\" })",
+            "error_detail": "wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize element\" })"
+          },
+          "reason": "expected success, got failure: unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize element\" })"
+        },
+        {
+          "index": 11,
+          "kind": "view",
+          "method": "get_deal",
+          "passed": false,
+          "expected": {
+            "equals": {
+              "amount": "1000000000000000000000000",
+              "buyer": "bob",
+              "created_at_ms": 0,
+              "id": 2,
+              "seller": "carol",
+              "status": "Funded"
+            }
+          },
+          "actual": {
+            "status": "failure",
+            "error": "unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize element\" })",
+            "error_detail": "wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize element\" })"
+          },
+          "reason": "expected success, got failure: unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize element\" })"
+        },
+        {
+          "index": 12,
+          "kind": "call",
+          "method": "refund",
+          "by": "carol",
+          "passed": false,
+          "expected": "ok",
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Cannot deserialize element\")",
+            "gas_burnt_tgas": 1.628
+          },
+          "reason": "expected success, got failure: Action #0: ExecutionError(\"Smart contract panicked: Cannot deserialize element\")"
+        },
+        {
+          "index": 13,
+          "kind": "view",
+          "method": "get_deal",
+          "passed": false,
+          "expected": {
+            "contains": {
+              "status": "Refunded"
+            }
+          },
+          "actual": {
+            "status": "failure",
+            "error": "unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize element\" })",
+            "error_detail": "wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize element\" })"
+          },
+          "reason": "expected success, got failure: unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize element\" })"
+        },
+        {
+          "index": 14,
+          "kind": "call",
+          "method": "release",
+          "by": "bob",
+          "passed": false,
+          "expected": "ok",
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Cannot deserialize element\")",
+            "gas_burnt_tgas": 1.627
+          },
+          "reason": "expected success, got failure: Action #0: ExecutionError(\"Smart contract panicked: Cannot deserialize element\")"
+        },
+        {
+          "index": 15,
+          "kind": "view",
+          "method": "get_deal",
+          "passed": false,
+          "expected": {
+            "contains": {
+              "status": "Released"
+            }
+          },
+          "actual": {
+            "status": "failure",
+            "error": "unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize element\" })",
+            "error_detail": "wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize element\" })"
+          },
+          "reason": "expected success, got failure: unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize element\" })"
+        },
+        {
+          "index": 16,
+          "kind": "call",
+          "method": "refund",
+          "by": "bob",
+          "passed": false,
+          "expected": {
+            "fail_contains": "Deal 0 is already Released"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Cannot deserialize element\")",
+            "gas_burnt_tgas": 1.627
+          },
+          "reason": "failed, but the error does not contain \"Deal 0 is already Released\""
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "scenarios": 1,
+    "passed": 0,
+    "failed": 1,
+    "steps": 17,
+    "steps_failed": 8
+  }
+}

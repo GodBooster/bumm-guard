@@ -576,6 +576,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "escrow_v1"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
+]
+
+[[package]]
+name = "escrow_v2"
+version = "0.2.0"
+dependencies = [
+ "near-sdk",
+]
+
+[[package]]
 name = "event_registration"
 version = "0.1.0"
 dependencies = [

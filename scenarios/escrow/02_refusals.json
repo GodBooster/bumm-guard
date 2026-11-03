@@ -1,0 +1,24 @@
+{
+  "name": "Escrow v1 refusals: no deposit, release by a non-buyer, unknown deal, second release",
+  "accounts": {"alice": "10 NEAR", "bob": "10 NEAR"},
+  "contract": {"wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/escrow_v1.wasm",
+               "init": {"method": "new", "args": {}}},
+  "steps": [
+    {"call": "create_deal", "by": "alice", "args": {"seller": "bob"},
+     "expect": {"fail_contains": "Attach a positive deposit"}},
+    {"view": "deal_count", "expect": {"equals": 0}},
+    {"call": "create_deal", "by": "alice", "args": {"seller": "bob"}, "deposit": "2 NEAR", "expect": {"equals": 0}},
+    {"call": "release", "by": "bob", "args": {"id": 0},
+     "expect": {"fail_contains": "Only the buyer can release deal 0"}},
+    {"call": "release", "by": "alice", "args": {"id": 3},
+     "expect": {"fail_contains": "Deal 3 does not exist"}},
+    {"view": "get_deal", "args": {"id": 0}, "expect": {"contains": {"released": false}}},
+    {"balance": "bob", "expect": {"at_most": "10 NEAR"}},
+    {"call": "release", "by": "alice", "args": {"id": 0}, "expect": "ok"},
+    {"call": "release", "by": "alice", "args": {"id": 0},
+     "expect": {"fail_contains": "Deal 0 is already released"}},
+    {"balance": "bob", "expect": {"at_least": "11.9 NEAR"}},
+    {"balance": "bob", "expect": {"at_most": "12 NEAR"}},
+    {"view": "deal_count", "expect": {"equals": 1}}
+  ]
+}

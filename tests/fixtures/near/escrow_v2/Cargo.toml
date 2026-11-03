@@ -1,0 +1,15 @@
+[package]
+name = "escrow_v2"
+version = "0.2.0"
+edition = "2021"
+publish = false
+description = "Escrow v2: deal records gain `status` and `created_at_ms`, refund(), and migrate() from escrow_v1 state (upgrade scenarios in scenarios/upgrade/escrow_*)."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { version = "=5.17.2", features = ["non-contract-usage"] }
+
+[dev-dependencies]
+near-sdk = { version = "=5.17.2", features = ["unit-testing"] }
