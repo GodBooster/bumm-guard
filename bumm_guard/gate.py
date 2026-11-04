@@ -165,6 +165,18 @@ def _is_int(v) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
+def _upgrade_succeeded(step: dict) -> tuple[bool, str]:
+    """Did the upgrade transaction of this §2a step go through? True only if the step's expectation
+    was ``"ok"`` and the chain answered ``status: success``. The second value describes a mismatch."""
+    status = (step.get("actual") or {}).get("status") if isinstance(step.get("actual"), dict) else None
+    expected = step.get("expected")
+    if expected != "ok":
+        return False, f"status {status}, expected {json.dumps(expected)}"
+    if status != "success":
+        return False, f"status {status}"
+    return True, ""
+
+
 def _post_upgrade_steps(sc: dict, up_idx) -> list[dict]:
     """Every step after the upgrade step as ``{index, kind, method}`` (``method`` is the account
     for a ``balance`` step)."""
@@ -182,9 +194,11 @@ def _post_upgrade_steps(sc: dict, up_idx) -> list[dict]:
 def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | None, list[str]]:
     """The first passing scenario of a §3 report whose upgrade step goes from ``onchain`` (the
     scenario's ``wasm_sha256``) to ``candidate`` (``upgrade_wasm_sha256`` and the step's
-    ``code_sha256``, which must be recorded) and that has at least one step after the upgrade
-    (otherwise nothing was proven on the migrated state). Returns ``(upgrade block, notes)``;
-    notes explain near misses."""
+    ``code_sha256``, which must be recorded), whose upgrade transaction succeeded (expectation
+    ``"ok"`` and ``actual.status == "success"``: a rolled-back upgrade proves nothing) and that has
+    at least one step after the upgrade (otherwise nothing was proven on the migrated state).
+    Returns ``(upgrade block, notes)``; the block lists the steps after the upgrade in
+    ``post_upgrade_steps`` (docs/FORMATS.md §4); notes explain near misses."""
     notes, proofs = [], []
     for sc in rep.get("scenarios") or []:
         if not isinstance(sc, dict) or not _upgrade_steps(sc):
@@ -195,6 +209,11 @@ def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | 
             notes.append(f"upgrade scenario {name!r} proves {frm} -> {to}, not {onchain} -> {candidate}")
             continue
         step = _upgrade_steps(sc)[0]
+        ok, why = _upgrade_succeeded(step)
+        if not ok:
+            notes.append(f"upgrade scenario {name!r}: the upgrade transaction did not succeed ({why}); "
+                         "a rolled-back upgrade proves nothing")
+            continue
         later = _post_upgrade_steps(sc, step.get("index"))
         if not later:
             notes.append(f"upgrade scenario {name!r} has no steps after the upgrade: "
@@ -226,15 +245,26 @@ def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | 
 
 def upgrade_check(rep, account: str, onchain: str, candidate: str, simulate_report: str | None) -> dict:
     """Structured reason for a refused upgrade, for agents (``gate_deploy`` returns it as ``upgrade_check``):
-    what runs on the account, what the candidate is, and every pair the report proves or tried to prove."""
+    what runs on the account, what the candidate is, and every pair the report proves or tried to prove.
+    ``status``: ``no-report``, ``no-proof``, ``report-proves-other-pair`` or ``proof-upgrade-failed`` (the
+    report has the pair, but in no scenario did the upgrade transaction itself succeed: ``expected`` was
+    not ``"ok"`` or ``actual.status`` was not ``success``). Each pair carries ``upgrade_status`` (the
+    step's ``actual.status``) and ``upgrade_succeeded``."""
     pairs = []
     for sc in (rep or {}).get("scenarios") or [] if isinstance(rep, dict) else []:
         if isinstance(sc, dict) and _upgrade_steps(sc):
+            step = _upgrade_steps(sc)[0]
+            actual = step.get("actual") if isinstance(step.get("actual"), dict) else {}
             pairs.append({"from": sc.get("wasm_sha256"), "to": sc.get("upgrade_wasm_sha256"),
-                          "scenario": str(sc.get("name", "?")), "passed": bool(sc.get("passed"))})
+                          "scenario": str(sc.get("name", "?")), "passed": bool(sc.get("passed")),
+                          "upgrade_status": actual.get("status"),
+                          "upgrade_succeeded": _upgrade_succeeded(step)[0]})
+    matching = [p for p in pairs if p["from"] == onchain and p["to"] == candidate]
     if not simulate_report:
         status = "no-report"
-    elif any(p["from"] == onchain and p["to"] == candidate for p in pairs):
+    elif matching and not any(p["upgrade_succeeded"] for p in matching):
+        status = "proof-upgrade-failed"
+    elif matching:
         status = "no-proof"
     else:
         status = "report-proves-other-pair" if pairs else "no-proof"

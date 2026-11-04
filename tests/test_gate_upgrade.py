@@ -304,6 +304,27 @@ class UpgradeGateTests(Fixture):
         self.assertIn("without-init-call", dep["command"])
         self.assertIn("  " + dep["command"], out)
 
+    # --- (a) the upgrade transaction itself must have succeeded
+
+    def test_upgrade_step_expected_to_fail_is_not_a_proof(self):
+        sc = upgrade_scenario()  # scenario passes because the failing upgrade was what it expected
+        sc["steps"][0]["expected"] = {"fail_contains": "MethodNotFound"}
+        sc["steps"][0]["actual"] = {"status": "failure", "error": "MethodNotFound", "code_sha256": NEW_SHA}
+        self.assertBlocked(self.gate(Node(code=OLD), report(sc)),
+                           "upgrade scenario 'with migrate': the upgrade transaction did not succeed (status failure, "
+                           'expected {"fail_contains": "MethodNotFound"}); a rolled-back upgrade proves nothing')
+
+    def test_upgrade_step_failed_against_expectation_is_not_a_proof(self):
+        sc = upgrade_scenario(passed=False)
+        sc["steps"][0]["actual"]["status"] = "failure"
+        self.assertBlocked(self.gate(Node(code=OLD), report(sc)),
+                           "the upgrade transaction did not succeed (status failure); a rolled-back upgrade proves nothing")
+
+    def test_upgrade_step_without_status_is_not_a_proof(self):
+        sc = upgrade_scenario()
+        del sc["steps"][0]["actual"]["status"]
+        self.assertBlocked(self.gate(Node(code=OLD), report(sc)), "did not succeed (status None)")
+
     # --- (d) what was proved after the upgrade is listed; views only is a warning
 
     def test_post_upgrade_steps_listed_and_views_only_warns(self):
@@ -394,6 +415,14 @@ class McpGateDeployTests(Fixture):
         self.assertTrue(data["note"].startswith("NO CHANGE: the account already runs this exact wasm"))
         self.assertIn("NO CHANGE", " ".join(data["messages"]))
 
+    def test_mcp_upgrade_check_proof_upgrade_failed(self):
+        sc = upgrade_scenario()
+        sc["steps"][0]["expected"] = {"fail_contains": "boom"}
+        sc["steps"][0]["actual"]["status"] = "failure"
+        data = self.call(Node(code=OLD), report(sc))
+        self.assertTrue(data["blocked"])
+        self.assertEqual(data["upgrade_check"]["status"], "proof-upgrade-failed")
+        self.assertEqual(data["upgrade_check"]["proven_pairs"][0]["upgrade_status"], "failure")
 
     def test_mcp_simulate_report_path_checked(self):
         from bumm_guard import mcp_server
@@ -502,7 +531,8 @@ class UpgradeCheckTests(Fixture):
         self.assertTrue(out.blocked)
         self.assertEqual(out.upgrade_check["status"], "report-proves-other-pair")
         self.assertEqual(out.upgrade_check["proven_pairs"],
-                         [{"from": other, "to": NEW_SHA, "scenario": "escrow", "passed": True}])
+                         [{"from": other, "to": NEW_SHA, "scenario": "escrow", "passed": True,
+                           "upgrade_status": "success", "upgrade_succeeded": True}])
 
     def test_pair_present_but_failed(self):
         out = self.run_gate(report(upgrade_scenario(passed=False)))
@@ -514,3 +544,86 @@ class UpgradeCheckTests(Fixture):
         out = self.run_gate(report(upgrade_scenario()))
         self.assertFalse(out.blocked)
         self.assertIsNone(out.upgrade_check)
+
+    def test_pair_present_but_upgrade_transaction_failed(self):
+        sc = upgrade_scenario()
+        sc["steps"][0]["expected"] = {"fail_contains": "MethodNotFound"}
+        sc["steps"][0]["actual"]["status"] = "failure"
+        out = self.run_gate(report(sc))
+        self.assertTrue(out.blocked)
+        self.assertEqual(out.upgrade_check["status"], "proof-upgrade-failed")
+        pair = out.upgrade_check["proven_pairs"][0]
+        self.assertEqual((pair["passed"], pair["upgrade_status"], pair["upgrade_succeeded"]), (True, "failure", False))
+
+    def test_failed_upgrade_next_to_a_passing_pair_is_still_no_proof(self):
+        bad = upgrade_scenario(name="rolled back")
+        bad["steps"][0]["actual"]["status"] = "failure"
+        other = upgrade_scenario(name="other candidate", to="9" * 64)  # same on-chain code, other wasm
+        out = self.run_gate(report(bad, other))
+        self.assertTrue(out.blocked)
+        self.assertEqual(out.upgrade_check["status"], "proof-upgrade-failed")
+        good_but_unpassed = upgrade_scenario(passed=False)
+        out = self.run_gate(report(bad, good_but_unpassed))
+        self.assertEqual(out.upgrade_check["status"], "no-proof")  # a successful upgrade step exists for the pair
+
+
+EVIDENCE = Path(__file__).parent.parent / "evidence"
+PAIRS = {  # on-chain code -> candidate, as in evidence/UPGRADE_TESTNET.md
+    "n06_to_n10": ("c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617",
+                   "8526195a51a5f5d94f15fab7df1c685804eb419a01dc1a734ac1c76d6220e079",
+                   "upgrade-with-migrate-report-ci.json", "upgrade-code-only-report-ci.json",
+                   "event_registration_waitlist"),
+    "escrow_v1_to_v2": ("ecd8a805ea3252f1ffa2a285964d3e035d6e3c6be16e6974c33c479c3e034443",
+                        "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013",
+                        "escrow-upgrade-with-migrate-report-ci.json", "escrow-upgrade-code-only-report-ci.json",
+                        "escrow_v2"),
+}
+
+
+class ShippedEvidenceTests(unittest.TestCase):
+    """The CI reports committed under evidence/ must keep their verdicts: the with-migrate reports are
+    accepted as proofs, the code-only reports are rejected. The wasm files are not in the repository,
+    so the candidate hash is injected by stubbing ``sha256_file`` for the wasm path and the on-chain
+    hash by stubbing ``onchain_code_sha256`` (no network)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.wasm = Path(self.tmp.name) / "candidate.wasm"
+        self.wasm.write_bytes(NEW)
+
+    def gate(self, pair: str, report_name: str):
+        from bumm_guard import gate as gate_mod
+        onchain, candidate, _, _, crate = PAIRS[pair]
+        real = gate_mod.sha256_file
+
+        def fake_sha(path):
+            return candidate if Path(path) == self.wasm else real(path)
+
+        with mock.patch("bumm_guard.gate.sha256_file", fake_sha), \
+                mock.patch("bumm_guard.gate.onchain_code_sha256", return_value=onchain), \
+                mock.patch("urllib.request.urlopen", side_effect=AssertionError("network used")):
+            return run_cli("gate", str(FIXTURES / crate), "--wasm", str(self.wasm), "--account", "demo.testnet",
+                           "--simulate-report", str(EVIDENCE / report_name), "--dry-run")
+
+    def test_with_migrate_reports_are_proofs(self):
+        for pair, (onchain, candidate, good, _, _) in PAIRS.items():
+            with self.subTest(pair=pair):
+                code, out, err = self.gate(pair, good)
+                self.assertEqual(code, 0, out + err)
+                self.assertIn(f"upgrade of demo.testnet: {onchain} -> {candidate}, proved by passing scenario", out)
+                self.assertIn("migration migrate({}) in the same transaction", out)
+                self.assertIn("proved after upgrade (", out)
+                self.assertIn("call ", out.split("proved after upgrade (")[1].split("\n")[0])
+                self.assertNotIn("only view calls", out)
+                self.assertIn("migration migrate: #[private] (src/lib.rs:", out)
+                self.assertIn("with-init-call migrate json-args '{}' prepaid-gas '100 Tgas'", out)
+
+    def test_code_only_reports_are_rejected(self):
+        for pair, (onchain, candidate, _, bad, _) in PAIRS.items():
+            with self.subTest(pair=pair):
+                code, out, err = self.gate(pair, bad)
+                self.assertEqual(code, 3, out + err)
+                self.assertIn(f"no passing upgrade scenario proves {onchain} -> {candidate}", out)
+                self.assertIn("for this pair did not pass", out)
+                self.assertNotIn("near contract deploy", out)
