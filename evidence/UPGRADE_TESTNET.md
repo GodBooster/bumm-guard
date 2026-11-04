@@ -15,7 +15,17 @@ that pair of code hashes.
 | 7 | Owner ran the printed command with their own key (deploy + `migrate` in one transaction) | tx [`8kvdZu8787miimR9rJHkiB1oNBXu58xJrJk4mxZcofrd`](https://explorer.testnet.near.org/transactions/8kvdZu8787miimR9rJHkiB1oNBXu58xJrJk4mxZcofrd), 2.0 Tgas, fee 0.00019 NEAR |
 | 8 | `bumm-guard gate --verify-deployed` | on-chain code sha256 `8526195a…` = proven N10 (**MATCH**); `get_capacity` 2, `get_registered_count` 1, `get_registered` ["bumm-guard-demo.testnet"] (**the registration made before the upgrade survived**), `get_waitlist` [] (new method answers), `get_seats_left` 1, `is_registered` true → `testnet-upgrade-gate-report-2026-11-03.json` |
 
-Not shown: a waitlist entry on testnet (needs a second and third account), the panel's wallet path.
+## Waitlist on the migrated contract (2026-11-04)
+
+Two more accounts (`bumm-guard-alice.testnet` tx [`7KueMRAFyRE4bPtbBQKqWmCYp53fPc4DCdMJtJ9QgvJN`](https://explorer.testnet.near.org/transactions/7KueMRAFyRE4bPtbBQKqWmCYp53fPc4DCdMJtJ9QgvJN), `bumm-guard-bob.testnet` tx [`BkFxjcB9XPs4zRAFo5M7edcM3kHJgwGVq6hF2UhdX3D2`](https://explorer.testnet.near.org/transactions/BkFxjcB9XPs4zRAFo5M7edcM3kHJgwGVq6hF2UhdX3D2)) exercised the feature N10 added on top of the state N06 left behind. State after each receipt read from the archival RPC at that receipt's block.
+
+| Step | Tx | State after (`get_registered` / `get_waitlist`) |
+|---|---|---|
+| `register` as alice (last free seat) | [`22YW2teteUaYZuMMoyReS8MgkpYfZwwpzse8o3HyRaas`](https://explorer.testnet.near.org/transactions/22YW2teteUaYZuMMoyReS8MgkpYfZwwpzse8o3HyRaas), block 276189585 | `["bumm-guard-demo.testnet","bumm-guard-alice.testnet"]` / `[]` |
+| `register` as bob (event full) | [`BXj6MnjF7Dd2KkyTwWUXxFhpHTWTCWPBfjCzZEMx3bVY`](https://explorer.testnet.near.org/transactions/BXj6MnjF7Dd2KkyTwWUXxFhpHTWTCWPBfjCzZEMx3bVY), block 276189596 | `["bumm-guard-demo.testnet","bumm-guard-alice.testnet"]` / **`["bumm-guard-bob.testnet"]`** |
+| `cancel` as alice (bob takes the seat) | [`7hA8pkCA6NHTfjSmC2jpJMzRwZbrVATouxXhkRRzuUnC`](https://explorer.testnet.near.org/transactions/7hA8pkCA6NHTfjSmC2jpJMzRwZbrVATouxXhkRRzuUnC), block 276189606 | `["bumm-guard-demo.testnet","bumm-guard-bob.testnet"]` / `[]`, `get_seats_left` 0 |
+
+Not shown: the panel's wallet path.
 
 # Live upgrade escrow v1 → v2 on NEAR testnet (2026-11-04)
 
