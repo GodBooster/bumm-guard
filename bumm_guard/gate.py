@@ -243,6 +243,43 @@ def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | 
         notes.append(f"several passing upgrade scenarios with different migrations; using {proofs[0]['scenario']!r}")
     return (proofs[0] if proofs else None), notes
 
+
+def scenario_aliases(sc: dict) -> set[str]:
+    """The account aliases the runner resolves at run time (``"alice"`` -> sandbox account): the keys of
+    the scenario's ``accounts`` as recorded in the §3 report, plus ``"contract"``. A report that does not
+    record them falls back to every alias used as a signer or balance target in the steps."""
+    names = {"contract"}
+    accounts = sc.get("accounts")
+    if isinstance(accounts, dict) and accounts:
+        names.update(k for k in accounts if isinstance(k, str))
+        return names
+    for st in sc.get("steps") or []:
+        if isinstance(st, dict):
+            names.update(v for k in ("by", "as", "signer", "account") if isinstance(v := st.get(k), str))
+    return names
+
+
+def _strings_in(value) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings_in(v)]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings_in(v)]
+    return []
+
+
+def migrate_alias_args(rep: dict, scenario: str, migrate: dict | None) -> list[str]:
+    """Alias names found among the string values (recursively) of the proof's ``migrate.args``.
+    The runner resolved them to sandbox accounts; printed raw into the testnet command they would be
+    wrong, so the gate blocks on any."""
+    if not migrate:
+        return []
+    sc = next((s for s in rep.get("scenarios") or [] if isinstance(s, dict) and str(s.get("name", "?")) == scenario), {})
+    names = scenario_aliases(sc)
+    return sorted({s for s in _strings_in(migrate.get("args")) if s in names})
+
+
 def upgrade_check(rep, account: str, onchain: str, candidate: str, simulate_report: str | None) -> dict:
     """Structured reason for a refused upgrade, for agents (``gate_deploy`` returns it as ``upgrade_check``):
     what runs on the account, what the candidate is, and every pair the report proves or tried to prove.
@@ -469,6 +506,13 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
             if not any(st["kind"] == "call" for st in steps):
                 out.lines.append("warning: only view calls were made on the migrated state; no state change "
                                  "was exercised")
+            aliases = migrate_alias_args(rep, upgrade["scenario"], m)
+            if aliases:
+                return _blocked(out, report, dry_run, [
+                    f"DEPLOY BLOCKED: migrate args of scenario {upgrade['scenario']!r} reference sandbox-only "
+                    f"alias(es) {', '.join(repr(a) for a in aliases)}: the runner resolved them to sandbox accounts, "
+                    f"but the printed {network} command would send them as written; use literal account ids in "
+                    "the scenario's migrate args and re-run `bumm-guard simulate`"])
             if m:
                 status, detail = migration_guard(crate, m["method"])
                 data["migration_guard"] = {"method": m["method"], "status": status,

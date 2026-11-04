@@ -325,6 +325,50 @@ class UpgradeGateTests(Fixture):
         del sc["steps"][0]["actual"]["status"]
         self.assertBlocked(self.gate(Node(code=OLD), report(sc)), "did not succeed (status None)")
 
+    # --- (c) migrate args must not name scenario aliases
+
+    def assertAliasBlocked(self, result, *needles):
+        code, out, _ = result
+        self.assertEqual(code, 3, out)
+        self.assertIn("proved by passing scenario", out)  # the proof was accepted, then the args were refused
+        self.assertIn("DEPLOY BLOCKED: migrate args of scenario 'with migrate' reference sandbox-only alias(es)", out)
+        for n in needles:
+            self.assertIn(n, out)
+        self.assertIn("use literal account ids in the scenario's migrate args", out)
+        self.assertNotIn("near contract deploy", out)
+        self.assertFalse((self.crate / REPORT_DIR / REPORT_NAME).exists())
+
+    def test_migrate_args_with_recorded_alias_block(self):
+        sc = upgrade_scenario(migrate={"method": "migrate", "args": {"owner": "alice"}, "gas": "100 Tgas"})
+        sc["accounts"] = {"alice": "alice.test.near", "contract": "contract.test.near"}
+        self.assertAliasBlocked(self.gate(Node(code=OLD), report(sc)), "'alice'")
+
+    def test_migrate_args_nested_alias_blocks(self):
+        m = {"method": "migrate", "args": {"cfg": {"admins": ["x.testnet", "bob"], "n": 1}}, "gas": "100 Tgas"}
+        sc = upgrade_scenario(migrate=m)
+        sc["accounts"] = {"alice": "alice.test.near", "bob": "bob.test.near", "contract": "contract.test.near"}
+        self.assertAliasBlocked(self.gate(Node(code=OLD), report(sc)), "'bob'")
+
+    def test_migrate_args_contract_alias_blocks_even_without_recorded_accounts(self):
+        m = {"method": "migrate", "args": {"owner": "contract"}, "gas": "100 Tgas"}
+        self.assertAliasBlocked(self.gate(Node(code=OLD), report(upgrade_scenario(migrate=m))), "'contract'")
+
+    def test_migrate_args_fallback_to_signers_when_accounts_not_recorded(self):
+        m = {"method": "migrate", "args": {"owner": "carol"}, "gas": "100 Tgas"}
+        sc = upgrade_scenario(migrate=m)
+        sc["steps"].insert(0, {"index": 0, "kind": "call", "method": "register", "by": "carol", "passed": True,
+                               "expected": "ok", "actual": {"status": "success"}})
+        self.assertAliasBlocked(self.gate(Node(code=OLD), report(sc)), "'carol'")
+
+    def test_migrate_args_with_literal_ids_pass(self):
+        m = {"method": "migrate", "args": {"owner": "alice.testnet", "note": "alice is not an alias here"},
+             "gas": "100 Tgas"}
+        sc = upgrade_scenario(migrate=m)
+        sc["accounts"] = {"alice": "alice.test.near", "contract": "contract.test.near"}
+        code, out, _ = self.gate(Node(code=OLD), report(sc))
+        self.assertEqual(code, 0, out)
+        self.assertIn("with-init-call migrate", out)
+
     # --- (d) what was proved after the upgrade is listed; views only is a warning
 
     def test_post_upgrade_steps_listed_and_views_only_warns(self):
@@ -414,6 +458,15 @@ class McpGateDeployTests(Fixture):
         self.assertEqual(data["deploy"], {"status": "no-change", "command": None})
         self.assertTrue(data["note"].startswith("NO CHANGE: the account already runs this exact wasm"))
         self.assertIn("NO CHANGE", " ".join(data["messages"]))
+
+    def test_mcp_alias_args_blocked(self):
+        sc = upgrade_scenario(migrate={"method": "migrate", "args": {"owner": "alice"}, "gas": "100 Tgas"})
+        sc["accounts"] = {"alice": "alice.test.near", "contract": "contract.test.near"}
+        data = self.call(Node(code=OLD), report(sc))
+        self.assertTrue(data["blocked"])
+        self.assertIsNone(data["deploy_command"])
+        self.assertIn("sandbox-only alias(es) 'alice'", " ".join(data["messages"]))
+        self.assertIn("migrate args that name sandbox aliases", data["note"])
 
     def test_mcp_upgrade_check_proof_upgrade_failed(self):
         sc = upgrade_scenario()
