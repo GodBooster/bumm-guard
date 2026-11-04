@@ -36,7 +36,7 @@ Everything in the repository exists to make this failure visible before deploy a
                  contracts/sim-runner  (bumm-sim, Rust 1.99, near-workspaces 0.24)
                  contracts/sandbox     (near-workspaces test for BG-NEAR-001)
                  tests/fixtures/near   (11 crates, rustc 1.85.0 pinned)
-                 scenarios/            (14 JSON scenarios, 4 of them upgrades)
+                 scenarios/            (12 JSON scenarios, 4 of them upgrades)
                  ui/                   (static ABI panel, 794 lines JS/HTML)
                  clients/claude-plugin (Claude Code plugin + skill)
                  .github/workflows     (ci.yml 5 jobs, evaluate.yml dispatch)
