@@ -65,6 +65,7 @@ class GateOutcome:
     command: list[str] | None = None
     upgrade: dict | None = None                          # the gate report's ``upgrade`` block
     upgrade_check: dict | None = None                    # why an upgrade was refused (on-chain, candidate, proven pairs)
+    deploy: dict | None = None                           # the gate report's ``deploy`` block (status, command)
 
 
 def sha256_file(path: str | Path) -> str:
@@ -126,6 +127,7 @@ def build_report(crate: Path, res: ScanResult, wasm: str | None, network: str, a
         "upgrade": None,
         "migration_guard": None,
         "storage_estimate": None,
+        "deploy": None,
         "post_deploy": None,
     }
 
@@ -297,6 +299,16 @@ def _blocked(out: GateOutcome, report: Path, dry_run: bool, lines: list[str]) ->
     return out
 
 
+def _write_report(out: GateOutcome, data: dict, report: Path, dry_run: bool) -> None:
+    if dry_run:
+        out.lines.append("dry-run: gate-report.json not written")
+        return
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    out.report_path = str(report)
+    out.lines.append(f"gate passed: report written to {report}")
+
+
 def _refused(res: ScanResult, report: Path, dry_run: bool, errors: list[str]) -> GateOutcome:
     """Exit 2 (unusable input); removes a stale report."""
     out = GateOutcome(2, scan=res, errors=errors)
@@ -354,7 +366,7 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
     out = GateOutcome(0, scan=res)
     data = build_report(crate, res, wasm, network, account, abi)
     sim_block, sim_report = None, None
-    onchain, upgrade, rep = None, None, None
+    onchain, upgrade, rep, no_change = None, None, None, False
     if simulate_report:
         try:
             rep = json.loads(Path(simulate_report).read_text(encoding="utf-8"))
@@ -387,8 +399,9 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
                 out.lines.append(f"warning: simulate report has upgrade scenario(s) ({', '.join(upgrade_names)}) but "
                                  f"{account} has no code: this is a fresh deploy, the upgrade evidence is not used")
         elif onchain == candidate:
-            out.lines.append(f"account {account} ({network}) already runs this exact wasm ({onchain}): "
-                             "deploying it again changes no code")
+            no_change = True
+            out.lines.append(f"NO CHANGE: account {account} ({network}) already runs this exact wasm ({onchain}); "
+                             "nothing to deploy")
         else:
             upgrade, notes = find_upgrade_proof(rep, onchain, candidate) if isinstance(rep, dict) else (None, [])
             if upgrade is None:
@@ -443,6 +456,9 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
         if failing:
             out.lines.append(f"note: other scenario(s) in the report did not pass: {', '.join(failing)}")
         sim_report = rep
+    elif no_change and simulate_report:
+        out.lines.append("note: simulate report not checked against this wasm: nothing to deploy")
+        sim_report = rep if isinstance(rep, dict) else None
     elif simulate_report:
         sim_block, errs, code = load_simulate_report(simulate_report, data["artifact"]["wasm_sha256"])
         if code == 2:
@@ -468,16 +484,15 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
                 f"storage_usage {acct['storage_usage']} bytes, balance {acct['amount_near']} NEAR"))
     if wasm and not data["wasm"]["exists"]:
         out.errors.append(f"bumm-guard: warning: wasm not found: {wasm} (sha256 not recorded)")
-    if dry_run:
-        out.lines.append("dry-run: gate-report.json not written")
-    else:
-        report.parent.mkdir(parents=True, exist_ok=True)
-        report.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        out.report_path = str(report)
-        out.lines.append(f"gate passed: report written to {report}")
+    if no_change:
+        data["deploy"] = out.deploy = {"status": "no-change", "command": None}
+        _write_report(out, data, report, dry_run)
+        return out
     cmd = deploy_command(account or ACCOUNT_PLACEHOLDER, wasm or WASM_PLACEHOLDER, network,
                          upgrade["migrate"] if upgrade else None)
     out.command = cmd
+    data["deploy"] = out.deploy = {"status": "printed", "command": shlex.join(cmd)}
+    _write_report(out, data, report, dry_run)
     if not execute:
         out.lines.append("deploy command (NOT executed; pass --execute with --network testnet to run it):")
         out.lines.append("  " + shlex.join(cmd))

@@ -119,11 +119,15 @@ def gate_deploy(crate_dir: str, wasm: str | None = None, account: str | None = N
         "deploy_executed": False,
         "upgrade": out.upgrade,
         "upgrade_check": out.upgrade_check,
+        "deploy": out.deploy,
         "messages": out.lines + out.errors,
         "note": ("DEPLOY BLOCKED: fix the findings (fix_contract), run the crate tests, then call gate_deploy again. "
                  "Do not deploy around the gate." if out.blocked and blocking else
                  "DEPLOY BLOCKED: see messages (an upgrade without a passing upgrade scenario, a migration method "
-                 "callable by anyone, or a simulate report that does not match). Do not deploy around the gate." if out.blocked else
+                 "callable by anyone or without a recognised owner check, migrate args that name sandbox aliases, "
+                 "or a simulate report that does not match). Do not deploy around the gate." if out.blocked else
+                 "NO CHANGE: the account already runs this exact wasm; there is nothing to deploy and no command "
+                 "was produced." if out.deploy and out.deploy.get("status") == "no-change" else
                  "Gate passed. The deploy command above was NOT executed and this tool cannot execute it: "
                  "show it to the human, who runs it. Placeholders (<account-id>, <path/to/contract.wasm>) must be "
                  "replaced by the human."
@@ -227,7 +231,9 @@ def build_server():
         "`wasm` the gate reads the account's code (one read-only RPC view_code on `network`): if the account "
         "already runs other code this is an UPGRADE of a live contract with state, and the gate blocks unless "
         "`simulate_report` has a passing upgrade scenario from exactly that on-chain code to exactly `wasm`; "
-        "then `deploy_command` repeats that scenario's migration call and `upgrade` describes the proof."))
+        "then `deploy_command` repeats that scenario's migration call and `upgrade` describes the proof (incl. "
+        "`post_upgrade_steps`). If the account already runs exactly `wasm`: passed, `deploy.status` is 'no-change' "
+        "and `deploy_command` is null (nothing to deploy)."))
     @readable_errors
     def gate_deploy_tool(crate_dir: str, wasm: str | None = None, account: str | None = None,
                          network: str = "testnet", simulate_report: str | None = None) -> dict:

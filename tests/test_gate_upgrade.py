@@ -268,11 +268,40 @@ class UpgradeGateTests(Fixture):
         del sc["steps"][0]["migrate"]  # report from a bumm-sim that did not record migrate args
         self.assertBlocked(self.gate(Node(code=OLD), report(sc)), "re-run `bumm-guard simulate`")
 
-    def test_same_code_already_deployed_passes(self):
+    def test_same_code_already_deployed_is_no_change(self):
         code, out, _ = self.gate(Node(code=NEW))
         self.assertEqual(code, 0, out)
-        self.assertIn("already runs this exact wasm", out)
+        self.assertIn(f"NO CHANGE: account demo.testnet (testnet) already runs this exact wasm ({NEW_SHA}); "
+                      "nothing to deploy", out)
+        self.assertNotIn("near contract deploy", out)
+        self.assertNotIn("deploy command", out)
         self.assertIsNone(self.gate_report()["upgrade"])
+        self.assertEqual(self.gate_report()["deploy"], {"status": "no-change", "command": None})
+
+    def test_no_change_with_a_report_for_the_old_code_does_not_block(self):
+        # after a proven upgrade the same report + the same wasm is run again: nothing to deploy, exit 0
+        code, out, _ = self.gate(Node(code=NEW), report(upgrade_scenario()))
+        self.assertEqual(code, 0, out)
+        self.assertIn("NO CHANGE", out)
+        self.assertIn("note: simulate report not checked against this wasm: nothing to deploy", out)
+        self.assertNotIn("near contract deploy", out)
+        self.assertIsNone(self.gate_report()["simulate"])
+
+    def test_no_change_dry_run_writes_nothing(self):
+        code, out, _ = self.gate(Node(code=NEW), None, "--dry-run")
+        self.assertEqual(code, 0, out)
+        self.assertIn("NO CHANGE", out)
+        self.assertIn("dry-run: gate-report.json not written", out)
+        self.assertFalse((self.crate / REPORT_DIR / REPORT_NAME).exists())
+
+    def test_fresh_deploy_records_printed_command(self):
+        code, out, _ = self.gate(Node(code=None))
+        self.assertEqual(code, 0, out)
+        dep = self.gate_report()["deploy"]
+        self.assertEqual(dep["status"], "printed")
+        self.assertIn("without-init-call", dep["command"])
+        self.assertIn("  " + dep["command"], out)
+
 
     def test_rpc_down_blocks(self):
         code, out, _ = self.gate(Node(down=True))
@@ -330,6 +359,16 @@ class McpGateDeployTests(Fixture):
         self.assertFalse(data["deploy_executed"])
         self.assertIn("with-init-call migrate json-args '{}' prepaid-gas '100 Tgas'", data["deploy_command"])
         self.assertEqual(data["upgrade"]["scenario"], "with migrate")
+        self.assertEqual(data["deploy"], {"status": "printed", "command": data["deploy_command"]})
+    def test_mcp_no_change(self):
+        data = self.call(Node(code=NEW))
+        self.assertTrue(data["passed"])
+        self.assertFalse(data["blocked"])
+        self.assertIsNone(data["deploy_command"])
+        self.assertEqual(data["deploy"], {"status": "no-change", "command": None})
+        self.assertTrue(data["note"].startswith("NO CHANGE: the account already runs this exact wasm"))
+        self.assertIn("NO CHANGE", " ".join(data["messages"]))
+
 
     def test_mcp_simulate_report_path_checked(self):
         from bumm_guard import mcp_server
