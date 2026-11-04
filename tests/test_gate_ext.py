@@ -21,7 +21,7 @@ from bumm_guard import cli
 from bumm_guard.gate import REPORT_DIR, REPORT_NAME
 from bumm_guard.storage import (DEFAULT_PER_BYTE, RPC_URLS, RpcError, estimate_storage, fetch_per_byte,
                                 locked_near, rpc_call, simulate_state_bytes)
-from bumm_guard.verify import SmokeSpecError, parse_smoke, verify_deployed
+from bumm_guard.verify import SmokeSpecError, parse_smoke, post_deploy_ok, verify_deployed
 
 FIXTURES = Path(__file__).parent / "fixtures" / "near"
 WASM_BYTES = b"\0asm\x01\0\0\0" + b"payload" * 20
@@ -297,12 +297,60 @@ class GateStorageCliTests(Base):
 
 class VerifyDeployedTests(Base):
     def test_parse_smoke(self):
-        self.assertEqual(parse_smoke("get_count"), ("get_count", "{}"))
+        self.assertEqual(parse_smoke("get_count"), ("get_count", "{}", None))
         self.assertEqual(parse_smoke('is_registered:{"account_id":"a.testnet"}'),
-                         ("is_registered", '{"account_id":"a.testnet"}'))
-        for bad in ("new", "init_state", "migrate", "Migrate_v2", "bad-name", "x:{not json", ":{}"):
+                         ("is_registered", '{"account_id":"a.testnet"}', None))
+        for bad in ("new", "init_state", "migrate", "Migrate_v2", "bad-name", "x:{not json", ":{}", "x:{} junk"):
             with self.assertRaises(SmokeSpecError, msg=bad):
                 parse_smoke(bad)
+
+    def test_parse_smoke_expectations(self):
+        self.assertEqual(parse_smoke("get_count=2"), ("get_count", "{}", "2"))
+        self.assertEqual(parse_smoke('get_deal:{"id":0}={"buyer":"a.testnet","released":false}'),
+                         ("get_deal", '{"id":0}', '{"buyer":"a.testnet","released":false}'))
+        self.assertEqual(parse_smoke('get_owner=null'), ("get_owner", "{}", "null"))
+        self.assertEqual(parse_smoke('get_list:[1,2]=[]'), ("get_list", "[1,2]", "[]"))
+        # an "=" inside the args JSON does not start the expectation
+        self.assertEqual(parse_smoke('f:{"k":"a=b"}'), ("f", '{"k":"a=b"}', None))
+        self.assertEqual(parse_smoke('f:{"k":"a=b"}="x=y"'), ("f", '{"k":"a=b"}', '"x=y"'))
+        for bad in ("get_count=", "get_count={nope", "get_count:{}=", "new=1"):
+            with self.assertRaises(SmokeSpecError, msg=bad):
+                parse_smoke(bad)
+
+    def test_smoke_expectation_match_and_mismatch(self):
+        rpc = FakeRpc(views={"get_registered_count": b"2", "get_deal": b'{"buyer":"a.testnet","released":false}'})
+        with mock.patch("urllib.request.urlopen", rpc):
+            block = verify_deployed("demo.testnet", self.wasm, "testnet",
+                                    ["get_registered_count=2", 'get_deal:{"id":0}={"released":false,"buyer":"a.testnet"}',
+                                     "get_registered_count=3", "get_registered_count"])
+        self.assertEqual(block["smoke"][0], {"view": "get_registered_count", "expected": 2, "ok": True, "result": 2})
+        self.assertEqual(block["smoke"][1], {"view": "get_deal", "args": {"id": 0},
+                                             "expected": {"released": False, "buyer": "a.testnet"},
+                                             "ok": True, "result": {"buyer": "a.testnet", "released": False}})
+        self.assertEqual(block["smoke"][2], {"view": "get_registered_count", "expected": 3, "ok": False, "result": 2,
+                                             "error": "expected 3, got 2"})
+        self.assertEqual(block["smoke"][3], {"view": "get_registered_count", "ok": True, "result": 2})
+        self.assertFalse(post_deploy_ok(block))
+
+    def test_cli_smoke_expectation_exit_5_and_prints_expected_vs_actual(self):
+        d = self.root / "work"
+        d.mkdir()
+        with mock.patch("urllib.request.urlopen", FakeRpc(views={"get_n": b"7"})):
+            code, out, _ = run_cli("gate", str(d), "--verify-deployed", "demo.testnet", "--wasm", str(self.wasm),
+                                   "--smoke", "get_n=7")
+            self.assertEqual(code, 0, out)
+            self.assertIn("smoke get_n: ok: 7 (as expected)", out)
+            self.assertEqual(self.gate_report(d)["post_deploy"]["smoke"][0]["expected"], 7)
+            code, out, _ = run_cli("gate", str(d), "--verify-deployed", "demo.testnet", "--wasm", str(self.wasm),
+                                   "--smoke", "get_n=8")
+        self.assertEqual(code, 5, out)
+        self.assertIn("smoke get_n: FAILED: expected 8, got 7", out)
+        self.assertIn("post-deploy verification FAILED", out)
+        self.assertEqual(self.gate_report(d)["post_deploy"]["smoke"][0],
+                         {"view": "get_n", "expected": 8, "ok": False, "result": 7, "error": "expected 8, got 7"})
+        with mock.patch("urllib.request.urlopen", FakeRpc()):
+            self.assertEqual(run_cli("gate", str(d), "--verify-deployed", "demo.testnet", "--wasm", str(self.wasm),
+                                     "--smoke", "get_n={bad")[0], 2)
 
     def test_match_and_smoke_ok(self):
         rpc = FakeRpc(views={"get_registered_count": b"2", "is_registered": b"true"})

@@ -218,8 +218,9 @@ def build_parser() -> argparse.ArgumentParser:
     gp.add_argument("--rpc-url", metavar="URL", help="override the public RPC endpoint for --network")
     gp.add_argument("--verify-deployed", metavar="ACCOUNT",
                     help="post-deploy check: compare view_code of ACCOUNT with --wasm and run --smoke views; exit 0 ok, 5 not")
-    gp.add_argument("--smoke", action="append", metavar="METHOD[:ARGS_JSON]",
-                    help="view method to call after --verify-deployed (repeatable; args default {}; init/migrate refused)")
+    gp.add_argument("--smoke", action="append", metavar="METHOD[:ARGS_JSON][=EXPECTED_JSON]",
+                    help="view method to call after --verify-deployed (repeatable; args default {}; init/migrate "
+                         "refused); with =EXPECTED_JSON the result must equal it, else exit 5")
     gp.add_argument("--network", choices=NETWORKS, default="testnet")
     gp.add_argument("--account", metavar="ID",
                     help="NEAR account to deploy to; with --wasm its current code is read (read-only view_code): "

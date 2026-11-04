@@ -210,13 +210,21 @@ class McpToolFunctionTests(unittest.TestCase):
                     mock.patch.dict(os.environ, {mcp_server.ALLOW_ANY_PATH_ENV: "1"}):
                 est = mcp_server.estimate_storage(str(w), "testnet")["storage_estimate"]
                 ver = mcp_server.verify_deployed("demo.testnet", str(w), "testnet", ["get_x"])
+                ver_ok = mcp_server.verify_deployed("demo.testnet", str(w), "testnet", ["get_x=3"])
+                ver_bad = mcp_server.verify_deployed("demo.testnet", str(w), "testnet", ["get_x=4"])
                 with self.assertRaises(mcp_server.ToolInputError):
                     mcp_server.verify_deployed("demo.testnet", str(w), "testnet", ["new"])
+                with self.assertRaises(mcp_server.ToolInputError):
+                    mcp_server.verify_deployed("demo.testnet", str(w), "testnet", ["get_x={"])
         self.assertEqual(est["code_bytes"], len(wasm_bytes))
         self.assertEqual(est["locked_near_for_code"], "0.0011")
         self.assertTrue(ver["verified"])
         self.assertEqual(ver["post_deploy"]["code_hash_on_chain"], hashlib.sha256(wasm_bytes).hexdigest())
         self.assertEqual(ver["post_deploy"]["smoke"], [{"view": "get_x", "ok": True, "result": 3}])
+        self.assertTrue(ver_ok["verified"])
+        self.assertEqual(ver_ok["post_deploy"]["smoke"], [{"view": "get_x", "expected": 3, "ok": True, "result": 3}])
+        self.assertFalse(ver_bad["verified"])
+        self.assertEqual(ver_bad["post_deploy"]["smoke"][0]["error"], "expected 4, got 3")
 
 
 if __name__ == "__main__":

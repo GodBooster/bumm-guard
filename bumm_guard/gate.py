@@ -4,7 +4,8 @@
 Exit codes: 0 clean, 2 refused/bad input, 3 DEPLOY BLOCKED (high/critical finding, a simulate
 report that does not match the wasm / has failed scenarios, or an upgrade without proof), 4 ``--execute`` but ``near`` not on PATH,
 5 ``near`` ran and failed (deploy mode) or post-deploy verification failed (``--verify-deployed`` mode:
-code hash mismatch, a failed smoke view, or RPC unreachable).
+code hash mismatch, a failed smoke view, a smoke view whose result differs from its ``=EXPECTED_JSON``,
+or RPC unreachable).
 
 Nothing is executed by default: the exact ``near contract deploy`` command (near-cli-rs 0.30
 syntax) is only printed. ``--execute`` runs it, testnet only. When the gate blocks, no deploy
@@ -732,6 +733,8 @@ def run_verify_deployed(account: str, wasm: str, network: str = "testnet", smoke
         out.errors.append(f"bumm-guard: could not fetch deployed code: {block['error']}")
     for sm in block["smoke"]:
         detail = json.dumps(sm["result"]) if sm["ok"] else sm.get("error", "failed")
+        if sm["ok"] and "expected" in sm:
+            detail += " (as expected)"
         out.lines.append(f"smoke {sm['view']}: {'ok' if sm['ok'] else 'FAILED'}: {detail}")
     out.lines.append("post-deploy verification " + ("passed" if ok else "FAILED"))
     report = base / REPORT_DIR / REPORT_NAME

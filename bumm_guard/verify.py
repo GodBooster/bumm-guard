@@ -23,21 +23,38 @@ class SmokeSpecError(ValueError):
     """A ``--smoke`` argument that is malformed or targets a non-view method."""
 
 
-def parse_smoke(spec: str) -> tuple[str, str]:
-    """``METHOD[:ARGS_JSON]`` -> ``(method, canonical args json)``; args default to ``{}``."""
-    method, sep, args = spec.partition(":")
+def parse_smoke(spec: str) -> tuple[str, str, str | None]:
+    """``METHOD[:ARGS_JSON][=EXPECTED_JSON]`` -> ``(method, args json, expected json or None)``.
+
+    Args default to ``{}``. With ``=EXPECTED`` the view result must equal that JSON value (compared as
+    parsed JSON, so ``{"a":1}`` and ``{ "a": 1 }`` are the same). The args JSON is read with a raw
+    decoder, so an ``=`` inside an args string does not start the expectation.
+    """
+    m = re.match(r"^([^:=]*)(.*)$", spec, re.S)
+    method, rest = m.group(1), m.group(2)
     if not _METHOD_RE.match(method):
         raise SmokeSpecError(f"invalid smoke method name: {method!r}")
     if _REFUSED.match(method):
         raise SmokeSpecError(f"refusing smoke call to {method!r}: smoke runs view methods only, "
                              "init/migrate are never called")
-    if not sep:
-        return method, "{}"
+    args = "{}"
+    if rest.startswith(":"):
+        try:
+            _, end = json.JSONDecoder().raw_decode(rest[1:].lstrip())
+        except ValueError as e:
+            raise SmokeSpecError(f"smoke args for {method} are not valid JSON: {e}") from None
+        head = rest[1:].lstrip()
+        args, rest = head[:end], head[end:].lstrip()
+        if rest and not rest.startswith("="):
+            raise SmokeSpecError(f"smoke args for {method}: unexpected text after the JSON: {rest!r}")
+    if not rest:
+        return method, args, None
+    expected = rest[1:]
     try:
-        json.loads(args)
+        json.loads(expected)
     except ValueError as e:
-        raise SmokeSpecError(f"smoke args for {method} are not valid JSON: {e}") from None
-    return method, args
+        raise SmokeSpecError(f"expected value for {method} is not valid JSON: {e}") from None
+    return method, args, expected
 
 
 def _decode_result(raw) -> object:
@@ -49,10 +66,15 @@ def _decode_result(raw) -> object:
         return text
 
 
-def _smoke_one(url: str, account: str, method: str, args: str) -> dict:
+def _smoke_one(url: str, account: str, method: str, args: str, expected: str | None = None) -> dict:
+    """One smoke view: ``{view, args?, expected?, ok, result | error}``. With ``expected`` (JSON text)
+    the call is ``ok`` only if its result equals that value; a mismatch keeps ``result`` and adds an
+    ``error`` saying what was expected."""
     entry: dict = {"view": method}
     if args != "{}":
         entry["args"] = json.loads(args)
+    if expected is not None:
+        entry["expected"] = json.loads(expected)
     try:
         r = rpc_call(url, "query", {"request_type": "call_function", "finality": "final", "account_id": account,
                                     "method_name": method,
@@ -62,6 +84,11 @@ def _smoke_one(url: str, account: str, method: str, args: str) -> dict:
     except (RpcError, KeyError, TypeError, ValueError) as e:
         entry["ok"] = False
         entry["error"] = str(e)
+        return entry
+    if expected is not None and entry["result"] != entry["expected"]:
+        entry["ok"] = False
+        entry["error"] = (f"expected {json.dumps(entry['expected'], sort_keys=True)}, "
+                          f"got {json.dumps(entry['result'], sort_keys=True)}")
     return entry
 
 
@@ -115,7 +142,8 @@ def verify_deployed(account: str, wasm: str | Path, network: str = "testnet", sm
                     rpc_url: str | None = None) -> dict:
     """The ``post_deploy`` block (docs/FORMATS.md §4). ``smoke`` entries must already parse (``parse_smoke``).
 
-    ``matches_artifact`` is true only if the on-chain code sha256 equals the sha256 of ``wasm``.
+    ``matches_artifact`` is true only if the on-chain code sha256 equals the sha256 of ``wasm``. A smoke
+    entry with an expectation (``METHOD=EXPECTED_JSON``) is ``ok`` only if the view returned that value.
     A transport failure or a missing contract gives ``code_hash_on_chain: null``, ``matches_artifact: false``
     and an ``error`` key (an extra key present only on failure).
     """
@@ -131,9 +159,9 @@ def verify_deployed(account: str, wasm: str | Path, network: str = "testnet", sm
         block["matches_artifact"] = block["code_hash_on_chain"] == local
     except (RpcError, KeyError, TypeError, ValueError) as e:
         block["error"] = str(e)
-        block["smoke"] = [{"view": m, "ok": False, "error": "not run: code could not be fetched"} for m, _ in parsed]
+        block["smoke"] = [{"view": m, "ok": False, "error": "not run: code could not be fetched"} for m, _, _ in parsed]
         return block
-    block["smoke"] = [_smoke_one(url, account, m, a) for m, a in parsed]
+    block["smoke"] = [_smoke_one(url, account, m, a, e) for m, a, e in parsed]
     return block
 
 

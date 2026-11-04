@@ -154,7 +154,7 @@ def verify_deployed(account: str, wasm: str, network: str = "testnet", smoke: li
     """Compare the code deployed at ``account`` with ``wasm`` and run view-only smoke calls (read-only)."""
     _check_wasm(wasm, network)
     if smoke is not None and (not isinstance(smoke, list) or not all(isinstance(x, str) for x in smoke)):
-        raise ToolInputError("smoke must be a list of 'METHOD' or 'METHOD:ARGS_JSON' strings")
+        raise ToolInputError("smoke must be a list of 'METHOD[:ARGS_JSON][=EXPECTED_JSON]' strings")
     if not isinstance(account, str) or not valid_account(account):
         raise ToolInputError(f"invalid NEAR account id: {account!r}")
     try:
@@ -251,8 +251,9 @@ def build_server():
 
     @server.tool(name="verify_deployed", description=(
         "After the HUMAN has deployed: fetch the code at `account` (RPC view_code), sha256 it and compare with the "
-        "local `wasm` (matches_artifact), and run each `smoke` entry ('METHOD' or 'METHOD:ARGS_JSON', args default {}) "
-        "as a VIEW call, recording ok/result or the error. READ-ONLY: never deploys, never signs, never calls init, "
+        "local `wasm` (matches_artifact), and run each `smoke` entry ('METHOD[:ARGS_JSON][=EXPECTED_JSON]', args "
+        "default {}; with =EXPECTED the view result must equal that JSON, else ok=false) as a VIEW call, recording "
+        "ok/result or the error. READ-ONLY: never deploys, never signs, never calls init, "
         "migrate or any change method (such smoke names are refused). A failing smoke is reported, not fixed."))
     @readable_errors
     def verify_deployed_tool(account: str, wasm: str, network: str = "testnet",
