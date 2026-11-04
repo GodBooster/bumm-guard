@@ -450,6 +450,8 @@ class McpGateDeployTests(Fixture):
         self.assertEqual(data["upgrade"]["scenario"], "with migrate")
         self.assertEqual(data["upgrade"]["post_upgrade_steps"], [{"index": 4, "kind": "view", "method": "get_registered_count"}])
         self.assertEqual(data["deploy"], {"status": "printed", "command": data["deploy_command"]})
+        self.assertIn("only view calls were made on the migrated state", " ".join(data["messages"]))
+
     def test_mcp_no_change(self):
         data = self.call(Node(code=NEW))
         self.assertTrue(data["passed"])

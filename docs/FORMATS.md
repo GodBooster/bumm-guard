@@ -174,6 +174,44 @@ deliberately failing code-only scenario is allowed next to the proof and noted).
 Added 2026-11-03: `migration_guard` (`{method, status, file, line}`, `null` without a migration call); `status` is
 `private`, `owner-check`, `not-found` (warning) or, when the gate blocked, `unprotected` / `ambiguous`.
 
+**Gate hardening (v0.3, 2026-11-04).** New fields in the gate report and in the MCP `gate_deploy` /
+`verify_deployed` results, and stricter proof acceptance:
+- `deploy` (top level, always present in a written report): `{"status": "printed" | "no-change", "command":
+  "near contract deploy …" | null}`. `printed`: the command was produced and printed (never run by the gate;
+  with `--execute` the report is written before `near` runs, so its outcome is only in the exit code).
+  `no-change`: the account already runs exactly `--wasm` (`view_code` hash = candidate hash): exit 0, the line
+  `NO CHANGE: account <acc> (<net>) already runs this exact wasm (<hash>); nothing to deploy`, no command,
+  `upgrade: null`, `simulate: null` (a report given with it is not checked against the wasm, only used for the
+  storage estimate). The MCP result carries the same block as `deploy`, with `deploy_command: null`.
+- A proof is accepted only when its upgrade step's `expected` is `"ok"` **and** `actual.status` is
+  `"success"`. A scenario that expected the upgrade to fail (`{"fail_contains": …}`), saw it rolled back and
+  therefore *passed* proves nothing; it is skipped with the note `upgrade scenario '<name>': the upgrade
+  transaction did not succeed (status <s>[, expected <e>]); a rolled-back upgrade proves nothing`.
+- `upgrade.post_upgrade_steps`: every step after the upgrade step, in order, as `[{index, kind, method}]`
+  (`kind` is `view`, `call` or `balance`; `method` is the account for a `balance` step). Printed as
+  `proved after upgrade (<n> step(s)): view deal_count, call refund, …`. Acceptance is unchanged (≥1 step);
+  when none of them is a `call` the gate prints `warning: only view calls were made on the migrated state; no
+  state change was exercised` and still passes.
+- Migrate args must be literal: if any string value in the proof's `migrate.args` (recursively) equals a
+  scenario alias, the gate blocks (exit 3, `DEPLOY BLOCKED: migrate args of scenario '<name>' reference
+  sandbox-only alias(es) 'alice': …`). Aliases are the keys of the scenario's `accounts` as bumm-sim records them
+  in the §3 report (`{"alice": "alice.test.near", …, "contract": "contract.test.near"}`, not shown in the §3
+  example above) plus `contract`; a report without `accounts` falls back to the `by` / `account` names of its
+  steps. The runner resolves aliases only inside the sandbox; the printed command would send them as written.
+- `upgrade_check` (MCP `gate_deploy` result when an upgrade is refused): `proven_pairs[]` entries gain
+  `upgrade_status` (the upgrade step's `actual.status`) and `upgrade_succeeded` (expectation `ok` and status
+  `success`); `status` gains `proof-upgrade-failed` (the pair is in the report but in no scenario did the upgrade
+  transaction succeed) next to `no-report`, `no-proof` and `report-proves-other-pair`.
+- `migration_guard.status` gains `owner-check-unknown`: a `predecessor_account_id()` comparison was seen in an
+  `if`/`match` but no rejection (`panic!`, `env::panic_str`, `require!`/`assert!` family, `return`,
+  `unreachable!`) was recognised in its body, or the comparison is a tautology (the same expression on both
+  sides). It blocks like `unprotected`, with a message that names the cause and suggests `#[private]`.
+  `owner-check` now means a recognised rejection: the comparison inside `require!`/`assert!`/`assert_eq!`/
+  `assert_ne!`/`require_eq!`/`require_ne!`, or an `if`/`match` with such a rejection in its body (any branch).
+- `post_deploy.smoke[]`: `--smoke METHOD[:ARGS_JSON][=EXPECTED_JSON]` (old forms unchanged). With an expectation
+  the entry carries `expected` (parsed JSON) and is `ok` only if `result` equals it; on a mismatch `result` stays
+  and `error` is `expected <json>, got <json>` (exit 5). Entry shape: `{view, args?, expected?, ok, result | error}`.
+
 ## 5. ABI panel inputs (`ui/`, static page, no backend)
 
 Reads `artifact.abi` (or a URL to it) plus `{network, contract_id}`. Renders one form

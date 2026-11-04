@@ -6,9 +6,9 @@ Repository: `GodBooster/bumm-guard` (private until 2026-11-13), `main` at `4b5c4
 
 ## 1. The one sentence and the one failure
 
-**BUMM Guard proves that a change to a NEAR contract works on the state that is already deployed, before an agent or a human deploys it.**
+**BUMM Guard proves that a change to a NEAR contract works on state written by the code that is already deployed, before an agent or a human deploys it: the scenario's state, bound to the exact pair of code hashes (on-chain sha256 → candidate sha256).**
 
-The failure it targets is specific to NEAR's storage model. Contract state is Borsh-serialised into the account's key-value store. When new code with a different struct layout is deployed over an account that holds state written by the old layout, the deploy transaction *succeeds*, and then:
+The failure it targets is shown here for NEAR Borsh state (the general problem, new code reading state written by old code, exists on any chain with upgradeable contracts; Borsh deserialization of a changed struct is its NEAR shape). Contract state is Borsh-serialised into the account's key-value store. When new code with a different struct layout is deployed over an account that holds state written by the old layout, the deploy transaction *succeeds*, and then:
 
 - if the **root struct** changed, every method panics with `Cannot deserialize the contract state.` (near-sdk reads the root on every call);
 - if only a **record inside a collection** changed (`IterableMap<u64, Deal>`, etc.), the root still loads, "shallow" views keep answering, and every method that reads a record panics with `Cannot deserialize element`.
@@ -80,15 +80,15 @@ Fixtures are pinned to `rustc 1.85.0` via `rust-toolchain.toml` (near-sdk 5.17.2
 2. If a simulate report is given: it must be for this exact wasm (`wasm_sha256` in the report = sha256 of `--wasm`), else blocked. Binding by hash is what stops "I tested *a* build".
 3. `view_code(A)`:
    - no code → `view_account`: if the account uses a **global contract** (NEP-591, `global_contract_hash` / `global_contract_account_id`) → blocked (out of scope, refused rather than treated as empty); else `fresh deploy`, no upgrade proof required (a report with upgrade scenarios only triggers a warning).
-   - code hash = candidate hash → `already runs this exact wasm … deploying it again changes no code`; treated as a no-op redeploy (passes, warning if no report). *Verified live on 2026-11-04.*
-   - code hash ≠ candidate → **this is an upgrade**. `find_upgrade_proof` searches the report for a *passing* scenario whose `upgrade` step went from exactly the on-chain hash to exactly the candidate hash, recorded the deployed `code_sha256`, and has at least one step after the upgrade. None → blocked, with a structured `upgrade_check` (`status`: `no-report` / `no-proof` / `report-proves-other-pair`, plus every pair the report does prove).
-4. If the proof carries a `migrate` call: `migration_guard` finds the method in the candidate crate's sources and requires `#[private]` or a `predecessor_account_id()` check in the first 15 lines of its body. Unprotected → blocked (anyone could call `migrate` after the deploy). Not found → warning (the gate cannot vouch for a wasm built elsewhere). Ambiguous (several definitions) → blocked.
+   - code hash = candidate hash → `NO CHANGE: account … already runs this exact wasm (…); nothing to deploy`: exit 0, no command, `deploy.status: "no-change"` in the report (since 2026-11-04; before that the gate printed a no-op redeploy command, *verified live on 2026-11-04*).
+   - code hash ≠ candidate → **this is an upgrade**. `find_upgrade_proof` searches the report for a *passing* scenario whose `upgrade` step went from exactly the on-chain hash to exactly the candidate hash, whose upgrade transaction succeeded (`expected: "ok"`, `actual.status: success`; a rolled-back upgrade proves nothing), recorded the deployed `code_sha256`, and has at least one step after the upgrade. None → blocked, with a structured `upgrade_check` (`status`: `no-report` / `no-proof` / `report-proves-other-pair` / `proof-upgrade-failed`, plus every pair the report does prove with its `upgrade_status`). A proof lists its steps after the upgrade (`proved after upgrade: …`, `upgrade.post_upgrade_steps`); only views there is a warning, not a block. Migrate args that name a scenario alias (`alice`) block: the sandbox resolved them, testnet would not.
+4. If the proof carries a `migrate` call: `migration_guard` finds the method in the candidate crate's sources and requires `#[private]` or a `predecessor_account_id()` check in the first 15 lines of its body whose rejection branch is recognised (`require!`/`assert!` family, or an `if`/`match` with `panic!`/`env::panic_str`/`return`/`unreachable!` in its body). Unprotected, or `owner-check-unknown` (a comparison without a recognised rejection, or a tautology) → blocked (anyone could call `migrate` after the deploy). Not found → warning (the gate cannot vouch for a wasm built elsewhere). Ambiguous (several definitions) → blocked.
 5. `--estimate-storage`: reads `EXPERIMENTAL_protocol_config` for the per-byte price and the account's balance/`storage_usage`; prints the NEAR that the code will lock (a locked balance, not a fee).
 6. Pass: writes `.bumm-guard/gate-report.json` (`FORMATS.md` §4: scan summary, wasm/abi hashes, simulate binding, `upgrade` block, `migration_guard`, storage, account) and prints exactly one `near contract deploy …` command — `without-init-call` for a fresh deploy, `with-init-call <migrate> json-args '…' prepaid-gas '…'` for a proven upgrade, i.e. deploy + migrate in one batch.
 
 `--execute` runs the printed command; it is off by default, refuses `--network mainnet` (exit 2), requires `near` on PATH, and is not exposed through MCP. The repository ships no key and no account.
 
-`gate --verify-deployed A --wasm W --smoke M[:ARGS]…` is the post-deploy half: `view_code` hash vs artifact hash (`MATCH`/`MISMATCH`), then the given view calls; exit 5 on failure. Reports are written to the same file.
+`gate --verify-deployed A --wasm W --smoke M[:ARGS][=EXPECTED]…` is the post-deploy half: `view_code` hash vs artifact hash (`MATCH`/`MISMATCH`), then the given view calls, each compared with its `=EXPECTED` JSON when one is given; exit 5 on failure. Reports are written to the same file.
 
 ### 2.4 MCP server and agent client (`bumm_guard/mcp_server.py`, `clients/claude-plugin`, `.mcp.json`)
 
@@ -134,8 +134,8 @@ Nothing in the repository holds or uses a key. In every case below the gate prin
 
 ## 6. Honest limits (also in README "Honest limits")
 
-- Detection, fixes and the migration guard are regex/brace level: no macro expansion, no name resolution; helper-delegated checks (`self.assert_owner()`), DAO or access-key policies are not recognised — the gate then blocks a possibly safe contract (add `#[private]` to pass).
-- The sandbox state is the scenario's own transactions, not a copy of live state; the proof covers the listed steps on that state.
+- Detection, fixes and the migration guard are regex/brace level: no macro expansion, no name resolution; helper-delegated checks (`self.assert_owner()`), DAO or access-key policies are not recognised, and a `predecessor_account_id()` comparison without a recognised rejection branch is `owner-check-unknown` — the gate then blocks a possibly safe contract (add `#[private]` to pass).
+- The sandbox state is the scenario's own transactions, not a copy of live state; the proof covers the listed post-upgrade steps on that scenario-made state (printed and recorded as `post_upgrade_steps`), and a scenario with only views after the upgrade is accepted with a warning.
 - The `upgrade` step models a full-access-key batch by the contract account; not DAO-controlled upgrades; a cross-contract call inside `migrate` is not rolled back with a failing batch.
 - Linux-only real runs; the author's two contract pairs only; no third-party contract through the runner; wallet path of the panel unverified; no mainnet.
 - The gate is not an on-chain guarantee: anyone with shell access can run `near contract deploy` by hand. It is the step a coding agent's workflow goes through.

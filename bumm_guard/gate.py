@@ -17,12 +17,17 @@ No code: a fresh deploy, judged as before, unless the account uses a global cont
 read-only ``view_account``), which blocks: its upgrades are not supported. Other code: an upgrade of a live contract with state,
 allowed only if ``--simulate-report`` holds a passing scenario with an ``upgrade`` step
 (docs/FORMATS.md §2a) from exactly that on-chain code to exactly this wasm, that records the deployed
-code hash and has at least one step after the upgrade; the printed command then
-repeats that scenario's migration call (``with-init-call``) or has none (``without-init-call``).
-When the proof has a migration call, ``migration_guard`` also checks in the crate's Rust sources that
-the migration method is not callable by anyone (``#[private]`` or a ``predecessor_account_id()`` check
-in its body); an unprotected one blocks, because after the upgrade any account could call it and
-rewrite the state.
+code hash, whose upgrade transaction itself succeeded (a rolled-back upgrade proves nothing) and
+that has at least one step after the upgrade; the steps after the upgrade are listed in the output and
+in the report (``upgrade.post_upgrade_steps``), with a warning when none of them is a ``call``. The
+printed command then repeats that scenario's migration call (``with-init-call``) or has none
+(``without-init-call``); migrate args that name a scenario alias (``"alice"``, resolved only inside the
+sandbox) block. When the proof has a migration call, ``migration_guard`` also checks in the crate's
+Rust sources that the migration method is not callable by anyone (``#[private]`` or a recognised
+``predecessor_account_id()`` guard in its body); an unprotected one, or one whose predecessor
+comparison has no recognised rejection branch (``owner-check-unknown``), blocks, because after the
+upgrade any account could call it and rewrite the state. The same code as the candidate on the
+account: ``NO CHANGE``, exit 0, no command (``deploy.status: "no-change"`` in the report).
 """
 
 from __future__ import annotations
