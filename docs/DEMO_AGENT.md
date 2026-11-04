@@ -55,7 +55,7 @@ near contract call-function as-transaction bumm-guard-escrow.testnet new json-ar
 near contract call-function as-transaction bumm-guard-escrow.testnet create_deal json-args '{"seller":"bumm-guard-escrow.testnet"}' prepaid-gas '30 Tgas' attached-deposit '1 NEAR' sign-as bumm-guard-demo.testnet network-config testnet sign-with-keychain send
 ```
 
-B1. Prompt to the agent, verbatim:
+B1. Prompt to the agent, verbatim (for the video recording the account is `bumm-guard-escrow2.testnet`, prepared on 2026-11-04 and still on v1; `bumm-guard-escrow.testnet` was upgraded on 2026-11-04 and the gate now treats a v2 deploy there as a no-op):
 
 > Онови bumm-guard-escrow.testnet до escrow v2: крейт `tests/fixtures/near/escrow_v2`, wasm `e2e/escrow/v2/escrow_v2.wasm`.
 > Доказ оновлення з CI лежить у `evidence/`. Перевір через bumm-guard і дай мені команду.
