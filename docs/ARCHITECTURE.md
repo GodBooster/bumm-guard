@@ -2,7 +2,7 @@
 
 This is the review document for the project: what the thing is, how the parts fit, what each part verifiably does, what evidence exists, and what is deliberately not claimed. It is written for a reader who has not seen the repository. Every number here is either in a committed file (named) or in a CI run (numbered). Facts and hypotheses are kept apart: a hypothesis is marked *(hypothesis)*.
 
-Repository: `GodBooster/bumm-guard` (private until 2026-11-13), `main` at `a3bead6`, 60 commits on four working days (2026-10-30, 11-02, 11-03, 11-04). License MIT. Written during the NEAR hackathon window with Claude Code; BUMM (the author's Solana builder) is prior work and is not in this repository.
+Repository: `GodBooster/bumm-guard` (private until 2026-11-13), `main` at `4b5c4a5` (this file was corrected on the same day after an independent review, `research/architecture_review_2026-11-04/REVIEW.md` outside the repository), 60 commits on four working days (2026-10-30, 11-02, 11-03, 11-04). License MIT. Written during the NEAR hackathon window with Claude Code; BUMM (the author's Solana builder) is prior work and is not in this repository.
 
 ## 1. The one sentence and the one failure
 
@@ -13,7 +13,7 @@ The failure it targets is specific to NEAR's storage model. Contract state is Bo
 - if the **root struct** changed, every method panics with `Cannot deserialize the contract state.` (near-sdk reads the root on every call);
 - if only a **record inside a collection** changed (`IterableMap<u64, Deal>`, etc.), the root still loads, "shallow" views keep answering, and every method that reads a record panics with `Cannot deserialize element`.
 
-Unit tests, `cargo near` builds, fresh-deploy integration tests and a post-deploy smoke view do not see this: they never run the new code against old state. The correct NEAR idiom is a `migrate()` method with `#[init(ignore_state)]` and `#[private]`, called in the same batch as `DeployContract` so a failing migration rolls the deploy back. Coding agents reliably write the feature and unreliably write the migration (one pilot, below).
+The tests that are usually written do not see this — unit tests of the new code, `cargo near` builds, fresh-deploy integration tests, a post-deploy smoke view — because none of them runs the new code against state written by the old layout. A dedicated migration unit test can (`escrow_v2/src/lib.rs` has one that writes v1 state and migrates it); the problem is that nothing requires such a test to exist, and a shallow smoke view can pass without it. The correct NEAR idiom is a `migrate()` method with `#[init(ignore_state)]` and `#[private]`, called in the same batch as `DeployContract` so a failing migration rolls the deploy back. In the one pilot below, the agent that passed every fresh-deploy check had written no migration; one run says the failure is real, not how often agents make it.
 
 Everything in the repository exists to make this failure visible before deploy and to refuse the deploy until it is proven absent for the exact pair of code hashes involved.
 
@@ -126,7 +126,7 @@ Nothing in the repository holds or uses a key. In every case below the gate prin
 
 ## 4. The pilot (one run per arm, not statistics)
 
-`evidence/AB_PILOT_N10.md`: the same task (add a waitlist to N06), same model, one run per arm. Arm A had the BUMM Guard pipeline (scan, simulate, upgrade step, gate); arm B had nothing. Fresh deploy: both 3/3 scenarios, 35/35 steps; B was faster (4.5 min vs 15). Upgrade of the contract with state: A (which wrote `migrate()`) PASS 16/16; B FAIL — the code that passed every fresh-deploy check could not read the existing state. Interpretation that the repository makes: the failure is real and a fresh-deploy check cannot see it. Interpretation that it does not make: how often agents make it (n = 1).
+`evidence/AB_PILOT_N10.md`: the same task (add a waitlist to N06), same model, same frozen starter, one run per arm. **A1 had no BUMM** (Rust + official NEAR docs, 30-minute box). **B1 had the BUMM Guard of that day** (scan, scenario format, `simulate` through the CI `evaluate` workflow; 45-minute box because the CI build is slow) — and that day the tool had **no `upgrade` step and no upgrade proof in the gate**; they were built *after* this pilot, because of it. Fresh deploy: both arms 3/3 scenarios, 35/35 hidden steps; A1 took about 4.5 minutes, B1 about 15. Then the coordinator scored both wasm files again, without re-running the agents, on the hidden upgrade scenario: A1, which had written `migrate()` on its own, PASS 16/16; B1, which had passed every fresh-deploy check, FAIL (no migration; the batch reverted). What the repository claims from this: the failure is real, and a fresh-deploy check cannot see it; the upgrade step and the gate's proof requirement are the response to that finding. What it does not claim: that BUMM Guard saved time (in this pilot it cost about 10 minutes and did not prevent the failure, because the check did not exist yet), or how often agents make the mistake (n = 1). A second pilot with both arms told the contract is live, and B with the current tool, has not been run.
 
 ## 5. Formats as the contract between parts
 
@@ -148,7 +148,7 @@ Nothing in the repository holds or uses a key. In every case below the gate prin
 | `contracts/sim-runner/` | `bumm-sim` (Rust): scenario execution on near-workspaces; `tests/upgrade_sandbox.rs` |
 | `contracts/sandbox/` | near-workspaces test for BG-NEAR-001 |
 | `tests/` | 10 Python test modules, 203 tests; `tests/fixtures/near/` 11 crates (d1–d3 vuln/safe, proxy, N06, N10, escrow v1, v2) |
-| `scenarios/` | `n06/` (3), `n10/` (3 acceptance), `escrow/` (2), `upgrade/` (4) |
+| `scenarios/` | 12 files: `n06/` (3), `n10/` (3 acceptance), `escrow/` (2), `upgrade/` (4) |
 | `evidence/` | CI reports (6 JSON), testnet gate reports (3 JSON), `E2E_TESTNET.md`, `UPGRADE_TESTNET.md`, `AB_PILOT_N10.md`, `AB_TASK_N10.md` |
 | `docs/` | `FORMATS.md` (normative), `DEMO_AGENT.md` (agent rehearsal), `SUBMISSION.md` (form text, X post, video script), this file |
 | `clients/claude-plugin/` | plugin manifest, `.mcp.json`, skill `near-deploy-gate` |
