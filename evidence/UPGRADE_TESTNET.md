@@ -16,3 +16,25 @@ that pair of code hashes.
 | 8 | `bumm-guard gate --verify-deployed` | on-chain code sha256 `8526195a…` = proven N10 (**MATCH**); `get_capacity` 2, `get_registered_count` 1, `get_registered` ["bumm-guard-demo.testnet"] (**the registration made before the upgrade survived**), `get_waitlist` [] (new method answers), `get_seats_left` 1, `is_registered` true → `testnet-upgrade-gate-report-2026-11-03.json` |
 
 Not shown: a waitlist entry on testnet (needs a second and third account), the panel's wallet path.
+
+# Live upgrade escrow v1 → v2 on NEAR testnet (2026-11-04)
+
+A second, unrelated contract pair on a fresh account `bumm-guard-escrow.testnet`. The v1→v2 change
+alters the format *inside* a map record (`IterableMap<u64, Deal>`), so a code-only upgrade keeps
+`deal_count` working while `get_deal` fails with `Cannot deserialize element` — the case fresh-deploy
+tests cannot see. The owner ran every signing command with their own key; the gate only printed them.
+
+| Step | What | Evidence |
+|---|---|---|
+| 1 | Account created via faucet | tx [`445fJfaBSfMtbJxxexBu9vqD4cdoThoVfYJpUy5xfuL5`](https://explorer.testnet.near.org/transactions/445fJfaBSfMtbJxxexBu9vqD4cdoThoVfYJpUy5xfuL5), 10 NEAR, no code |
+| 2 | Gate for the fresh deploy (`--estimate-storage`) | `has no contract code: fresh deploy`; wasm 192319 bytes locks ≈1.92 NEAR; printed `near contract deploy … without-init-call …` |
+| 3 | Owner deployed escrow v1 (CI build, sha256 `ecd8a805ea3252f1ffa2a285964d3e035d6e3c6be16e6974c33c479c3e034443`) | tx [`9xCvJr6FLY2R6uQduWQQSe4qeT4cVagqaSfr614p28cj`](https://explorer.testnet.near.org/transactions/9xCvJr6FLY2R6uQduWQQSe4qeT4cVagqaSfr614p28cj), 1.7 Tgas |
+| 4 | `new`, then one deal: buyer `bumm-guard-demo.testnet`, seller `bumm-guard-escrow.testnet`, 1 NEAR | tx [`GQhoMipDXparkuJJ1BEw3bVXfCKAv6aWz29bmSMngxFQ`](https://explorer.testnet.near.org/transactions/GQhoMipDXparkuJJ1BEw3bVXfCKAv6aWz29bmSMngxFQ), tx [`F3XBjpq73hZHuCZFZEFFgweNYGSVfk3sHArerXt9XVMW`](https://explorer.testnet.near.org/transactions/F3XBjpq73hZHuCZFZEFFgweNYGSVfk3sHArerXt9XVMW) (returns deal id `0`) |
+| 5 | `--verify-deployed` on v1 before the upgrade | code `ecd8a805…` **MATCH**; `deal_count` 1; `get_deal(0)` = `{buyer: bumm-guard-demo.testnet, seller: bumm-guard-escrow.testnet, amount: 1 NEAR, released: false}` (v1 record format) |
+| 6 | Gate for v2, no proof | `DEPLOY BLOCKED: account bumm-guard-escrow.testnet already runs code ecd8a805…; this is an upgrade and no passing upgrade scenario proves ecd8a805… -> 13425a04…` (exit 3) |
+| 7 | Gate with the failing code-only CI report (`escrow-upgrade-code-only-report-ci.json`) | `DEPLOY BLOCKED` … `upgrade scenario 'Upgrade escrow v1 → v2 (code-only upgrade) …' for this pair did not pass` (exit 3) |
+| 8 | Gate with the passing migrate proof (`escrow-upgrade-with-migrate-report-ci.json`) | passed: `upgrade … ecd8a805… -> 13425a04…, proved by passing scenario '… (upgrade with migrate()) …'; migration migrate({}) in the same transaction`; `migration migrate: #[private] (src/lib.rs:118)`; printed `near contract deploy bumm-guard-escrow.testnet use-file e2e/escrow/v2/escrow_v2.wasm with-init-call migrate json-args '{}' prepaid-gas '100 Tgas' …` |
+| 9 | Owner ran the printed command (deploy + `migrate` in one transaction) | tx [`DPgBviLp8DCPF2FiVG9jXigHJaCgNviqni17odxiQ4Xm`](https://explorer.testnet.near.org/transactions/DPgBviLp8DCPF2FiVG9jXigHJaCgNviqni17odxiQ4Xm), 2.0 Tgas, fee 0.00019 NEAR |
+| 10 | `--verify-deployed` on v2 | code `13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013` = proven v2 (**MATCH**); `deal_count` 1; `get_deal(0)` = `{…, status: "Funded", created_at_ms: 0}` — **the deal made on v1 is readable in the v2 format**, with the migration defaults → `testnet-escrow-upgrade-gate-report-2026-11-04.json` |
+
+Not shown: `release`/`refund` on testnet after the upgrade (the sandbox scenario covers them).

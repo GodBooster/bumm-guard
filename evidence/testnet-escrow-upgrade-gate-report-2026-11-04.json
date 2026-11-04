@@ -1,0 +1,46 @@
+{
+  "tool": "bumm-guard",
+  "version": "0.5.0",
+  "timestamp_utc": "2026-11-04T11:19:40Z",
+  "network": "testnet",
+  "account": "bumm-guard-escrow.testnet",
+  "wasm": {
+    "path": "e2e/escrow/v2/escrow_v2.wasm",
+    "sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013",
+    "exists": true
+  },
+  "artifact": {
+    "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013",
+    "abi_sha256": null
+  },
+  "simulate": null,
+  "storage_estimate": null,
+  "post_deploy": {
+    "account": "bumm-guard-escrow.testnet",
+    "code_hash_on_chain": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013",
+    "matches_artifact": true,
+    "smoke": [
+      {
+        "view": "deal_count",
+        "ok": true,
+        "result": 1
+      },
+      {
+        "view": "get_deal",
+        "args": {
+          "id": 0
+        },
+        "ok": true,
+        "result": {
+          "id": 0,
+          "buyer": "bumm-guard-demo.testnet",
+          "seller": "bumm-guard-escrow.testnet",
+          "amount": "1000000000000000000000000",
+          "status": "Funded",
+          "created_at_ms": 0
+        }
+      }
+    ],
+    "note": "init is never re-called; a contract that fails the smoke view is reported, not fixed"
+  }
+}
