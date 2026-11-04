@@ -227,7 +227,9 @@ class UpgradeGateTests(Fixture):
         self.assertIn("proved by passing scenario 'with migrate'", out)
         self.assertEqual(self.gate_report()["upgrade"], {
             "onchain_code_sha256": OLD_SHA, "candidate_sha256": NEW_SHA, "scenario": "with migrate",
-            "migrate": {"method": "migrate", "args": {}, "gas": "100 Tgas"}, "passed": True})
+            "migrate": {"method": "migrate", "args": {}, "gas": "100 Tgas"}, "passed": True,
+            "post_upgrade_steps": [{"index": 4, "kind": "view", "method": "get_registered_count"}]})
+        self.assertEqual(self.gate_report()["deploy"], {"status": "printed", "command": want})
 
     def test_upgrade_scenario_without_steps_after_upgrade_blocks(self):
         sc = upgrade_scenario(after=False)
@@ -302,6 +304,28 @@ class UpgradeGateTests(Fixture):
         self.assertIn("without-init-call", dep["command"])
         self.assertIn("  " + dep["command"], out)
 
+    # --- (d) what was proved after the upgrade is listed; views only is a warning
+
+    def test_post_upgrade_steps_listed_and_views_only_warns(self):
+        code, out, _ = self.gate(Node(code=OLD), report(upgrade_scenario()))
+        self.assertEqual(code, 0, out)
+        self.assertIn("proved after upgrade (1 step(s)): view get_registered_count", out)
+        self.assertIn("warning: only view calls were made on the migrated state; no state change was exercised", out)
+        self.assertEqual(self.gate_report()["upgrade"]["post_upgrade_steps"],
+                         [{"index": 4, "kind": "view", "method": "get_registered_count"}])
+
+    def test_post_upgrade_call_step_silences_the_warning(self):
+        sc = upgrade_scenario()
+        sc["steps"] += [{"index": 5, "kind": "call", "method": "register", "by": "dave", "passed": True,
+                         "expected": "ok", "actual": {"status": "success"}},
+                        {"index": 6, "kind": "balance", "account": "contract", "passed": True,
+                         "expected": {"at_least": "1 NEAR"}, "actual": {"status": "success", "value": "1"}},
+                        {"index": 2, "kind": "call", "method": "register", "by": "alice", "passed": True}]
+        code, out, _ = self.gate(Node(code=OLD), report(sc))
+        self.assertEqual(code, 0, out)
+        self.assertIn("proved after upgrade (3 step(s)): view get_registered_count, call register, balance contract", out)
+        self.assertNotIn("only view calls", out)
+        self.assertEqual([st["index"] for st in self.gate_report()["upgrade"]["post_upgrade_steps"]], [4, 5, 6])
 
     def test_rpc_down_blocks(self):
         code, out, _ = self.gate(Node(down=True))
@@ -359,6 +383,7 @@ class McpGateDeployTests(Fixture):
         self.assertFalse(data["deploy_executed"])
         self.assertIn("with-init-call migrate json-args '{}' prepaid-gas '100 Tgas'", data["deploy_command"])
         self.assertEqual(data["upgrade"]["scenario"], "with migrate")
+        self.assertEqual(data["upgrade"]["post_upgrade_steps"], [{"index": 4, "kind": "view", "method": "get_registered_count"}])
         self.assertEqual(data["deploy"], {"status": "printed", "command": data["deploy_command"]})
     def test_mcp_no_change(self):
         data = self.call(Node(code=NEW))

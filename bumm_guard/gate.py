@@ -165,6 +165,20 @@ def _is_int(v) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
+def _post_upgrade_steps(sc: dict, up_idx) -> list[dict]:
+    """Every step after the upgrade step as ``{index, kind, method}`` (``method`` is the account
+    for a ``balance`` step)."""
+    if not _is_int(up_idx):
+        return []
+    out = []
+    for st in sc.get("steps") or []:
+        if not isinstance(st, dict) or not _is_int(st.get("index")) or st["index"] <= up_idx:
+            continue
+        out.append({"index": st["index"], "kind": st.get("kind"),
+                    "method": st.get("method") if st.get("kind") != "balance" else st.get("account")})
+    return out
+
+
 def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | None, list[str]]:
     """The first passing scenario of a §3 report whose upgrade step goes from ``onchain`` (the
     scenario's ``wasm_sha256``) to ``candidate`` (``upgrade_wasm_sha256`` and the step's
@@ -181,9 +195,7 @@ def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | 
             notes.append(f"upgrade scenario {name!r} proves {frm} -> {to}, not {onchain} -> {candidate}")
             continue
         step = _upgrade_steps(sc)[0]
-        up_idx = step.get("index")
-        later = [st for st in sc.get("steps") or [] if isinstance(st, dict) and _is_int(st.get("index"))
-                 and _is_int(up_idx) and st["index"] > up_idx]
+        later = _post_upgrade_steps(sc, step.get("index"))
         if not later:
             notes.append(f"upgrade scenario {name!r} has no steps after the upgrade: "
                          "nothing was proven on the migrated state")
@@ -207,7 +219,7 @@ def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | 
         proofs.append({"onchain_code_sha256": onchain, "candidate_sha256": candidate, "scenario": name,
                        "migrate": {"method": m["method"], "args": m.get("args") or {}, "gas": m.get("gas")}
                        if m else None,
-                       "passed": True})
+                       "passed": True, "post_upgrade_steps": later})
     if len({json.dumps(p["migrate"], sort_keys=True) for p in proofs}) > 1:
         notes.append(f"several passing upgrade scenarios with different migrations; using {proofs[0]['scenario']!r}")
     return (proofs[0] if proofs else None), notes
@@ -421,6 +433,12 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
                              + (f"migration {m['method']}({json.dumps(m['args'])}) in the same transaction"
                                 if m else "code only (no migration call)"))
             out.lines.extend(f"note: {n}" for n in notes)
+            steps = upgrade["post_upgrade_steps"]
+            out.lines.append(f"proved after upgrade ({len(steps)} step(s)): "
+                             + ", ".join(f"{st['kind']} {st['method']}" for st in steps))
+            if not any(st["kind"] == "call" for st in steps):
+                out.lines.append("warning: only view calls were made on the migrated state; no state change "
+                                 "was exercised")
             if m:
                 status, detail = migration_guard(crate, m["method"])
                 data["migration_guard"] = {"method": m["method"], "status": status,
