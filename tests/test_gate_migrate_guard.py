@@ -66,6 +66,32 @@ IF_PANIC_CHECK = OWNER_CHECK.replace('require!(env::predecessor_account_id() == 
 
 SIGNER_CHECK = OWNER_CHECK.replace("predecessor_account_id", "signer_account_id")
 
+GUARD_LINE = 'require!(env::predecessor_account_id() == old.owner, "only owner");'
+# recognised: the comparison is followed by a rejection in the if/match body (or an else branch)
+IF_RETURN = OWNER_CHECK.replace(GUARD_LINE, 'if env::predecessor_account_id() != old.owner { return Self { owner: old.owner, n: 0 }; }')
+IF_UNREACHABLE = OWNER_CHECK.replace(GUARD_LINE, 'if env::predecessor_account_id() != old.owner { unreachable!("only owner") }')
+IF_ELSE_PANIC = OWNER_CHECK.replace(GUARD_LINE, 'if env::predecessor_account_id() == old.owner { let _ok = 1; } else { panic!("only owner"); }')
+IF_ELSE_IF_REQUIRE = OWNER_CHECK.replace(GUARD_LINE, 'if env::predecessor_account_id() == old.owner { let _ok = 1; }\n'
+                                         '        else if old.n > 0 { require!(false, "no"); }')
+MATCH_PANIC = OWNER_CHECK.replace(GUARD_LINE, 'match env::predecessor_account_id() {\n'
+                                  '            o if o == old.owner => {}\n'
+                                  '            _ => env::panic_str("only owner"),\n        }')
+IF_PANIC_MULTILINE = OWNER_CHECK.replace(GUARD_LINE, 'if env::predecessor_account_id() != old.owner {\n'
+                                         '            env::log_str("refused");\n            env::panic_str("only owner");\n        }')
+REQUIRE_NE = OWNER_CHECK.replace(GUARD_LINE, 'require_ne!(env::predecessor_account_id(), old.owner, "x");')
+# unknown: a comparison was seen but nothing rejects, or it is a tautology
+IF_NO_REJECT = OWNER_CHECK.replace(GUARD_LINE, 'if env::predecessor_account_id() == old.owner { env::log_str("owner"); }')
+IF_EMPTY = OWNER_CHECK.replace(GUARD_LINE, 'if env::predecessor_account_id() == old.owner { }')
+MATCH_NO_REJECT = OWNER_CHECK.replace(GUARD_LINE, 'match env::predecessor_account_id() { _ => env::log_str("hi") }')
+TAUT_REQUIRE = OWNER_CHECK.replace(GUARD_LINE, 'require!(env::predecessor_account_id() == env::predecessor_account_id(), "x");')
+TAUT_ASSERT_EQ = OWNER_CHECK.replace(GUARD_LINE, 'assert_eq!(env::predecessor_account_id(), env::predecessor_account_id());')
+TAUT_IF_PANIC = OWNER_CHECK.replace(GUARD_LINE, 'if env::predecessor_account_id() != env::predecessor_account_id() { panic!("never"); }')
+TAUT_SPACING = OWNER_CHECK.replace(GUARD_LINE, 'require!(env::predecessor_account_id()==env :: predecessor_account_id ( ), "x");')
+# an unknown comparison followed by a recognised one: recognised wins
+UNKNOWN_THEN_GUARD = OWNER_CHECK.replace(GUARD_LINE, 'if env::predecessor_account_id() == old.owner { env::log_str("o"); }\n        ' + GUARD_LINE)
+# the predecessor only in a let: no guard position at all
+LET_ONLY = OWNER_CHECK.replace(GUARD_LINE, 'let _caller = env::predecessor_account_id();')
+
 UNPROTECTED = """    #[init(ignore_state)]
     pub fn migrate() -> Self {
         let old: C = env::state_read().unwrap_or_else(|| env::panic_str("no state"));
@@ -115,6 +141,30 @@ class MigrationGuardFunctionTests(unittest.TestCase):
 
     def test_signer_check_does_not_count(self):
         self.assertEqual(migration_guard(crate(self.root, SIGNER_CHECK), "migrate")[0], "unprotected")
+
+    def test_recognised_rejection_branches(self):
+        for i, body in enumerate((IF_RETURN, IF_UNREACHABLE, IF_ELSE_PANIC, IF_ELSE_IF_REQUIRE, MATCH_PANIC,
+                                  IF_PANIC_MULTILINE, REQUIRE_NE, UNKNOWN_THEN_GUARD)):
+            with self.subTest(body=body):
+                st, detail = migration_guard(crate(self.root, body, name=f"rec{i}"), "migrate")
+                self.assertEqual(st, "owner-check")
+                self.assertEqual(detail, {"file": "src/lib.rs", "line": 12})
+
+    def test_comparison_without_rejection_or_tautology_is_unknown(self):
+        for i, body in enumerate((IF_NO_REJECT, IF_EMPTY, MATCH_NO_REJECT, TAUT_REQUIRE, TAUT_ASSERT_EQ,
+                                  TAUT_IF_PANIC, TAUT_SPACING)):
+            with self.subTest(body=body):
+                st, detail = migration_guard(crate(self.root, body, name=f"unk{i}"), "migrate")
+                self.assertEqual(st, "owner-check-unknown")
+                self.assertEqual(detail, {"file": "src/lib.rs", "line": 12})
+
+    def test_predecessor_outside_a_guard_is_unprotected(self):
+        self.assertEqual(migration_guard(crate(self.root, LET_ONLY), "migrate")[0], "unprotected")
+
+    def test_unknown_comparison_deep_in_the_body_does_not_count(self):
+        late = UNPROTECTED.replace("        Self { owner", "        " + "let _x = 1;\n        " * 16
+                                   + "if env::predecessor_account_id() == old.owner { }\n        Self { owner")
+        self.assertEqual(migration_guard(crate(self.root, late), "migrate")[0], "unprotected")
 
     def test_unprotected(self):
         self.assertEqual(migration_guard(crate(self.root, UNPROTECTED), "migrate"),
@@ -223,6 +273,60 @@ class MigrationGuardGateTests(unittest.TestCase):
         code, out, _ = self.gate(d, None, "--dry-run")
         self.assertEqual(code, 3, out)
         self.assertIn(self.BLOCK, out)
+
+    UNKNOWN_BLOCK = ("DEPLOY BLOCKED: migration method migrate in src/lib.rs:12 compares predecessor_account_id() but "
+                     "no rejection branch was recognised (no panic!/env::panic_str/require!/assert!/return in the "
+                     "if/match body, or the comparison is a tautology); the gate cannot tell that other callers are refused")
+
+    def test_owner_check_unknown_blocks_and_suggests_private(self):
+        d = crate(self.root, IF_NO_REJECT)
+        stale = d / REPORT_DIR / REPORT_NAME
+        stale.parent.mkdir()
+        stale.write_text("{}")
+        code, out, _ = self.gate(d)
+        self.assertEqual(code, 3, out)
+        self.assertIn(self.UNKNOWN_BLOCK, out)
+        self.assertIn("  fix: add `#[private]` above `#[init(ignore_state)]` (recommended)", out)
+        self.assertIn("proved by passing scenario", out)
+        self.assertNotIn("near contract deploy", out)
+        self.assertNotIn("callable by anyone", out)
+        self.assertFalse(stale.exists())
+
+    def test_tautology_blocks_in_dry_run(self):
+        d = crate(self.root, TAUT_REQUIRE)
+        code, out, _ = self.gate(d, None, "--dry-run")
+        self.assertEqual(code, 3, out)
+        self.assertIn(self.UNKNOWN_BLOCK, out)
+
+    def test_recognised_branch_forms_pass(self):
+        for i, body in enumerate((IF_RETURN, MATCH_PANIC, IF_ELSE_PANIC)):
+            with self.subTest(body=body):
+                d = crate(self.root, body, name=f"pass{i}")
+                code, out, _ = self.gate(d)
+                self.assertEqual(code, 0, out)
+                self.assertIn("migration migrate: owner check at src/lib.rs:12", out)
+                self.assertEqual(self.gate_report(d)["migration_guard"]["status"], "owner-check")
+
+    def test_mcp_gate_deploy_blocks_unknown_owner_check(self):
+        from bumm_guard import mcp_server
+        d = crate(self.root, IF_EMPTY)
+        p = self.root / "sim.json"
+        p.write_text(json.dumps(report(upgrade_scenario())))
+        with mock.patch.dict("os.environ", {"BUMM_GUARD_ALLOW_ANY_PATH": "1"}), \
+                mock.patch("urllib.request.urlopen", Node(code=OLD)):
+            data = mcp_server.gate_deploy(crate_dir=str(d), wasm=str(self.wasm), account="demo.testnet",
+                                          simulate_report=str(p))
+        self.assertTrue(data["blocked"])
+        self.assertIsNone(data["deploy_command"])
+        self.assertIn(self.UNKNOWN_BLOCK, data["messages"])
+        self.assertIn("without a recognised owner check", data["note"])
+
+    def test_ambiguous_with_unknown_definition(self):
+        d = crate(self.root, PRIVATE)
+        (d / "src" / "other.rs").write_text(HEAD + IF_NO_REJECT + TAIL)
+        code, out, _ = self.gate(d)
+        self.assertEqual(code, 3, out)
+        self.assertIn("src/lib.rs:13 (private), src/other.rs:12 (owner-check-unknown)", out)
 
     def test_ambiguous_blocks_with_every_definition(self):
         d = crate(self.root, PRIVATE)

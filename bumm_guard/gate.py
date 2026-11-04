@@ -39,7 +39,7 @@ from pathlib import Path
 
 from . import __version__
 from .rulepack.near import RULES
-from .rulepack.near.rust_src import SourceFile
+from .rulepack.near.rust_src import SourceFile, match_close
 from .scanner import ScanResult, discover, scan
 from .storage import RPC_URLS, RpcError, estimate_storage, simulate_state_bytes  # noqa: F401  (RPC_URLS re-exported)
 from .verify import SmokeSpecError, global_contract, onchain_code_sha256, parse_smoke, post_deploy_ok, verify_deployed
@@ -312,20 +312,105 @@ def upgrade_check(rep, account: str, onchain: str, candidate: str, simulate_repo
 # --- migration guard -----------------------------------------------------------------------------
 
 _PRED_RE = re.compile(r"\b(?:\w+::)*predecessor_account_id\s*\(\s*\)")
-_GUARD_RE = re.compile(r"\b(?:require|assert|assert_eq|assert_ne|require_eq|require_ne)\s*!\s*\(|\bif\b|\bmatch\b")
+_MACRO_RE = re.compile(r"\b(require|assert|assert_eq|assert_ne|require_eq|require_ne)\s*!\s*\(")
+_BRANCH_RE = re.compile(r"\b(if|match)\b")
+_REJECT_RE = re.compile(r"\b(?:panic|require|assert|assert_eq|assert_ne|require_eq|require_ne|unreachable)\s*!"
+                        r"|\bpanic_str\s*\(|\breturn\b")
 _OWNER_CHECK_LINES = 15
 
 
-def _owner_check(body: str) -> bool:
-    """A ``predecessor_account_id()`` guard in the first ``_OWNER_CHECK_LINES`` lines of a (masked) body:
-    inside ``assert!``/``require!``/``assert_eq!``/``require_eq!`` arguments or an ``if``/``match`` condition.
-    What it is compared with (``self.owner``, a constant, ``current_account_id()``) is not judged.
-    ``signer_account_id()`` does not count (BG-NEAR-003)."""
-    head = "\n".join(body.splitlines()[:_OWNER_CHECK_LINES])
-    for stmt in re.split(r"[;{}]", head):
-        if _PRED_RE.search(stmt) and _GUARD_RE.search(stmt):
-            return True
-    return False
+def _split_args(text: str) -> list[str]:
+    """Split macro arguments on top-level commas (masked text, so no commas in strings)."""
+    parts, depth, cur = [], 0, []
+    for ch in text:
+        if ch in "([{<":
+            depth += 1
+        elif ch in ")]}>":
+            depth -= 1
+        if ch == "," and depth <= 0:
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    parts.append("".join(cur))
+    return [x.strip() for x in parts]
+
+
+def _tautology(*sides: str) -> bool:
+    """``a == a`` / ``assert_eq!(a, a)``: the same expression on both sides proves nothing. One
+    argument is a comparison expression (``a == b`` / ``a != b``), two are the sides themselves."""
+    if len(sides) == 1:
+        halves = re.split(r"\s*(?:==|!=)\s*", sides[0], maxsplit=1)
+        if len(halves) != 2:
+            return False
+        sides = tuple(halves)
+    a, b = (re.sub(r"\s+", "", x) for x in sides[:2])
+    return bool(a) and a == b
+
+
+def _close(body: str, i: int, o: str, c: str) -> int:
+    j = match_close(body, i, o, c)
+    return len(body) - 1 if j < 0 else j
+
+
+def _owner_check(body: str) -> str:
+    """Is a ``predecessor_account_id()`` comparison in the first ``_OWNER_CHECK_LINES`` lines of the
+    (masked) body a guard that refuses other callers?
+
+    ``recognized``: the comparison sits inside ``require!``/``assert!``/``assert_eq!``/``assert_ne!``/
+    ``require_eq!``/``require_ne!``, or in the condition of an ``if``/``match`` whose body (any arm or
+    ``else`` branch, brace level) contains ``panic!``/``env::panic_str``/``require!``/``assert!``/
+    ``return``/``unreachable!``. ``unknown``: an ``if``/``match`` without such a rejection, or a
+    tautology (the same expression on both sides, e.g. ``pred == pred``). ``none``: no comparison
+    in a guard position. What the predecessor is compared with (``self.owner``, a constant,
+    ``current_account_id()``) is not judged. ``signer_account_id()`` does not count (BG-NEAR-003)."""
+    lines = body.splitlines(keepends=True)
+    limit = sum(len(l) for l in lines[:_OWNER_CHECK_LINES])
+    verdicts: set[str] = set()
+    for pm in _PRED_RE.finditer(body):
+        p = pm.start()
+        if p >= limit:
+            break
+        verdict = None
+        for mm in _MACRO_RE.finditer(body):
+            o = mm.end() - 1
+            if o >= p:
+                break
+            c = _close(body, o, "(", ")")
+            if p < c:
+                args = _split_args(body[o + 1:c])
+                taut = (_tautology(args[0], args[1]) if len(args) >= 2 else False) \
+                    if mm.group(1) in ("assert_eq", "assert_ne", "require_eq", "require_ne") else _tautology(args[0])
+                verdict = "unknown" if taut else "recognized"
+                break
+        if verdict is None:
+            for bm in _BRANCH_RE.finditer(body):
+                k = bm.end()
+                if k > p:
+                    break
+                brace = body.find("{", k)
+                if brace < 0 or not (k <= p < brace):
+                    continue
+                cond = body[k:brace]
+                end = _close(body, brace, "{", "}")
+                if bm.group(1) == "if":
+                    while True:  # else / else-if chain: a rejection in any branch counts
+                        nxt = re.match(r"\s*else\b", body[end + 1:])
+                        if not nxt:
+                            break
+                        brace2 = body.find("{", end + 1 + nxt.end())
+                        if brace2 < 0:
+                            break
+                        end = _close(body, brace2, "{", "}")
+                rejects = bool(_REJECT_RE.search(body[brace:end + 1]))
+                taut = bm.group(1) == "if" and _tautology(cond)
+                verdict = "recognized" if rejects and not taut else "unknown"
+                break
+        if verdict:
+            verdicts.add(verdict)
+    if "recognized" in verdicts:
+        return "recognized"
+    return "unknown" if "unknown" in verdicts else "none"
 
 
 def migration_guard(crate_dir: str | Path, method: str) -> tuple[str, dict | None]:
@@ -333,10 +418,13 @@ def migration_guard(crate_dir: str | Path, method: str) -> tuple[str, dict | Non
 
     Returns ``(status, detail)`` with status one of ``private`` (``#[private]`` among the attributes
     directly above the ``fn``, in any order with ``#[init(ignore_state)]``), ``owner-check`` (a
-    ``predecessor_account_id()`` guard in the first 15 lines of the body), ``unprotected`` (found, neither),
-    ``not-found`` (no ``fn <method>`` in any ``impl`` of the crate's ``*.rs`` files outside ``target/``) or
-    ``ambiguous`` (several definitions whose statuses differ). ``detail`` is ``{file, line}`` of the
-    definition (for ``ambiguous``: ``{definitions: [{file, line, status}, ...]}``), ``None`` when not found.
+    recognised ``predecessor_account_id()`` guard in the first 15 lines of the body, see
+    ``_owner_check``), ``owner-check-unknown`` (a ``predecessor_account_id()`` comparison was seen in an
+    ``if``/``match`` but no rejection branch was recognised, or it is a tautology; the gate treats it
+    like ``unprotected``), ``unprotected`` (found, none of these), ``not-found`` (no ``fn <method>`` in
+    any ``impl`` of the crate's ``*.rs`` files outside ``target/``) or ``ambiguous`` (several definitions
+    whose statuses differ). ``detail`` is ``{file, line}`` of the definition (for ``ambiguous``:
+    ``{definitions: [{file, line, status}, ...]}``), ``None`` when not found.
 
     Regex and brace level, not a parser: comments, string literals and ``#[cfg(test)]`` items are
     blanked before matching (same helper as the rules); free functions outside an ``impl``, methods
@@ -355,10 +443,9 @@ def migration_guard(crate_dir: str | Path, method: str) -> tuple[str, dict | Non
                 continue
             if m.has_attr("private"):
                 st = "private"
-            elif m.has_body and _owner_check(m.body):
-                st = "owner-check"
             else:
-                st = "unprotected"
+                check = _owner_check(m.body) if m.has_body else "none"
+                st = {"recognized": "owner-check", "unknown": "owner-check-unknown"}.get(check, "unprotected")
             defs.append({"file": Path(os.path.relpath(disp, crate)).as_posix(), "line": m.line, "status": st})
     if not defs:
         return "not-found", None
@@ -522,6 +609,15 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
                     out.lines.append(f"migration {m['method']}: #[private] ({where})")
                 elif status == "owner-check":
                     out.lines.append(f"migration {m['method']}: owner check at {where}")
+                elif status == "owner-check-unknown":
+                    return _blocked(out, report, dry_run, [
+                        f"DEPLOY BLOCKED: migration method {m['method']} in {where} compares predecessor_account_id() "
+                        "but no rejection branch was recognised (no panic!/env::panic_str/require!/assert!/return "
+                        "in the if/match body, or the comparison is a tautology); the gate cannot tell that other "
+                        "callers are refused",
+                        "  fix: add `#[private]` above `#[init(ignore_state)]` (recommended), or "
+                        "`require!(env::predecessor_account_id() == self.owner, \"only owner\")` as the first "
+                        "line of the body"])
                 elif status == "not-found":
                     out.lines.append(f"warning: migration method {m['method']} not found in {crate_dir} sources; "
                                      "its access control was not checked")
