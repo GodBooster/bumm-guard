@@ -2,23 +2,23 @@
 
 Drafts for the owner to edit and publish. Nothing here has been posted or submitted. Every claim is backed by a file in this repository or by the CI run named next to it; anything not done is listed as not done. Placeholders in `{braces}` are filled by the owner on 13.11 (the repository is private until then).
 
-## 1. Form field "What did you build?" (limit 2000 characters; this text: 1992 characters, counted with `wc -m` on the text between the markers)
+## 1. Form field "What did you build?" (limit 2000 characters; this text: 1977 characters, counted on the text between the markers without the final newline, 2026-11-05)
 
 <!-- form-text-start -->
-BUMM Guard proves that a change to a NEAR contract works on the state that is already deployed, before an agent or a human deploys it.
+BUMM Guard proves that a change to a NEAR contract works on state written by the code that is already deployed, before an agent or a human deploys it: the scenario's state, bound to the exact pair of code hashes.
 
-The problem: in NEAR, redeploying code over a contract whose stored state has a different layout, without a migration, leaves a contract that panics on every call ("Cannot deserialize the contract state."). Unit tests and fresh-deploy scenarios do not see it.
+The problem: in NEAR, redeploying code over a contract whose stored state has a different layout, without a migration, leaves a contract that panics on every call ("Cannot deserialize the contract state."). Tests that deploy fresh do not see it.
 
-What it does: the `upgrade` step of the scenario runner deploys the old wasm in a local near-sandbox, writes state with transactions, deploys the new wasm on the same account (with its `migrate` call) and runs checks on the upgraded state. The deploy gate reads the account's code hash and, if it already runs code, prints the deploy command only when a passing upgrade scenario proves that exact pair of hashes. Around it: a static rule-pack (3 NEAR defect classes, 2 auto-fixed), an MCP server (6 tools) and an ABI panel.
+What it does: the `upgrade` step of the scenario runner deploys the old wasm in near-sandbox, writes state with transactions, deploys the new wasm on the same account (with its `migrate` call) and runs checks on the upgraded state. The deploy gate reads the account's code hash and, if it already runs code, prints the deploy command only when a passing upgrade scenario proves that exact pair. Around it: a static rule-pack (3 NEAR defect classes, 2 auto-fixed), an MCP server (6 tools) and an ABI panel.
 
 Evidence:
 - Sandbox, CI on every push, two pairs: migrate 16/16 and 33/33; code-only 4/16 and 9/17 (the escrow smoke view still answers, record reads panic).
-- A/B pilot (add a waitlist), same model and task, ONE run per arm: a pilot, not statistics. Fresh deploy: both arms 3/3, 35/35 steps. Upgrade of a contract with state: the arm with migrate() passed 16/16; the arm that passed every fresh-deploy check had no migration.
+- A/B pilot (add a waitlist), same model and task, ONE run per arm, not statistics. Fresh deploy: both arms 3/3, 35/35 steps. Upgrade of a contract with state: the arm with migrate() passed 16/16; the arm that passed every fresh-deploy check had no migration.
 - Testnet, live, two pairs: gate blocked without proof and with a failing one, passed with the migrate proof; the owner ran the printed deploy+migrate tx; pre-upgrade state survived (a registration; a 1 NEAR escrow deal).
 
-Not done: sandbox state is the scenario's own transactions, not copied from a live network; the panel's wallet path is unverified; no third-party contract run.
+Not done: no state copied from a live network; the panel's wallet path is unverified; no third-party contract run.
 
-Prior work: BUMM, the author's Solana builder, is a separate project, not in this repo. Built in the hackathon window; written with Claude Code.
+Prior work: BUMM, the author's Solana builder, is separate and not in this repo. Built in the hackathon window; written with Claude Code.
 
 Try: python3 -m bumm_guard simulate scenarios/upgrade/*.json --validate-only. Real run: CI job "scenario runner".
 <!-- form-text-end -->
@@ -27,10 +27,10 @@ Field notes: the form allows one submission per repository and no edits, so fill
 
 ## 2. X post
 
-Main post (limit 280 characters; a link counts as 23 on X; this text counts 274 with the repo link; attach the video):
+Main post (limit 280 characters; a link counts as 23 on X; this text counts 278 with the repo link, recounted 2026-11-05; attach the video):
 
 <!-- x1-start -->
-A NEAR contract can pass every test and still panic on every call after a redeploy: "Cannot deserialize the contract state." BUMM Guard proves the upgrade on real state in near-sandbox first. Sandbox: migrate() 16/16, code-only 4/16. Done on testnet. {REPO}
+A NEAR contract can pass every test and still panic on every call after a redeploy: "Cannot deserialize the contract state." BUMM Guard proves the upgrade on old-code state in near-sandbox first. Sandbox: migrate() 16/16, code-only 4/16. Done on testnet. {REPO}
 <!-- x1-end -->
 
 Thread, reply 1 (259 characters):
@@ -51,7 +51,7 @@ One take on the owner's machine, in `bumm-guard/` on `main`, Claude Code desktop
 
 | # | Time | Screen | Shows | Voice-over |
 |---|---|---|---|---|
-| 1 | 0:00-0:12 | README, first paragraph | The thesis sentence; `Cannot deserialize the contract state.` | "A NEAR contract can pass every test and still panic on every call after a redeploy, because the stored state has the old layout. BUMM Guard proves the upgrade on real state before anyone deploys it." |
+| 1 | 0:00-0:12 | README, first paragraph | The thesis sentence; `Cannot deserialize the contract state.` | "A NEAR contract can pass every test and still panic on every call after a redeploy, because the stored state has the old layout. BUMM Guard proves the upgrade on state the old code wrote, before anyone deploys it." |
 | 2 | 0:12-0:35 | Browser: CI job `scenario runner`, step `upgrade escrow v1 -> v2 code only` | Log: `FAIL … (9/17 steps)`; the `deal_count` step right after the upgrade **passes** with `3`; then `get_deal`, `release`, `refund` lines ending in `Cannot deserialize element`; the step's own assertion line | "Escrow contract, three deals, then the new code without a migration. The smoke view still answers: deal count three. Every call that reads a deal panics. A post-deploy health check would have called this upgrade fine. CI expects exactly this failure." |
 | 3 | 0:35-0:50 | Same job, step `upgrade escrow v1 -> v2 with migrate()` | `PASS … (33/33 steps)`, `upgrade_wasm_sha256 13425a04…` | "Same upgrade with `migrate` in the same transaction: 33 of 33. The deals survive with the right status, refund still pays the buyer." |
 | 4 | 0:50-1:35 | Claude Code session, prompt typed verbatim from `docs/DEMO_AGENT.md` B1: "Онови bumm-guard-escrow.testnet до escrow v2 …" — or its English twin: "Upgrade bumm-guard-escrow.testnet to escrow v2: crate `tests/fixtures/near/escrow_v2`, wasm `e2e/escrow/v2/escrow_v2.wasm`. The CI upgrade proof is in `evidence/`. Check with bumm-guard and give me the command." | The agent calls `scan_contract`, then `gate_deploy`: `passed: false`, reason `… no passing upgrade scenario proves 13425a04… -> 13425a04…` *(see note A)*; it retries with `evidence/escrow-upgrade-code-only-report-ci.json` → `upgrade scenario … did not pass`, `upgrade_check.status`; then with `evidence/escrow-upgrade-with-migrate-report-ci.json` → `passed: true`, `migration: migrate #[private] (src/lib.rs:118)`, `deploy_command: near contract deploy … with-init-call migrate …`. The agent prints the command and stops. | "Now the coding agent. It asks the gate through MCP. Blocked: the account already runs code and nothing proves this pair of hashes. With the failing report: blocked, the scenario did not pass. With the migrate proof: passed. The gate checks the migration is private, prints one deploy command and never runs it. The human does." |

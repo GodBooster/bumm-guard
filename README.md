@@ -6,7 +6,7 @@
 scan -> fix -> simulate scenarios -> prove the upgrade of live state -> gate -> deploy -> ABI panel
 ```
 
-**Deploy gate:** if the target account already runs code, the gate treats the deploy as an upgrade and refuses to print a command until a passing upgrade scenario proves exactly that pair (on-chain code sha256 → candidate wasm sha256); the printed command then repeats the proven `migrate` call in one batch; an account that already runs the candidate wasm gets `NO CHANGE` and no command. It does not execute the command by default; `--execute` is CLI-only, refuses anything but `--network testnet`, and does not exist in the MCP tool. Done live on testnet once (2026-11-03): blocked without proof, passed with the migrate proof, the registration made before the upgrade survived ([`evidence/UPGRADE_TESTNET.md`](evidence/UPGRADE_TESTNET.md)).
+**Deploy gate:** if the target account already runs code, the gate treats the deploy as an upgrade and refuses to print a command until a passing upgrade scenario proves exactly that pair (on-chain code sha256 → candidate wasm sha256); the printed command then repeats the proven `migrate` call in one batch; an account that already runs the candidate wasm gets `NO CHANGE` and no command. It does not execute the command by default; `--execute` is CLI-only, refuses anything but `--network testnet`, and does not exist in the MCP tool. Done live on testnet for both pairs (2026-11-03 and 2026-11-04): blocked without proof, passed with the migrate proof, and the state made before the upgrade survived (a registration; a 1 NEAR escrow deal) ([`evidence/UPGRADE_TESTNET.md`](evidence/UPGRADE_TESTNET.md)).
 
 ## Why this is shown for NEAR Borsh state
 
