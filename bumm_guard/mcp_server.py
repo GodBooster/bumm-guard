@@ -305,7 +305,8 @@ def build_server():
         "`approve` call (with gate_report_sha256 = sha256 of that report) or the `reject` call with the gate's "
         "reason, as TEXT. A target account that already runs exactly `wasm` is a reject too (nothing was changed "
         "by the submission). THIS TOOL NEVER SIGNS OR SENDS anything and has no execute parameter; the human "
-        "reviewer runs the command. Bad input or a job that is not Submitted is a tool error."))
+        "reviewer runs the command. Bad input, a job that is not Submitted, or a target account that cannot be "
+        "read over RPC (the submission was not judged; retry) is a tool error, never a reject."))
     @readable_errors
     def review_job_tool(jobs_contract: str, job_id: int, crate_dir: str, wasm: str,
                         simulate_report: str | None = None, account: str | None = None,

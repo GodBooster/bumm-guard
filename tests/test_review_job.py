@@ -54,8 +54,9 @@ def job(status="Submitted", wasm=V2_WASM, report=WITH_MIGRATE, target=TARGET, **
 class Node:
     """urlopen stub: the jobs contract answers get_job / get_reviewer, the target has ``code`` (or none)."""
 
-    def __init__(self, job=None, reviewer=REVIEWER, code=V1_WASM, down=False):
+    def __init__(self, job=None, reviewer=REVIEWER, code=V1_WASM, down=False, target_down=None):
         self.job, self.reviewer, self.code, self.down, self.calls = job, reviewer, code, down, []
+        self.target_down = target_down      # "view_code" | "view_account": that query on the target fails
 
     def __call__(self, req, timeout=None):
         p = json.loads(req.data)
@@ -65,6 +66,8 @@ class Node:
         assert p["method"] == "query", p
         q = p["params"]
         rt = q["request_type"]
+        if rt == self.target_down:
+            raise OSError("network down")
         if rt == "call_function":
             assert q["account_id"] == JOBS, q
             args = json.loads(base64.b64decode(q["args_base64"]))
@@ -313,6 +316,34 @@ class ReviewJobTests(unittest.TestCase):
     def test_rpc_down_is_refused_not_rejected(self):
         self.assert_refused(self.review(Node(job(), down=True)), "Nothing was reviewed")
 
+    def test_target_code_unreadable_is_refused_not_rejected(self):
+        # the job is read, then view_code on the target fails: the plain gate blocks (exit 3); a review
+        # must not turn that into a reject
+        node = Node(job(), target_down="view_code")
+        res = self.review(node)
+        self.assert_refused(res, f"cannot read the code on {TARGET} (testnet)")
+        self.assertIn("The submission was not judged", res[2])
+        self.assertNotIn("REVIEW", res[1] + res[2])
+        self.assertNotIn("reject", res[1] + res[2].replace("no approve or reject command", ""))
+        self.assertEqual([c["params"]["request_type"] for c in node.calls],
+                         ["call_function", "call_function", "view_code"])
+
+    def test_target_account_unreadable_is_refused_not_rejected(self):
+        # no code on the target, then view_account (global-contract check) fails
+        fresh = self.tmp / "fresh.json"
+        fresh.write_text(json.dumps({"wasm_sha256": sha(V1_WASM), "summary": {"scenarios": 1, "passed": 1, "failed": 0},
+                                     "scenarios": [{"name": "fresh", "passed": True, "steps": []}]}))
+        node = Node(job(wasm=V1_WASM, report=fresh), code=None, target_down="view_account")
+        res = self.review(node, crate=ESCROW_V1, wasm=V1_WASM, report=fresh)
+        self.assert_refused(res, f"cannot read account {TARGET} (testnet)")
+        self.assertNotIn("REVIEW", res[1] + res[2])
+
+    def test_plain_gate_still_blocks_when_the_target_is_unreadable(self):
+        with mock.patch("urllib.request.urlopen", Node(job(), target_down="view_code")):
+            code, out, _ = run_cli("gate", str(ESCROW_V2), "--wasm", str(V2_WASM), "--account", TARGET, "--dry-run")
+        self.assertEqual(code, 3, out)
+        self.assertIn(f"DEPLOY BLOCKED: cannot read the code on {TARGET}", out)
+
     def test_bad_inputs(self):
         self.assert_refused(self.review(Node(job()), "--jobs-contract", "Bad..Id"), "invalid NEAR account id")
         self.assert_refused(self.review(Node(job()), crate=self.tmp / "nope"), "not a directory")
@@ -378,6 +409,12 @@ class McpReviewJobTests(unittest.TestCase):
         self.assertEqual(r["verdict"], "reject")
         for text in r["messages"] + r["gate"]["messages"] + [r["reason"], r["command"]]:
             self.assertTrue(text.isprintable(), repr(text))
+
+    def test_unreadable_target_is_a_tool_error_not_a_reject(self):
+        with self.assertRaises(mcp_server.ToolInputError) as cm:
+            self.call(Node(job(), target_down="view_code"))
+        self.assertIn("The submission was not judged", str(cm.exception))
+        self.assertFalse((self.tmp / ".bumm-guard" / "review-0.json").exists())
 
     def test_bad_input_is_a_tool_error(self):
         with self.assertRaises(mcp_server.ToolInputError):

@@ -11,7 +11,8 @@ command for the reviewer: ``approve`` with ``gate_report_sha256`` = sha256 of th
 passed, ``reject`` with the gate's reason when it blocked. A gate outcome of NO CHANGE (the target
 account already runs exactly the submitted wasm) is a ``reject`` too: the submission changed nothing,
 so there is nothing to pay for. It never signs and never sends; the reviewer runs the command with
-their own key. Text read from the job (``get_job``) and every line the gate produced from the
+their own key. If the gate cannot read the target account (``view_code`` / ``view_account`` fails), the
+review stops with exit 2 and prints no command: an RPC failure is not a verdict. Text read from the job (``get_job``) and every line the gate produced from the
 submitted report is made printable first (``sanitize``: no control characters), so a submission cannot
 draw a fake verdict in the reviewer's terminal. Exit codes: 0 passed (approve printed), 3 blocked or no change (reject printed), 2 bad
 input or nothing to review (no command printed).
@@ -166,6 +167,12 @@ def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, s
     g.lines, g.errors = [strip_control(l) for l in g.lines], [strip_control(l) for l in g.errors]
     if g.exit_code == 2:
         res.errors.extend(g.errors or ["bumm-guard: the gate refused the input"])
+        return res
+    if g.rpc_error:
+        # The gate itself blocks here (exit 3: it cannot tell a fresh deploy from an upgrade). For a review
+        # that is not a verdict on the submission: an RPC failure must never turn into a reject.
+        res.errors.append(f"bumm-guard: {strip_control(g.rpc_error)}. The submission was not judged: no approve or reject "
+                          "command is printed and no review report is written. Retry, or pass --rpc-url.")
         return res
     gate_lines = [l for l in g.lines if l != "dry-run: gate-report.json not written"]
     gate_lines = ["deploy command for the target account's owner (NOT executed; not part of this job):"

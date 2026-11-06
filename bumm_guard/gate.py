@@ -82,6 +82,7 @@ class GateOutcome:
     upgrade_check: dict | None = None                    # why an upgrade was refused (on-chain, candidate, proven pairs)
     deploy: dict | None = None                           # the gate report's ``deploy`` block (status, command)
     report: dict | None = None                           # the gate report data (also with --dry-run), when the gate passed
+    rpc_error: str | None = None                         # set when the gate blocked only because the target could not be read
 
 
 def sha256_file(path: str | Path) -> str:
@@ -570,6 +571,7 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
         try:
             onchain = onchain_code_sha256(account, network, rpc_url)
         except RpcError as e:
+            out.rpc_error = f"cannot read the code on {account} ({network}): {e}"
             return _blocked(out, report, dry_run, [
                 f"DEPLOY BLOCKED: cannot read the code on {account} ({network}): {e}. Without it the gate cannot "
                 "tell a fresh deploy from an upgrade; retry, or pass --rpc-url."])
@@ -578,6 +580,7 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
             try:
                 glob = global_contract(account, network, rpc_url)
             except RpcError as e:
+                out.rpc_error = f"cannot read account {account} ({network}): {e}"
                 return _blocked(out, report, dry_run, [
                     f"DEPLOY BLOCKED: cannot read account {account} ({network}): {e}. Without it the gate cannot "
                     "tell an empty account from one that uses a global contract (NEP-591); retry, or pass --rpc-url."])

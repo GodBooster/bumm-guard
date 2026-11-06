@@ -254,7 +254,8 @@ full definition, not only "contract compiles".
 ## 7. Review report (`.bumm-guard/review-<job>.json`, output of `bumm-guard review-job`, 2026-11-06)
 
 Written by `review-job` (docs/SWARM_JOBS.md) after the job and the files checked out, whether the gate passed or
-blocked; never on bad input (exit 2). Its sha256 is the `gate_report_sha256` in the printed `approve` command, so the
+blocked; never on bad input and never when the job or the target account could not be read over RPC (exit 2, no
+command: an RPC failure is not a verdict; the plain `gate` command still answers `DEPLOY BLOCKED`, exit 3, there). Its sha256 is the `gate_report_sha256` in the printed `approve` command, so the
 file must be kept byte for byte (it carries a timestamp: a second run gives another hash).
 ```json
 {

@@ -481,6 +481,19 @@ class UpgradeGateTests(Fixture):
         self.assertEqual(code, 3)
         self.assertIn("DEPLOY BLOCKED: cannot read the code on demo.testnet", out)
 
+    def test_rpc_failure_is_marked_on_the_outcome(self):
+        # review-job reads this mark to tell "target unreadable" from a verdict on the submission
+        from bumm_guard.gate import run_gate
+        for node, text in ((Node(down=True), "cannot read the code on demo.testnet (testnet)"),
+                           (Node(code=None, account_down=True), "cannot read account demo.testnet (testnet)")):
+            with mock.patch("urllib.request.urlopen", node):
+                g = run_gate(str(self.crate), wasm=str(self.wasm), account="demo.testnet", dry_run=True)
+            self.assertEqual((g.exit_code, g.blocked), (3, True))
+            self.assertTrue(g.rpc_error.startswith(text), g.rpc_error)
+        with mock.patch("urllib.request.urlopen", Node(code=OLD)):
+            g = run_gate(str(self.crate), wasm=str(self.wasm), account="demo.testnet", dry_run=True)
+        self.assertEqual((g.exit_code, g.rpc_error), (3, None))
+
     def test_stale_report_removed_when_upgrade_blocked(self):
         rep_file = self.crate / REPORT_DIR / REPORT_NAME
         rep_file.parent.mkdir()
