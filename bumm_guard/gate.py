@@ -72,6 +72,7 @@ class GateOutcome:
     upgrade: dict | None = None                          # the gate report's ``upgrade`` block
     upgrade_check: dict | None = None                    # why an upgrade was refused (on-chain, candidate, proven pairs)
     deploy: dict | None = None                           # the gate report's ``deploy`` block (status, command)
+    report: dict | None = None                           # the gate report data (also with --dry-run), when the gate passed
 
 
 def sha256_file(path: str | Path) -> str:
@@ -472,6 +473,7 @@ def _blocked(out: GateOutcome, report: Path, dry_run: bool, lines: list[str]) ->
 
 
 def _write_report(out: GateOutcome, data: dict, report: Path, dry_run: bool) -> None:
+    out.report = data
     if dry_run:
         out.lines.append("dry-run: gate-report.json not written")
         return

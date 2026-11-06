@@ -233,3 +233,38 @@ waitlist scenarios: "third registers → waitlisted", "cancel promotes first wai
 perform `register` and show `get_registered` on testnet, and `gate --verify-deployed`
 reports `matches_artifact: true`. Both study arms (with and without BUMM) get this
 full definition, not only "contract compiles".
+
+## 7. Review report (`.bumm-guard/review-<job>.json`, output of `bumm-guard review-job`, 2026-11-06)
+
+Written by `review-job` (docs/SWARM_JOBS.md) after the job and the files checked out, whether the gate passed or
+blocked; never on bad input (exit 2). Its sha256 is the `gate_report_sha256` in the printed `approve` command, so the
+file must be kept byte for byte (it carries a timestamp: a second run gives another hash).
+```json
+{
+  "tool": "bumm-guard", "version": "0.5.0", "kind": "review-job",
+  "timestamp_utc": "2026-11-06T12:00:00Z",
+  "network": "testnet", "jobs_contract": "bumm-guard-jobs.testnet", "job_id": 0,
+  "reviewer": "bumm-guard-bob.testnet",
+  "job": {"id": 0, "poster": "…", "description": "…", "target_account": "bumm-guard-escrow2.testnet",
+          "reward": "1000000000000000000000000", "status": "Submitted", "agent": "…",
+          "wasm_sha256": "13425a04…", "report_sha256": "f305461f…", "gate_report_sha256": null, "reject_reason": null},
+  "target_account": "bumm-guard-escrow2.testnet",
+  "inputs": {"crate_dir": "tests/fixtures/near/escrow_v2", "wasm": "evidence/wasm/escrow_v2.wasm",
+             "wasm_sha256": "13425a04…", "simulate_report": "evidence/escrow-upgrade-with-migrate-report-ci.json",
+             "report_sha256": "f305461f…"},
+  "checks": {"status_submitted": true, "wasm_sha256_matches": true, "report_sha256_matches": true},
+  "gate": {"exit_code": 0, "passed": true, "messages": ["…"], "report": {"…": "§4 gate report"},
+           "upgrade": {"…": "§4 upgrade block"}, "upgrade_check": null},
+  "verdict": "approve",
+  "reason": null
+}
+```
+- `job` is `get_job` as read (read-only `call_function`, finality `final`); `reviewer` is the signer of the printed
+  command (`--reviewer`, default the contract's `get_reviewer`).
+- `checks` are always true in a written report: a mismatch stops the review before the gate (exit 2, no file).
+- `gate.report` is the §4 gate report the gate would have written (the gate runs with `--dry-run`, so the crate's own
+  `gate-report.json` is not touched), `null` when it blocked; `gate.upgrade` / `gate.upgrade_check` as in §4 and in
+  the MCP `gate_deploy` result.
+- `verdict`: `approve` (gate exit 0, review exit 0) or `reject` (gate exit 3, review exit 3). `reason` is `null` on
+  approve; on reject it is the gate's first `DEPLOY BLOCKED` line, whitespace collapsed, cut to 500 bytes (the
+  contract's limit), and is the `reason` argument of the printed `reject` command.

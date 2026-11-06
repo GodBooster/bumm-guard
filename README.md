@@ -214,7 +214,7 @@ The 14 skipped tests are the 13 MCP tests (the `mcp` package is not installed) a
 
 ## Use from a coding agent (MCP)
 
-`bumm-guard-mcp` is an MCP server over stdio with six tools. It needs the optional `mcp` package (tested with mcp 1.30.0 and 2.3.0 by the MCP test suite).
+`bumm-guard-mcp` is an MCP server over stdio with seven tools (the seventh, `review_job`, is described in [Guarded jobs for agent swarms](#guarded-jobs-for-agent-swarms)). It needs the optional `mcp` package (tested with mcp 1.30.0 and 2.3.0 by the MCP test suite).
 
 1. `python3 -m pip install -e '.[mcp]'` creates the command `bumm-guard-mcp` (it waits on stdin; that is normal).
 2. Open Claude Code in this directory: `.mcp.json` registers the server (project scope; approve it once). Rehearsed 2026-11-03 with the desktop app: the agent found the six tools and stopped on `DEPLOY BLOCKED` (`docs/DEMO_AGENT.md`). Or register it with `claude mcp add bumm-guard -- bumm-guard-mcp`, or load the plugin in `clients/claude-plugin/` (`claude --plugin-dir clients/claude-plugin`), which bundles the server config and the skill `near-deploy-gate`. For Cursor or Codex, copy `clients/claude-plugin/examples/mcp-config.json` into their MCP config. The server must start in the directory that holds the contract. **Not verified:** the `claude` CLI commands and the Cursor/Codex configs have not been run by the author (only the stdio protocol, via `tests/test_mcp.py`, and JSON validity of the plugin files).
@@ -228,8 +228,21 @@ The 14 skipped tests are the 13 MCP tests (the `mcp` package is not installed) a
 | `gate_deploy` | `crate_dir`, `wasm?`, `account?`, `network="testnet"`, `simulate_report?` | `{blocked, passed, blocking_findings, findings, report_path, deploy_command, deploy_executed: false, upgrade, upgrade_check, deploy: {status: "printed"|"no-change", command}, messages, note}`. With `account` and `wasm` it reads the account's code (one read-only `view_code`); if the account already runs other code, it blocks unless `simulate_report` holds a passing upgrade scenario for exactly that pair. `upgrade` is then `{onchain_code_sha256, candidate_sha256, scenario, migrate, passed, post_upgrade_steps}` and `deploy_command` repeats the `migrate` call; `null` for a fresh deploy; `deploy_command` is also `null` with `deploy.status: "no-change"` when the account already runs exactly `wasm` |
 | `estimate_storage` | `wasm`, `network="testnet"` | `{code_bytes, state_bytes_after_init, storage_amount_per_byte_yocto, source, locked_near_for_code, note}`; one read-only RPC query, falls back to the documented 1e19 yocto/byte |
 | `verify_deployed` | `account`, `wasm`, `network="testnet"`, `smoke?` (`METHOD[:ARGS_JSON][=EXPECTED_JSON]`) | `{account, code_hash_on_chain, matches_artifact, smoke: [{view, args?, expected?, ok, result|error}], note}`; with `=EXPECTED` the view must return that JSON value; read-only, refuses `new`, `migrate` and other change methods as smoke names |
+| `review_job` | `jobs_contract`, `job_id`, `crate_dir`, `wasm`, `simulate_report?`, `account?`, `network="testnet"`, `reviewer?` | `{verdict: "approve"\|"reject", passed, reason, command, command_executed: false, gate_report_sha256, review_report_path, gate, job, messages, note}`; read-only on chain (view calls), runs the gate in dry-run mode, writes only the review report; no execute, sign or send path |
 
 **Human in the loop.** The skill `near-deploy-gate` tells the agent: scan; show findings; call `fix_contract` with `apply=false` and show the diff; call it with `apply=true` only after the human says yes; run the crate's tests; call `gate_deploy`; on `blocked: true` stop and never bypass; on `passed: true` show the command and let the human run it; after the human deployed, call `verify_deployed`. Mainnet is used only if the human asks, and the deploy is always the human's step. Be precise about what enforces this: the server enforces that `gate_deploy` cannot execute a deploy (no `execute` parameter exists, `deploy_executed` is always `false`), that paths must resolve inside the server's working directory (override: `BUMM_GUARD_ALLOW_ANY_PATH=1`, only for projects you trust the agent with), and that `fix_contract` writes only with `apply=true` and never under `target/`. The "ask the human before `apply=true`" step is enforced by the tool description and the skill, not by the server.
+
+## Guarded jobs for agent swarms
+
+A minimal answer to the guardrail part of Swarm-for-Hire: an onchain job escrow, `swarm_jobs`
+(`tests/fixtures/near/swarm_jobs`), in which an agent's reward is paid only after BUMM Guard's review of its work
+passed. The agent submits the sha256 of its wasm and of its scenario report; `bumm-guard review-job` (and the MCP
+tool `review_job`) reads the job, checks the files are exactly the submitted ones, runs the deploy gate on them for
+the job's target account, and prints one command for the reviewer to sign: `approve` (bound to the wasm hash and to
+the hash of the review report) or `reject` with the gate's reason. It never signs. Limits: the review runs off-chain
+and the approve is signed by one trusted reviewer account (the contract cannot verify a sandbox proof by itself);
+there is no inference and no agent runtime. Flow, commands, the review report and a testnet plan:
+[docs/SWARM_JOBS.md](docs/SWARM_JOBS.md).
 
 ## Deploy gate on testnet
 

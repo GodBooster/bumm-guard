@@ -1,4 +1,4 @@
-"""Command line interface: ``scan``, ``rules``, ``fix``, ``gate`` and ``simulate``."""
+"""Command line interface: ``scan``, ``rules``, ``fix``, ``gate``, ``simulate`` and ``review-job``."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from . import __version__
 from .fix import FixRun, run_fix
 from .gate import NETWORKS, run_gate, run_verify_deployed
 from .model import SEVERITIES, Finding
+from .review import run_review_job
 from .rulepack.near import RULES
 from .scanner import DEFAULT_EXCLUDES, ScanResult, scan
 from .simulate import DEFAULT_OUT, run_simulate
@@ -178,6 +179,17 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
     return out.exit_code
 
 
+def _cmd_review_job(args: argparse.Namespace) -> int:
+    out = run_review_job(args.jobs_contract, args.job, args.crate, args.wasm, simulate_report=args.simulate_report,
+                         account=args.account, network=args.network, reviewer=args.reviewer,
+                         rpc_url=args.rpc_url, out=args.out)
+    for line in out.lines:
+        print(line)
+    for line in out.errors:
+        print(line, file=sys.stderr)
+    return out.exit_code
+
+
 def _cmd_rules(args: argparse.Namespace) -> int:
     if args.format == "json":
         print(json.dumps([r.to_dict() for r in RULES], indent=2))
@@ -240,6 +252,21 @@ def build_parser() -> argparse.ArgumentParser:
     smp.add_argument("--runner", metavar="PATH", help="bumm-sim binary (default: $BUMM_SIM, then contracts/target/release/bumm-sim)")
     smp.add_argument("--validate-only", action="store_true", help="check the files against the format; run nothing")
     smp.set_defaults(func=_cmd_simulate)
+    rv = sub.add_parser("review-job", help="review an agent's submission to a swarm_jobs contract with the gate; "
+                                           "prints the approve or reject command for the reviewer (never signs)")
+    rv.add_argument("--jobs-contract", required=True, metavar="ACCOUNT", help="account running the swarm_jobs contract")
+    rv.add_argument("--job", required=True, type=int, metavar="ID", help="job id")
+    rv.add_argument("--crate", required=True, metavar="DIR", help="crate sources of the submitted wasm (scanned)")
+    rv.add_argument("--wasm", required=True, metavar="FILE", help="the submitted wasm; its sha256 must equal the job's wasm_sha256")
+    rv.add_argument("--simulate-report", metavar="FILE",
+                    help="the submitted scenario report; its sha256 must equal the job's report_sha256 (required "
+                         "whenever the job names one, which the contract always does)")
+    rv.add_argument("--account", metavar="TARGET", help="target account (default: the job's target_account)")
+    rv.add_argument("--network", choices=NETWORKS, default="testnet")
+    rv.add_argument("--reviewer", metavar="ACCOUNT", help="signer of the printed command (default: the contract's reviewer)")
+    rv.add_argument("--rpc-url", metavar="URL", help="override the public RPC endpoint for --network")
+    rv.add_argument("--out", metavar="PATH", help="review report path (default: .bumm-guard/review-<job>.json)")
+    rv.set_defaults(func=_cmd_review_job)
     return p
 
 

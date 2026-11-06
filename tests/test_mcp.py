@@ -22,7 +22,7 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent.parent
 D1_VULN = "tests/fixtures/near/d1_vuln"
 EXPECTED_TOOLS = {"list_rules", "scan_contract", "fix_contract", "gate_deploy", "estimate_storage",
-                  "verify_deployed"}
+                  "verify_deployed", "review_job"}
 
 
 def payload(result) -> dict:
@@ -46,7 +46,7 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
                 await s.initialize()
                 yield s
 
-    async def test_lists_six_tools_without_execute(self):
+    async def test_lists_seven_tools_without_execute(self):
         async with self.session() as s:
             tools = (await s.list_tools()).tools
             self.assertEqual({t.name for t in tools}, EXPECTED_TOOLS)
@@ -58,6 +58,10 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("UPGRADE", gate.description)
             fix = next(t for t in tools if t.name == "fix_contract")
             self.assertIn("DRY-RUN", fix.description)
+            review = next(t for t in tools if t.name == "review_job")
+            rprops = (getattr(review, "input_schema", None) or review.inputSchema)["properties"]
+            self.assertFalse({"execute", "sign", "send"} & set(rprops), rprops)
+            self.assertIn("NEVER SIGNS OR SENDS", review.description)
             for t in tools:
                 self.assertTrue(t.description)
             for name in ("estimate_storage", "verify_deployed"):

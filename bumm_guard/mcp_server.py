@@ -2,7 +2,7 @@
 
 Entry point: ``bumm-guard-mcp``. Needs the optional extra: ``pip install 'bumm-guard[mcp]'``.
 The tool functions below are plain Python (``list_rules``, ``scan_contract``, ``fix_contract``,
-``gate_deploy``, ``estimate_storage``, ``verify_deployed``) and need only the standard library; the ``mcp`` SDK is imported lazily in
+``gate_deploy``, ``estimate_storage``, ``verify_deployed``, ``review_job``) and need only the standard library; the ``mcp`` SDK is imported lazily in
 ``build_server``/``main``.
 
 Safety properties:
@@ -16,6 +16,9 @@ Safety properties:
   * ``estimate_storage`` and ``verify_deployed`` are read-only: they make public-RPC queries
     (``EXPERIMENTAL_protocol_config``, ``view_code``, view calls), write nothing, and hold no key.
     ``verify_deployed`` refuses init/migrate smoke methods.
+  * ``review_job`` reads a ``swarm_jobs`` job with read-only view calls, runs the gate in dry-run mode,
+    writes only its review report and returns the approve/reject command as TEXT: it has no execute,
+    sign or send path.
 Nothing is ever written to stdout except MCP protocol messages.
 """
 
@@ -31,6 +34,7 @@ from . import __version__
 from .cli import fix_to_dict, scan_to_dict
 from .fix import run_fix
 from .gate import BLOCKING, NETWORKS, run_gate, valid_account
+from .review import run_review_job
 from .rulepack.near import RULES
 from .scanner import DEFAULT_EXCLUDES, scan
 from .storage import estimate_storage as _estimate_storage
@@ -169,6 +173,34 @@ def verify_deployed(account: str, wasm: str, network: str = "testnet", smoke: li
                     "to also record post_deploy in gate-report.json."}
 
 
+def review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, simulate_report: str | None = None,
+               account: str | None = None, network: str = "testnet", reviewer: str | None = None) -> dict:
+    """BUMM Guard review of a swarm_jobs submission; returns the approve/reject command as text (never runs it)."""
+    _check_path(crate_dir, "crate_dir")
+    _check_wasm(wasm, network)
+    if simulate_report is not None:
+        _check_path(simulate_report, "simulate_report")
+    out = run_review_job(jobs_contract, job_id, crate_dir, wasm, simulate_report=simulate_report, account=account,
+                         network=network, reviewer=reviewer)
+    if out.exit_code == 2:
+        raise ToolInputError("; ".join(out.errors) or "review refused the input")
+    return {
+        "tool": "bumm-guard", "version": __version__, "network": network,
+        "jobs_contract": jobs_contract, "job_id": job_id, "job": out.job,
+        "verdict": out.verdict, "passed": out.verdict == "approve", "reason": out.reason,
+        "review_report_path": os.path.abspath(out.report_path) if out.report_path else None,
+        "gate_report_sha256": out.report_sha256 if out.verdict == "approve" else None,
+        "command": shlex.join(out.command) if out.command else None,
+        "command_executed": False,
+        "gate": out.gate,
+        "messages": out.lines + out.errors,
+        "note": ("Review passed. The approve command above was NOT executed and this tool cannot execute it: show it "
+                 "to the human reviewer, who signs it with their own key." if out.verdict == "approve" else
+                 "Review blocked. The reject command above was NOT executed: show it to the human reviewer. Do not "
+                 "approve around the gate."),
+    }
+
+
 def build_server():
     """Create the MCP server object (imports the optional ``mcp`` SDK)."""
     try:
@@ -259,6 +291,22 @@ def build_server():
     def verify_deployed_tool(account: str, wasm: str, network: str = "testnet",
                              smoke: list[str] | None = None) -> dict:
         return verify_deployed(account, wasm, network, smoke)
+
+    @server.tool(name="review_job", description=(
+        "BUMM Guard review of an agent's submission to a swarm_jobs contract (guarded jobs: the reward is paid only "
+        "after review). Reads job `job_id` of `jobs_contract` with READ-ONLY RPC view calls (get_job, get_reviewer), "
+        "requires status Submitted, sha256(`wasm`) == the job's wasm_sha256 and sha256(`simulate_report`) == its "
+        "report_sha256, then runs the deploy gate (scan, report binding, upgrade proof if the target account "
+        "already has code, migration guard) for the job's target_account (or `account`). Writes the review report "
+        "(.bumm-guard/review-<job>.json) and returns `verdict` approve|reject and `command`: the near-cli "
+        "`approve` call (with gate_report_sha256 = sha256 of that report) or the `reject` call with the gate's "
+        "reason, as TEXT. THIS TOOL NEVER SIGNS OR SENDS anything and has no execute parameter; the human "
+        "reviewer runs the command. Bad input or a job that is not Submitted is a tool error."))
+    @readable_errors
+    def review_job_tool(jobs_contract: str, job_id: int, crate_dir: str, wasm: str,
+                        simulate_report: str | None = None, account: str | None = None,
+                        network: str = "testnet", reviewer: str | None = None) -> dict:
+        return review_job(jobs_contract, job_id, crate_dir, wasm, simulate_report, account, network, reviewer)
 
     return server
 
