@@ -8,9 +8,11 @@ migration guard) on that wasm for the job's ``target_account`` (or ``--account``
 
 It writes the review report (docs/FORMATS.md §7) to ``.bumm-guard/review-<job>.json`` and prints ONE
 command for the reviewer: ``approve`` with ``gate_report_sha256`` = sha256 of that file when the gate
-passed, ``reject`` with the gate's reason when it blocked. It never signs and never sends; the reviewer
-runs the command with their own key. Exit codes follow the gate: 0 passed (approve printed), 3 blocked
-(reject printed), 2 bad input or nothing to review (no command printed).
+passed, ``reject`` with the gate's reason when it blocked. A gate outcome of NO CHANGE (the target
+account already runs exactly the submitted wasm) is a ``reject`` too: the submission changed nothing,
+so there is nothing to pay for. It never signs and never sends; the reviewer runs the command with
+their own key. Exit codes: 0 passed (approve printed), 3 blocked or no change (reject printed), 2 bad
+input or nothing to review (no command printed).
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ REASON_MAX = 500          # the contract's MAX_REASON (bytes)
 APPROVE_GAS = "100 Tgas"
 REJECT_GAS = "30 Tgas"
 SHA256_HEX = set("0123456789abcdef")
+NO_CHANGE_REASON = "the target account already runs this exact wasm: nothing was changed by this submission"
 
 
 @dataclass
@@ -163,9 +166,13 @@ def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, s
     if g.blocked and g.scan is not None and g.scan.findings:
         gate_lines = [f"{f.file}:{f.line}: [{f.severity.upper()}] {f.rule_id} {f.rule_name}"
                       for f in g.scan.findings] + gate_lines
-    passed = g.exit_code == 0 and not g.blocked
-    reason = None if passed else _reason(g.lines, g.errors)
-    res.gate = {"exit_code": g.exit_code, "passed": passed, "messages": gate_lines + g.errors,
+    gate_passed = g.exit_code == 0 and not g.blocked
+    # The gate passes a target that already runs this wasm (nothing to deploy, exit 0). For a paid job
+    # that is not a pass: the submission changed nothing, so the verdict is reject.
+    no_change = gate_passed and (g.deploy or {}).get("status") == "no-change"
+    passed = gate_passed and not no_change
+    reason = None if passed else NO_CHANGE_REASON if no_change else _reason(g.lines, g.errors)
+    res.gate = {"exit_code": g.exit_code, "passed": gate_passed, "messages": gate_lines + g.errors,
                 "report": g.report, "upgrade": g.upgrade, "upgrade_check": g.upgrade_check}
     report = {
         "tool": "bumm-guard", "version": __version__, "kind": "review-job",

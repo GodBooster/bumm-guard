@@ -265,6 +265,10 @@ file must be kept byte for byte (it carries a timestamp: a second run gives anot
 - `gate.report` is the §4 gate report the gate would have written (the gate runs with `--dry-run`, so the crate's own
   `gate-report.json` is not touched), `null` when it blocked; `gate.upgrade` / `gate.upgrade_check` as in §4 and in
   the MCP `gate_deploy` result.
-- `verdict`: `approve` (gate exit 0, review exit 0) or `reject` (gate exit 3, review exit 3). `reason` is `null` on
-  approve; on reject it is the gate's first `DEPLOY BLOCKED` line, whitespace collapsed, cut to 500 bytes (the
-  contract's limit), and is the `reason` argument of the printed `reject` command.
+- `verdict`: `approve` (gate exit 0 with a deploy command, review exit 0) or `reject` (review exit 3): the gate
+  blocked (gate exit 3), or the gate said NO CHANGE (gate exit 0, `gate.passed: true`,
+  `gate.report.deploy.status: "no-change"`): the target account already runs exactly the submitted wasm, so the
+  submission changed nothing. `reason` is `null` on approve; on reject it is the gate's first `DEPLOY BLOCKED` line,
+  whitespace collapsed, cut to 500 bytes (the contract's limit), or, for NO CHANGE, the fixed sentence
+  `the target account already runs this exact wasm: nothing was changed by this submission`; it is the `reason`
+  argument of the printed `reject` command. `gate.passed` is the gate's own result, not the verdict.

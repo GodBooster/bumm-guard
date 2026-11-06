@@ -34,7 +34,7 @@ from . import __version__
 from .cli import fix_to_dict, scan_to_dict
 from .fix import run_fix
 from .gate import BLOCKING, NETWORKS, run_gate, valid_account
-from .review import run_review_job
+from .review import NO_CHANGE_REASON, run_review_job
 from .rulepack.near import RULES
 from .scanner import DEFAULT_EXCLUDES, scan
 from .storage import estimate_storage as _estimate_storage
@@ -196,6 +196,9 @@ def review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, simul
         "messages": out.lines + out.errors,
         "note": ("Review passed. The approve command above was NOT executed and this tool cannot execute it: show it "
                  "to the human reviewer, who signs it with their own key." if out.verdict == "approve" else
+                 "Review blocked: the target account already runs exactly the submitted wasm, so this submission "
+                 "changed nothing. The reject command above was NOT executed: show it to the human reviewer. Do not "
+                 "approve it." if out.reason == NO_CHANGE_REASON else
                  "Review blocked. The reject command above was NOT executed: show it to the human reviewer. Do not "
                  "approve around the gate."),
     }
@@ -300,7 +303,8 @@ def build_server():
         "already has code, migration guard) for the job's target_account (or `account`). Writes the review report "
         "(.bumm-guard/review-<job>.json) and returns `verdict` approve|reject and `command`: the near-cli "
         "`approve` call (with gate_report_sha256 = sha256 of that report) or the `reject` call with the gate's "
-        "reason, as TEXT. THIS TOOL NEVER SIGNS OR SENDS anything and has no execute parameter; the human "
+        "reason, as TEXT. A target account that already runs exactly `wasm` is a reject too (nothing was changed "
+        "by the submission). THIS TOOL NEVER SIGNS OR SENDS anything and has no execute parameter; the human "
         "reviewer runs the command. Bad input or a job that is not Submitted is a tool error."))
     @readable_errors
     def review_job_tool(jobs_contract: str, job_id: int, crate_dir: str, wasm: str,

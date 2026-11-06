@@ -20,7 +20,7 @@ from pathlib import Path
 from unittest import mock
 
 from bumm_guard import cli, mcp_server
-from bumm_guard.review import REASON_MAX, call_command, run_review_job
+from bumm_guard.review import NO_CHANGE_REASON, REASON_MAX, call_command, run_review_job
 
 ROOT = Path(__file__).resolve().parent.parent
 EVIDENCE = ROOT / "evidence"
@@ -176,6 +176,29 @@ class ReviewJobTests(unittest.TestCase):
         self.assertIn("high/critical finding", args["reason"])
         self.assertIn("BG-NEAR-001", out)
 
+    def test_target_already_running_the_submitted_wasm_is_rejected_not_approved(self):
+        # the gate says NO CHANGE (exit 0, nothing to deploy); for a paid job that is a reject
+        for rep_file in (WITH_MIGRATE, CODE_ONLY):
+            with self.subTest(report=rep_file.name):
+                code, out, err = self.review(Node(job(report=rep_file), code=V2_WASM), report=rep_file)
+                self.assertEqual(code, 3, out + err)
+                self.assertIn("gate: NO CHANGE: account", out)
+                self.assertIn(f"REVIEW BLOCKED: {NO_CHANGE_REASON}", out)
+                self.assertNotIn("REVIEW PASSED", out)
+                cmd = self.command(out)
+                self.assertEqual(cmd[5], "reject")
+                self.assertEqual(json.loads(cmd[cmd.index("json-args") + 1]), {"job_id": 0, "reason": NO_CHANGE_REASON})
+                self.assertNotIn("approve", out)
+                self.assertNotIn("gate_report_sha256", out)
+                rep = json.loads(self.out.read_text())
+                self.assertEqual((rep["verdict"], rep["reason"]), ("reject", NO_CHANGE_REASON))
+                self.assertEqual((rep["gate"]["exit_code"], rep["gate"]["passed"]), (0, True))
+                self.assertEqual(rep["gate"]["report"]["deploy"], {"status": "no-change", "command": None})
+
+    def test_no_change_reason_is_the_documented_sentence(self):
+        self.assertEqual(NO_CHANGE_REASON,
+                         "the target account already runs this exact wasm: nothing was changed by this submission")
+
     def test_long_reason_is_cut_to_the_contract_limit(self):
         from bumm_guard.review import _reason
         r = _reason(["DEPLOY BLOCKED: " + "é" * 400], [])
@@ -265,6 +288,14 @@ class McpReviewJobTests(unittest.TestCase):
         self.assertEqual((r["verdict"], r["passed"], r["gate_report_sha256"]), ("reject", False, None))
         self.assertIn(" reject json-args ", r["command"])
         self.assertIn("Do not approve around the gate", r["note"])
+
+    def test_no_change_returns_reject_text(self):
+        r = self.call(Node(job(), code=V2_WASM))
+        self.assertEqual((r["verdict"], r["passed"], r["gate_report_sha256"]), ("reject", False, None))
+        self.assertEqual(r["reason"], NO_CHANGE_REASON)
+        self.assertIn(" reject json-args ", r["command"])
+        self.assertNotIn("approve", r["command"])
+        self.assertIn("already runs exactly the submitted wasm", r["note"])
 
     def test_bad_input_is_a_tool_error(self):
         with self.assertRaises(mcp_server.ToolInputError):
