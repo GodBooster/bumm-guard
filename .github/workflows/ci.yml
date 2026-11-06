@@ -232,10 +232,10 @@ jobs:
       - name: build swarm_jobs wasm (rustc 1.85.0; guarded jobs, docs/SWARM_JOBS.md)
         working-directory: tests/fixtures/near
         run: cargo build --release --locked --target wasm32-unknown-unknown -p swarm_jobs
-      - name: four-hash guard (the four proven wasm files built in this job must equal evidence/wasm/SHA256SUMS)
+      - name: hash guard (the proven wasm files built in this job must equal evidence/wasm/SHA256SUMS)
         working-directory: tests/fixtures/near/target/wasm32-unknown-unknown/release
         run: |
-          sha256sum event_registration.wasm event_registration_waitlist.wasm escrow_v1.wasm escrow_v2.wasm
+          sha256sum event_registration.wasm event_registration_waitlist.wasm escrow_v1.wasm escrow_v2.wasm swarm_jobs.wasm
           sha256sum --check --strict "$GITHUB_WORKSPACE/evidence/wasm/SHA256SUMS"
       - name: run swarm_jobs scenarios (review pays the agent; guardrails; cancel refunds)
         run: |

@@ -143,28 +143,24 @@ Accounts: `bumm-guard-jobs.testnet` (new, holds the contract), reviewer `bumm-gu
 | `evidence/escrow-upgrade-with-migrate-report-ci.json` | `f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420` |
 | `evidence/escrow-upgrade-code-only-report-ci.json` | `e7cfcfd8712d2dc31c1fb2c951894b367da9dc34a93376b45e1f61e249ac55c5` |
 
-0. Download the wasm the CI scenarios ran against and their report (`<RUN>` = the green CI run on the branch
-   that is deployed; `e2e/` is gitignored):
-   ```
-   gh run download <RUN> --repo GodBooster/bumm-guard -n swarm_jobs-wasm -n simulate-report -D e2e/swarm
-   ```
+0. The contract wasm and its scenario report are committed: `evidence/wasm/swarm_jobs.wasm` (sha256 `bcace58397f2ee597dd5687187ea9e178e3cd5405dfdb810553214e416a9a92b`, in `evidence/wasm/SHA256SUMS`, checked by CI on every push) and `evidence/swarm-jobs-report-ci.json` (CI run 42272132654 on `adb8b70`, 3/3 scenarios, 81/81 steps). No download needed.
 1. **owner** creates the contract account from the faucet:
    ```
    near account create-account sponsor-by-faucet-service bumm-guard-jobs.testnet autogenerate-new-keypair save-to-keychain network-config testnet create
    ```
 2. Gate the fresh deploy (expected: `has no contract code: fresh deploy`, `simulate report ok: 3 scenario(s)
    passed for this wasm`, the storage lock, and one `near contract deploy bumm-guard-jobs.testnet use-file
-   e2e/swarm/swarm_jobs-wasm/swarm_jobs.wasm without-init-call network-config testnet sign-with-keychain send`);
+   evidence/wasm/swarm_jobs.wasm without-init-call network-config testnet sign-with-keychain send`);
    **owner** runs the printed command:
    ```
-   python3 -m bumm_guard gate tests/fixtures/near/swarm_jobs --wasm e2e/swarm/swarm_jobs-wasm/swarm_jobs.wasm \
-     --simulate-report e2e/swarm/simulate-report/swarm-jobs-report.json \
+   python3 -m bumm_guard gate tests/fixtures/near/swarm_jobs --wasm evidence/wasm/swarm_jobs.wasm \
+     --simulate-report evidence/swarm-jobs-report-ci.json \
      --account bumm-guard-jobs.testnet --network testnet --estimate-storage
    ```
 3. **owner** initialises it right away with bob as reviewer, then checks the deploy:
    ```
    near contract call-function as-transaction bumm-guard-jobs.testnet new json-args '{"reviewer":"bumm-guard-bob.testnet"}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as bumm-guard-jobs.testnet network-config testnet sign-with-keychain send
-   python3 -m bumm_guard gate --verify-deployed bumm-guard-jobs.testnet --wasm e2e/swarm/swarm_jobs-wasm/swarm_jobs.wasm --network testnet --smoke 'get_reviewer="bumm-guard-bob.testnet"' --smoke 'job_count=0'
+   python3 -m bumm_guard gate --verify-deployed bumm-guard-jobs.testnet --wasm evidence/wasm/swarm_jobs.wasm --network testnet --smoke 'get_reviewer="bumm-guard-bob.testnet"' --smoke 'job_count=0'
    ```
 4. **alice** joins the swarm with 0.5 NEAR of budget:
    ```
