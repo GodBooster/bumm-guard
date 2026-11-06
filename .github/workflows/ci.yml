@@ -77,6 +77,9 @@ jobs:
       - name: cargo check (wasm32)
         working-directory: tests/fixtures/near
         run: cargo check --workspace --locked --target wasm32-unknown-unknown
+      - name: swarm_jobs unit tests (host, stable rustc; the 1.85.0 pin is for the wasm build, dev-dependencies need >= 1.88)
+        working-directory: tests/fixtures/near
+        run: cargo +stable test --locked -p swarm_jobs
 
   # Sandbox tests (near-workspaces / near-sandbox) run only on Linux: near-sandbox has no
   # Darwin-x86_64 binary. This job is enabled once contracts/ with sandbox tests exist.
@@ -226,6 +229,23 @@ jobs:
           print(f"escrow code-only upgrade: steps 0..{up} passed, deal_count right after it passed (value 3), "
                 f"{len(after)} step(s) after that failed with 'Cannot deserialize element' ({len(views)} view steps), as expected")
           EOF
+      - name: build swarm_jobs wasm (rustc 1.85.0; guarded jobs, docs/SWARM_JOBS.md)
+        working-directory: tests/fixtures/near
+        run: cargo build --release --locked --target wasm32-unknown-unknown -p swarm_jobs
+      - name: four-hash guard (the four proven wasm files built in this job must equal evidence/wasm/SHA256SUMS)
+        working-directory: tests/fixtures/near/target/wasm32-unknown-unknown/release
+        run: |
+          sha256sum event_registration.wasm event_registration_waitlist.wasm escrow_v1.wasm escrow_v2.wasm
+          sha256sum --check --strict "$GITHUB_WORKSPACE/evidence/wasm/SHA256SUMS"
+      - name: run swarm_jobs scenarios (review pays the agent; guardrails; cancel refunds)
+        run: |
+          python -m bumm_guard simulate scenarios/swarm_jobs/*.json \
+            --runner contracts/target/release/bumm-sim --out simulate-out/swarm-jobs-report.json
+      - name: gate swarm_jobs with its simulate evidence (fresh deploy, binds the report to this wasm)
+        run: |
+          python -m bumm_guard gate tests/fixtures/near/swarm_jobs \
+            --wasm tests/fixtures/near/target/wasm32-unknown-unknown/release/swarm_jobs.wasm \
+            --simulate-report simulate-out/swarm-jobs-report.json --dry-run
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -251,3 +271,8 @@ jobs:
         with:
           name: escrow_v2-wasm
           path: tests/fixtures/near/target/wasm32-unknown-unknown/release/escrow_v2.wasm
+      - name: upload the exact swarm_jobs wasm the scenarios ran against
+        uses: actions/upload-artifact@v4
+        with:
+          name: swarm_jobs-wasm
+          path: tests/fixtures/near/target/wasm32-unknown-unknown/release/swarm_jobs.wasm

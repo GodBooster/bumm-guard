@@ -1,0 +1,15 @@
+[package]
+name = "swarm_jobs"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Guarded jobs for agent swarms: a job's reward is paid to the agent only after the reviewer (the account that runs BUMM Guard review) approves exactly the wasm the gate checked (docs/SWARM_JOBS.md)."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { version = "=5.17.2", features = ["non-contract-usage"] }
+
+[dev-dependencies]
+near-sdk = { version = "=5.17.2", features = ["unit-testing"] }
