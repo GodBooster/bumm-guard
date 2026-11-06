@@ -28,6 +28,12 @@ Rust sources that the migration method is not callable by anyone (``#[private]``
 comparison has no recognised rejection branch (``owner-check-unknown``), blocks, because after the
 upgrade any account could call it and rewrite the state. The same code as the candidate on the
 account: ``NO CHANGE``, exit 0, no command (``deploy.status: "no-change"`` in the report).
+
+Strings taken from the simulate report (scenario names, hashes, step kinds and methods, statuses) are
+supplied by whoever made the report. Before they enter the output lines, the errors or the report
+they go through ``sanitize.clean`` (control characters removed, 200 characters at most), so a
+scenario name cannot break a line or draw a fake verdict. A migration method or gas value that is not
+plain text is not accepted as a proof, because it would be repeated in the printed command.
 """
 
 from __future__ import annotations
@@ -46,6 +52,7 @@ from pathlib import Path
 from . import __version__
 from .rulepack.near import RULES
 from .rulepack.near.rust_src import SourceFile, match_close
+from .sanitize import clean, clean_str, is_plain
 from .scanner import ScanResult, discover, scan
 from .storage import RPC_URLS, RpcError, estimate_storage, simulate_state_bytes  # noqa: F401  (RPC_URLS re-exported)
 from .verify import SmokeSpecError, global_contract, onchain_code_sha256, parse_smoke, post_deploy_ok, verify_deployed
@@ -56,6 +63,8 @@ REPORT_NAME = "gate-report.json"
 NETWORKS = ("testnet", "mainnet")
 # NEAR account ids: dot-separated parts of [a-z0-9] joined by single - or _ ; 2..64 chars
 _ACCOUNT_RE = re.compile(r"^(?:[a-z\d]+[-_])*[a-z\d]+(?:\.(?:[a-z\d]+[-_])*[a-z\d]+)*$")
+METHOD_MAX = 256          # NEAR's limit on a method name (bytes); longer cannot be a real migration method
+GAS_MAX = 32
 WASM_PLACEHOLDER = "<path/to/contract.wasm>"
 ACCOUNT_PLACEHOLDER = "<account-id>"
 
@@ -152,9 +161,9 @@ def load_simulate_report(path: str, wasm_sha256: str) -> tuple[dict | None, list
         return None, [f"bumm-guard: {path} is not a simulate report (docs/FORMATS.md §3)"], 2
     if rep.get("wasm_sha256") != wasm_sha256:
         return None, ["DEPLOY BLOCKED: simulate report is for a different wasm "
-                      f"(report {rep.get('wasm_sha256')!r}, artifact {wasm_sha256!r}). Re-run `bumm-guard simulate` "
+                      f"(report {clean(repr(rep.get('wasm_sha256')))}, artifact {wasm_sha256!r}). Re-run `bumm-guard simulate` "
                       "against this wasm."], 3
-    failing = [str(sc.get("name", "?")) for sc in rep["scenarios"] if isinstance(sc, dict) and not sc.get("passed")]
+    failing = [clean(sc.get("name", "?")) for sc in rep["scenarios"] if isinstance(sc, dict) and not sc.get("passed")]
     failed = rep["summary"].get("failed")
     if failing or not isinstance(failed, int) or failed != 0:
         names = ", ".join(failing) or "(see report)"
@@ -178,23 +187,24 @@ def _upgrade_succeeded(step: dict) -> tuple[bool, str]:
     status = (step.get("actual") or {}).get("status") if isinstance(step.get("actual"), dict) else None
     expected = step.get("expected")
     if expected != "ok":
-        return False, f"status {status}, expected {json.dumps(expected)}"
+        return False, f"status {clean(status)}, expected {clean(json.dumps(expected))}"
     if status != "success":
-        return False, f"status {status}"
+        return False, f"status {clean(status)}"
     return True, ""
 
 
 def _post_upgrade_steps(sc: dict, up_idx) -> list[dict]:
     """Every step after the upgrade step as ``{index, kind, method}`` (``method`` is the account
-    for a ``balance`` step)."""
+    for a ``balance`` step); ``kind`` and ``method`` are report text, so they are cleaned for display."""
     if not _is_int(up_idx):
         return []
     out = []
     for st in sc.get("steps") or []:
         if not isinstance(st, dict) or not _is_int(st.get("index")) or st["index"] <= up_idx:
             continue
-        out.append({"index": st["index"], "kind": st.get("kind"),
-                    "method": st.get("method") if st.get("kind") != "balance" else st.get("account")})
+        method = st.get("method") if st.get("kind") != "balance" else st.get("account")
+        out.append({"index": st["index"], "kind": None if st.get("kind") is None else clean(st["kind"]),
+                    "method": None if method is None else clean(method)})
     return out
 
 
@@ -210,10 +220,10 @@ def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | 
     for sc in rep.get("scenarios") or []:
         if not isinstance(sc, dict) or not _upgrade_steps(sc):
             continue
-        name = str(sc.get("name", "?"))
+        name = clean(sc.get("name", "?"))
         frm, to = sc.get("wasm_sha256"), sc.get("upgrade_wasm_sha256")
         if (frm, to) != (onchain, candidate):
-            notes.append(f"upgrade scenario {name!r} proves {frm} -> {to}, not {onchain} -> {candidate}")
+            notes.append(f"upgrade scenario {name!r} proves {clean(frm)} -> {clean(to)}, not {onchain} -> {candidate}")
             continue
         step = _upgrade_steps(sc)[0]
         ok, why = _upgrade_succeeded(step)
@@ -242,6 +252,12 @@ def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | 
                          "args (bumm-sim older than this gate): re-run `bumm-guard simulate`")
             continue
         m = step.get("migrate")
+        if m and not (is_plain(m.get("method"), METHOD_MAX) and m["method"]
+                      and (m.get("gas") is None or is_plain(m["gas"], GAS_MAX))):
+            notes.append(f"upgrade scenario {name!r}: the recorded migration method or gas is not plain text "
+                         "(control characters, or too long); it would be repeated in the deploy command, so "
+                         "this scenario is not accepted as a proof")
+            continue
         proofs.append({"onchain_code_sha256": onchain, "candidate_sha256": candidate, "scenario": name,
                        "migrate": {"method": m["method"], "args": m.get("args") or {}, "gas": m.get("gas")}
                        if m else None,
@@ -277,12 +293,13 @@ def _strings_in(value) -> list[str]:
 
 
 def migrate_alias_args(rep: dict, scenario: str, migrate: dict | None) -> list[str]:
-    """Alias names found among the string values (recursively) of the proof's ``migrate.args``.
+    """Alias names found among the string values (recursively) of the proof's ``migrate.args``
+    (``scenario`` is the proof's cleaned scenario name).
     The runner resolved them to sandbox accounts; printed raw into the testnet command they would be
     wrong, so the gate blocks on any."""
     if not migrate:
         return []
-    sc = next((s for s in rep.get("scenarios") or [] if isinstance(s, dict) and str(s.get("name", "?")) == scenario), {})
+    sc = next((s for s in rep.get("scenarios") or [] if isinstance(s, dict) and clean(s.get("name", "?")) == scenario), {})
     names = scenario_aliases(sc)
     return sorted({s for s in _strings_in(migrate.get("args")) if s in names})
 
@@ -299,9 +316,9 @@ def upgrade_check(rep, account: str, onchain: str, candidate: str, simulate_repo
         if isinstance(sc, dict) and _upgrade_steps(sc):
             step = _upgrade_steps(sc)[0]
             actual = step.get("actual") if isinstance(step.get("actual"), dict) else {}
-            pairs.append({"from": sc.get("wasm_sha256"), "to": sc.get("upgrade_wasm_sha256"),
-                          "scenario": str(sc.get("name", "?")), "passed": bool(sc.get("passed")),
-                          "upgrade_status": actual.get("status"),
+            pairs.append({"from": clean_str(sc.get("wasm_sha256")), "to": clean_str(sc.get("upgrade_wasm_sha256")),
+                          "scenario": clean(sc.get("name", "?")), "passed": bool(sc.get("passed")),
+                          "upgrade_status": clean_str(actual.get("status")),
                           "upgrade_succeeded": _upgrade_succeeded(step)[0]})
     matching = [p for p in pairs if p["from"] == onchain and p["to"] == candidate]
     if not simulate_report:
@@ -546,7 +563,7 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
             rep = json.loads(Path(simulate_report).read_text(encoding="utf-8"))
         except (OSError, ValueError) as e:
             return _refused(res, report, dry_run, [f"bumm-guard: cannot read simulate report {simulate_report}: {e}"])
-    upgrade_names = [str(sc.get("name", "?")) for sc in (rep or {}).get("scenarios") or []
+    upgrade_names = [clean(sc.get("name", "?")) for sc in (rep or {}).get("scenarios") or []
                      if isinstance(sc, dict) and _upgrade_steps(sc)] if isinstance(rep, dict) else []
     if account and wasm and Path(wasm).is_file():
         candidate = data["artifact"]["wasm_sha256"]
@@ -592,7 +609,7 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
             m = upgrade["migrate"]
             out.lines.append(f"upgrade of {account}: {onchain} -> {candidate}, proved by passing scenario "
                              f"{upgrade['scenario']!r}; "
-                             + (f"migration {m['method']}({json.dumps(m['args'])}) in the same transaction"
+                             + (f"migration {m['method']}({clean(json.dumps(m['args']))}) in the same transaction"
                                 if m else "code only (no migration call)"))
             out.lines.extend(f"note: {n}" for n in notes)
             steps = upgrade["post_upgrade_steps"]
@@ -605,7 +622,7 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
             if aliases:
                 return _blocked(out, report, dry_run, [
                     f"DEPLOY BLOCKED: migrate args of scenario {upgrade['scenario']!r} reference sandbox-only "
-                    f"alias(es) {', '.join(repr(a) for a in aliases)}: the runner resolved them to sandbox accounts, "
+                    f"alias(es) {', '.join(clean(repr(a)) for a in aliases)}: the runner resolved them to sandbox accounts, "
                     f"but the printed {network} command would send them as written; use literal account ids in "
                     "the scenario's migrate args and re-run `bumm-guard simulate`"])
             if m:
@@ -647,7 +664,7 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
                          "contract needs --wasm and a --simulate-report with a passing upgrade scenario")
     if upgrade:
         scen = rep.get("scenarios") or []
-        failing = [str(sc.get("name", "?")) for sc in scen if isinstance(sc, dict) and not sc.get("passed")]
+        failing = [clean(sc.get("name", "?")) for sc in scen if isinstance(sc, dict) and not sc.get("passed")]
         data["simulate"] = {"report": simulate_report, "passed": not failing, "scenarios": len(scen)}
         if failing:
             out.lines.append(f"note: other scenario(s) in the report did not pass: {', '.join(failing)}")

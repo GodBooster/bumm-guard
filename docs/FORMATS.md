@@ -212,6 +212,23 @@ Added 2026-11-03: `migration_guard` (`{method, status, file, line}`, `null` with
   the entry carries `expected` (parsed JSON) and is `ok` only if `result` equals it; on a mismatch `result` stays
   and `error` is `expected <json>, got <json>` (exit 5). Entry shape: `{view, args?, expected?, ok, result | error}`.
 
+**Report text is cleaned before it is shown (2026-11-06).** A simulate report is supplied by whoever ran the
+scenarios (in a guarded job: by the agent under review), so its strings are not trusted as terminal text. Every
+string the gate takes from a §3 report (scenario `name`, `wasm_sha256` / `upgrade_wasm_sha256`, a step's `kind`,
+`method`, `account` and `actual.status`, alias names) goes through one function (`bumm_guard/sanitize.py`,
+`clean`) before it enters an output line, an error, `upgrade.scenario`, `upgrade.post_upgrade_steps`,
+`upgrade_check.proven_pairs[]`, the MCP `messages` or a review's `reason`: characters of the Unicode categories
+Cc, Cf, Cs, Zl and Zp (ESC, CR, LF, tab, NUL, DEL, C1 controls, bidi overrides, zero-width characters, lone
+surrogates, line and paragraph separators) are removed and the rest is cut to 200 characters plus `...`. A
+scenario name with a line break and an escape sequence therefore stays inside the one line that quotes it.
+`migrate.args` stay as recorded (they are repeated in the command as JSON, where control characters are
+escaped). A recorded `migrate.method` or `migrate.gas` that is empty, not a string, longer than 256 / 32
+characters or changed by that cleaning is not accepted as a proof (note `the recorded migration method or gas is
+not plain text …`), because it would be repeated in the printed command. `review-job` applies the same cleaning
+to the text it reads from `get_job` (`agent`, `reward`, `target_account`, `status`) and strips control characters
+from every gate line again; a `get_reviewer` answer that is not a valid account id is refused (exit 2). Not
+covered: `scan` / `gate` print a finding's source `snippet` and file name as they are in the crate.
+
 ## 5. ABI panel inputs (`ui/`, static page, no backend)
 
 Reads `artifact.abi` (or a URL to it) plus `{network, contract_id}`. Renders one form

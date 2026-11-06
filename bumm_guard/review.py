@@ -11,7 +11,9 @@ command for the reviewer: ``approve`` with ``gate_report_sha256`` = sha256 of th
 passed, ``reject`` with the gate's reason when it blocked. A gate outcome of NO CHANGE (the target
 account already runs exactly the submitted wasm) is a ``reject`` too: the submission changed nothing,
 so there is nothing to pay for. It never signs and never sends; the reviewer runs the command with
-their own key. Exit codes: 0 passed (approve printed), 3 blocked or no change (reject printed), 2 bad
+their own key. Text read from the job (``get_job``) and every line the gate produced from the
+submitted report is made printable first (``sanitize``: no control characters), so a submission cannot
+draw a fake verdict in the reviewer's terminal. Exit codes: 0 passed (approve printed), 3 blocked or no change (reject printed), 2 bad
 input or nothing to review (no command printed).
 """
 
@@ -26,6 +28,7 @@ from pathlib import Path
 
 from . import __version__
 from .gate import NETWORKS, REPORT_DIR, run_gate, sha256_file, valid_account
+from .sanitize import clean, strip_control
 from .storage import RpcError, resolve_rpc_url, rpc_call
 
 REASON_MAX = 500          # the contract's MAX_REASON (bytes)
@@ -112,7 +115,7 @@ def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, s
         return bad(f"cannot read job {job_id} from {jobs_contract} ({network}): {e}. Nothing was reviewed.")
     if job is None:
         return bad(f"job {job_id} does not exist on {jobs_contract} ({network})")
-    if not isinstance(job, dict) or not isinstance(onchain_reviewer, str):
+    if not isinstance(job, dict) or not isinstance(onchain_reviewer, str) or not valid_account(onchain_reviewer):
         return bad(f"{jobs_contract} does not answer like a swarm_jobs contract (get_job / get_reviewer)")
     res = ReviewOutcome(2, job=job)
     if reviewer is not None and reviewer != onchain_reviewer:
@@ -122,15 +125,16 @@ def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, s
     signer = reviewer or onchain_reviewer
     status = job.get("status")
     if status != "Submitted":
-        res.errors.append(f"bumm-guard: job {job_id} is {status}, not Submitted: nothing to review")
+        res.errors.append(f"bumm-guard: job {job_id} is {clean(status)}, not Submitted: nothing to review")
         return res
     sub_wasm, sub_report = job.get("wasm_sha256"), job.get("report_sha256")
     if not (_is_sha256(sub_wasm) and _is_sha256(sub_report)):
-        res.errors.append(f"bumm-guard: job {job_id} has no valid submitted hashes: {sub_wasm!r}, {sub_report!r}")
+        res.errors.append(f"bumm-guard: job {job_id} has no valid submitted hashes: {clean(repr(sub_wasm))}, "
+                          f"{clean(repr(sub_report))}")
         return res
     wasm_sha = sha256_file(wasm)
-    res.lines.append(f"job {job_id} on {jobs_contract} ({network}): Submitted by {job.get('agent')}; "
-                     f"reward {job.get('reward')} yoctoNEAR; target {job.get('target_account')}")
+    res.lines.append(f"job {job_id} on {jobs_contract} ({network}): Submitted by {clean(job.get('agent'))}; "
+                     f"reward {clean(job.get('reward'))} yoctoNEAR; target {clean(job.get('target_account'))}")
     if wasm_sha != sub_wasm:
         res.errors.append(f"bumm-guard: --wasm {wasm} has sha256 {wasm_sha}, but job {job_id} submitted {sub_wasm}: "
                           "review exactly the submitted wasm (nothing was reviewed)")
@@ -148,15 +152,18 @@ def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, s
     res.lines.append(f"report sha256 {report_sha} = submitted report_sha256")
     target = job.get("target_account")
     if account is not None and target is not None and account != target:
-        res.errors.append(f"bumm-guard: --account {account} differs from the job's target_account {target}")
+        res.errors.append(f"bumm-guard: --account {account} differs from the job's target_account {clean(target)}")
         return res
     target = account or target
     if target is not None and not valid_account(str(target)):
-        res.errors.append(f"bumm-guard: job {job_id} has an invalid target_account {target!r}")
+        res.errors.append(f"bumm-guard: job {job_id} has an invalid target_account {clean(repr(target))}")
         return res
 
     g = run_gate(crate_dir, wasm=wasm, network=network, account=target, dry_run=True,
                  simulate_report=simulate_report, rpc_url=rpc_url)
+    # The gate cleans report text where it reads it; stripping again here keeps every line that reaches
+    # the reviewer's terminal, the reason and the review report on one line whatever its source.
+    g.lines, g.errors = [strip_control(l) for l in g.lines], [strip_control(l) for l in g.errors]
     if g.exit_code == 2:
         res.errors.extend(g.errors or ["bumm-guard: the gate refused the input"])
         return res
@@ -164,7 +171,7 @@ def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, s
     gate_lines = ["deploy command for the target account's owner (NOT executed; not part of this job):"
                   if l.startswith("deploy command (NOT executed") else l for l in gate_lines]
     if g.blocked and g.scan is not None and g.scan.findings:
-        gate_lines = [f"{f.file}:{f.line}: [{f.severity.upper()}] {f.rule_id} {f.rule_name}"
+        gate_lines = [strip_control(f"{f.file}:{f.line}: [{f.severity.upper()}] {f.rule_id} {f.rule_name}")
                       for f in g.scan.findings] + gate_lines
     gate_passed = g.exit_code == 0 and not g.blocked
     # The gate passes a target that already runs this wasm (nothing to deploy, exit 0). For a paid job
