@@ -55,27 +55,30 @@ near contract call-function as-transaction bumm-guard-escrow.testnet new json-ar
 near contract call-function as-transaction bumm-guard-escrow.testnet create_deal json-args '{"seller":"bumm-guard-escrow.testnet"}' prepaid-gas '30 Tgas' attached-deposit '1 NEAR' sign-as bumm-guard-demo.testnet network-config testnet sign-with-keychain send
 ```
 
-B1. Prompt to the agent, verbatim (for the video recording the account is `bumm-guard-escrow2.testnet`, prepared on 2026-11-04 and still on v1; `bumm-guard-escrow.testnet` was upgraded on 2026-11-04 and the gate now treats a v2 deploy there as a no-op):
+B1. Three prompts to the agent, typed one at a time (three explicit requests: one general prompt does not guarantee exactly three tool calls). `<account>` was `bumm-guard-escrow.testnet` on 2026-11-04; that account now runs v2 and the gate answers `NO CHANGE` there. For the video recording `<account>` is `bumm-guard-escrow2.testnet`, prepared on 2026-11-04 and still on v1.
 
-> Онови bumm-guard-escrow.testnet до escrow v2: крейт `tests/fixtures/near/escrow_v2`, wasm `e2e/escrow/v2/escrow_v2.wasm`.
-> Доказ оновлення з CI лежить у `evidence/`. Перевір через bumm-guard і дай мені команду.
+1. `Upgrade <account> to escrow v2: crate tests/fixtures/near/escrow_v2, wasm e2e/escrow/v2/escrow_v2.wasm, network testnet. Call bumm-guard gate_deploy without a simulate report and show me the result. Do not deploy anything.`
+2. `Call it again with simulate_report evidence/escrow-upgrade-code-only-report-ci.json.`
+3. `And with evidence/escrow-upgrade-with-migrate-report-ci.json. Show me the deploy command; do not run it.`
 
-Expected, in order:
-1. `gate_deploy` without a report → blocked (`no passing upgrade scenario proves ecd8a805… -> 13425a04…`).
-2. With `evidence/escrow-upgrade-code-only-report-ci.json` → blocked: `upgrade scenario … for this pair did not pass`.
-3. With `evidence/escrow-upgrade-with-migrate-report-ci.json` → `passed: true`, `migration migrate: #[private] (src/lib.rs:…)`,
+Expected, in order (checked against `bumm-guard-escrow2.testnet` with the CLI on 2026-11-04 after the gate hardening and again on 2026-11-06):
+1. Blocked: `no passing upgrade scenario proves ecd8a805… -> 13425a04…`.
+2. Blocked: `upgrade scenario … for this pair did not pass`.
+3. `passed: true`, `proved after upgrade (25 step(s)): …`, `migration migrate: #[private] (src/lib.rs:118)`,
    `upgrade` block naming the pair and the scenario, and `deploy_command` =
-   `near contract deploy bumm-guard-escrow.testnet use-file e2e/escrow/v2/escrow_v2.wasm with-init-call migrate json-args '{}' prepaid-gas '100 Tgas' attached-deposit '0 NEAR' network-config testnet sign-with-keychain send`.
+   `near contract deploy <account> use-file e2e/escrow/v2/escrow_v2.wasm with-init-call migrate json-args '{}' prepaid-gas '100 Tgas' attached-deposit '0 NEAR' network-config testnet sign-with-keychain send`.
    The tool never runs it.
 
-B2. **owner** runs the printed command. Then:
+B2. **owner** runs the printed command. Then, with the deal read before the upgrade as the expected value (seller is the escrow account used in B0):
 
 ```
-python3 -m bumm_guard gate --verify-deployed bumm-guard-escrow.testnet --wasm e2e/escrow/v2/escrow_v2.wasm --network testnet \
-  --smoke deal_count --smoke 'get_deal:{"id":0}'
+python3 -m bumm_guard gate --verify-deployed <account> --wasm e2e/escrow/v2/escrow_v2.wasm --network testnet \
+  --smoke 'deal_count=1' \
+  --smoke 'get_deal:{"id":0}={"id":0,"buyer":"bumm-guard-demo.testnet","seller":"<account>","amount":"1000000000000000000000000","status":"Funded","created_at_ms":0}'
 ```
-Expected: `matches_artifact: true`, `deal_count` = 1, `get_deal` shows the pre-upgrade deal with `status: "Funded"` and `created_at_ms: 0`
-(the deal made on v1 survived the migration). Record tx hashes in `evidence/UPGRADE_TESTNET.md`.
+Expected: `MATCH`, `deal_count: ok: 1 (as expected)`, `get_deal: ok: {…} (as expected)`: the deal made on v1 kept buyer, seller and amount and
+gained the v2 fields. A `MATCH` alone proves only the code; the `(as expected)` lines prove the deal. `deal_count=1` holds only while the
+account has this one deal. Record tx hashes in `evidence/UPGRADE_TESTNET.md`.
 
 ## Video frames this gives
 
