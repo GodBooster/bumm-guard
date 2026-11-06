@@ -3,7 +3,7 @@
 Status: one run per arm. Calibration of the protocol, not a statistical result.
 
 ## Setup
-- Identical task text: `TASK_N10.md`. Same model (Sonnet), same frozen starter (`bumm-guard/ab/n10_starter`), fresh context per arm, parallel start 09:02 UTC.
+- Identical task text: `AB_TASK_N10.md`. Same model (Sonnet), same frozen starter (`bumm-guard/ab/n10_starter`), fresh context per arm, parallel start 09:02 UTC.
 - A1: Rust + official NEAR docs; no BUMM. Time box 30 min.
 - B1: the same + BUMM Guard (scenario format, `simulate`, remote near-sandbox via the `evaluate` workflow in CI). Time box 45 min (CI build is slow; the extra time is recorded as setup cost).
 - Scoring: coordinator ran the hidden acceptance scenarios `scenarios/n10/*.json` (3 files, 35 steps) and the old `scenarios/n06/*.json` (3 files, 24 steps) against each arm's wasm in near-sandbox via `evaluate.yml`. Arms never saw `scenarios/n10`.

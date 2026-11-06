@@ -1,6 +1,6 @@
 # Contract wasm files the proofs are bound to
 
-The deploy gate binds every proof to a wasm file by its sha256. These are the exact files: deterministic CI builds (the first four; `swarm_jobs.wasm` was added on 2026-11-06, same build) of the fixtures in `tests/fixtures/near/` (rustc 1.85.0, near-sdk 5.17.2), downloaded from CI run 42192505774 (commit `85c4dfb`, 2026-11-06). The same hashes were produced by every earlier CI run cited in `evidence/` and are the code that runs on the testnet accounts in `evidence/UPGRADE_TESTNET.md`.
+The deploy gate binds every proof to a wasm file by its sha256. These are the exact files: CI builds, byte-identical across the CI runs cited (the first four; `swarm_jobs.wasm` was added on 2026-11-06, same build) of the fixtures in `tests/fixtures/near/` (rustc 1.85.0, near-sdk 5.17.2), downloaded from CI run 42192505774 (commit `85c4dfb`, 2026-11-06). The same hashes were produced by every earlier CI run cited in `evidence/` and are the code that runs on the testnet accounts in `evidence/UPGRADE_TESTNET.md`.
 
 | File | Contract | sha256 |
 |---|---|---|
