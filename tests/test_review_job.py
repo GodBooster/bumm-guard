@@ -20,7 +20,7 @@ from pathlib import Path
 from unittest import mock
 
 from bumm_guard import cli, mcp_server
-from bumm_guard.review import NO_CHANGE_REASON, REASON_MAX, call_command, run_review_job
+from bumm_guard.review import EVIDENCE_NOTE, NO_CHANGE_REASON, REASON_MAX, call_command, run_review_job
 
 ROOT = Path(__file__).resolve().parent.parent
 EVIDENCE = ROOT / "evidence"
@@ -201,6 +201,32 @@ class ReviewJobTests(unittest.TestCase):
     def test_no_change_reason_is_the_documented_sentence(self):
         self.assertEqual(NO_CHANGE_REASON,
                          "the target account already runs this exact wasm: nothing was changed by this submission")
+
+    # --- the review says where its evidence came from --------------------------------------------
+
+    def test_note_on_evidence_origin_is_printed_before_every_verdict(self):
+        self.assertEqual(EVIDENCE_NOTE, "note: the scenario report and the crate were supplied with the submission; "
+                         "this review checked that they are the submitted files and ran the gate on them, it did "
+                         "not re-execute the scenarios or rebuild the wasm")
+        cases = ((Node(job()), WITH_MIGRATE, 0, "approve"),                       # passed
+                 (Node(job(report=CODE_ONLY)), CODE_ONLY, 3, "reject"),           # blocked
+                 (Node(job(), code=V2_WASM), WITH_MIGRATE, 3, "reject"))          # no change
+        for node, rep_file, exit_code, verdict in cases:
+            with self.subTest(verdict=verdict, exit_code=exit_code, code=node.code):
+                code, out, err = self.review(node, report=rep_file)
+                self.assertEqual(code, exit_code, out + err)
+                lines = out.splitlines()
+                self.assertEqual(lines.count(EVIDENCE_NOTE), 1, out)
+                verdict_at = next(i for i, l in enumerate(lines) if l.startswith("REVIEW "))
+                self.assertEqual(lines.index(EVIDENCE_NOTE), verdict_at - 1)
+                rep = json.loads(self.out.read_text())
+                self.assertEqual(rep["evidence_origin"], "submission (not re-executed)")
+                self.assertEqual(rep["verdict"], verdict)
+
+    def test_no_note_when_nothing_was_reviewed(self):
+        code, out, err = self.review(Node(job()), wasm=V1_WASM)
+        self.assertEqual(code, 2)
+        self.assertNotIn("supplied with the submission", out + err)
 
     # --- hostile text in the submitted report or in the job cannot draw a fake verdict -----------
 
@@ -383,6 +409,8 @@ class McpReviewJobTests(unittest.TestCase):
         self.assertEqual((r["verdict"], r["passed"], r["command_executed"]), ("approve", True, False))
         self.assertTrue(r["command"].startswith(f"near contract call-function as-transaction {JOBS} approve"))
         self.assertEqual(r["gate_report_sha256"], sha(r["review_report_path"]))
+        self.assertEqual(r["evidence_origin"], "submission (not re-executed)")
+        self.assertIn(EVIDENCE_NOTE, r["messages"])
         self.assertEqual(Path(r["review_report_path"]).parent, (self.tmp / ".bumm-guard").resolve())
 
     def test_block_returns_reject_text(self):

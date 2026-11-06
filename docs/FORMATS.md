@@ -271,6 +271,7 @@ file must be kept byte for byte (it carries a timestamp: a second run gives anot
              "wasm_sha256": "13425a04…", "simulate_report": "evidence/escrow-upgrade-with-migrate-report-ci.json",
              "report_sha256": "f305461f…"},
   "checks": {"status_submitted": true, "wasm_sha256_matches": true, "report_sha256_matches": true},
+  "evidence_origin": "submission (not re-executed)",
   "gate": {"exit_code": 0, "passed": true, "messages": ["…"], "report": {"…": "§4 gate report"},
            "upgrade": {"…": "§4 upgrade block"}, "upgrade_check": null},
   "verdict": "approve",
@@ -280,6 +281,12 @@ file must be kept byte for byte (it carries a timestamp: a second run gives anot
 - `job` is `get_job` as read (read-only `call_function`, finality `final`); `reviewer` is the signer of the printed
   command (`--reviewer`, default the contract's `get_reviewer`).
 - `checks` are always true in a written report: a mismatch stops the review before the gate (exit 2, no file).
+- `evidence_origin` is always `"submission (not re-executed)"`: the scenario report and the crate were supplied
+  with the submission. The review checked that the files are the submitted ones (the two hashes) and ran the gate
+  on them; it did not re-execute the scenarios and did not rebuild the wasm from the crate. The same statement is
+  printed as one `note:` line before the verdict line (`REVIEW PASSED` / `REVIEW BLOCKED`) and is in the MCP
+  `review_job` result under the same key. A reviewer who needs more must take the report from a run they control
+  (docs/SWARM_JOBS.md, Honest limits).
 - `gate.report` is the §4 gate report the gate would have written (the gate runs with `--dry-run`, so the crate's own
   `gate-report.json` is not touched), `null` when it blocked; `gate.upgrade` / `gate.upgrade_check` as in §4 and in
   the MCP `gate_deploy` result.

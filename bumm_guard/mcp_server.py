@@ -34,7 +34,7 @@ from . import __version__
 from .cli import fix_to_dict, scan_to_dict
 from .fix import run_fix
 from .gate import BLOCKING, NETWORKS, run_gate, valid_account
-from .review import NO_CHANGE_REASON, run_review_job
+from .review import EVIDENCE_ORIGIN, NO_CHANGE_REASON, run_review_job
 from .rulepack.near import RULES
 from .scanner import DEFAULT_EXCLUDES, scan
 from .storage import estimate_storage as _estimate_storage
@@ -192,6 +192,7 @@ def review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, simul
         "gate_report_sha256": out.report_sha256 if out.verdict == "approve" else None,
         "command": shlex.join(out.command) if out.command else None,
         "command_executed": False,
+        "evidence_origin": EVIDENCE_ORIGIN,
         "gate": out.gate,
         "messages": out.lines + out.errors,
         "note": ("Review passed. The approve command above was NOT executed and this tool cannot execute it: show it "
@@ -303,7 +304,9 @@ def build_server():
         "already has code, migration guard) for the job's target_account (or `account`). Writes the review report "
         "(.bumm-guard/review-<job>.json) and returns `verdict` approve|reject and `command`: the near-cli "
         "`approve` call (with gate_report_sha256 = sha256 of that report) or the `reject` call with the gate's "
-        "reason, as TEXT. A target account that already runs exactly `wasm` is a reject too (nothing was changed "
+        "reason, as TEXT. The report and the crate are the submitter's files: the review checks their hashes and "
+        "runs the gate on them, it does NOT re-execute the scenarios or rebuild the wasm (`evidence_origin`). "
+        "A target account that already runs exactly `wasm` is a reject too (nothing was changed "
         "by the submission). THIS TOOL NEVER SIGNS OR SENDS anything and has no execute parameter; the human "
         "reviewer runs the command. Bad input, a job that is not Submitted, or a target account that cannot be "
         "read over RPC (the submission was not judged; retry) is a tool error, never a reject."))

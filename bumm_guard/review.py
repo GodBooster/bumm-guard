@@ -6,6 +6,11 @@ job's ``wasm_sha256``, sha256 of ``--simulate-report`` equals its ``report_sha25
 deploy gate (scan, simulate-report binding, upgrade proof when the target account already has code,
 migration guard) on that wasm for the job's ``target_account`` (or ``--account``).
 
+The scenario report and the crate come with the submission: the review checks that they are the
+submitted files and runs the gate on them; it does not re-execute the scenarios and does not rebuild
+the wasm from the crate. It says so in one ``note:`` line before the verdict and in the report
+(``evidence_origin``).
+
 It writes the review report (docs/FORMATS.md §7) to ``.bumm-guard/review-<job>.json`` and prints ONE
 command for the reviewer: ``approve`` with ``gate_report_sha256`` = sha256 of that file when the gate
 passed, ``reject`` with the gate's reason when it blocked. A gate outcome of NO CHANGE (the target
@@ -36,6 +41,10 @@ REASON_MAX = 500          # the contract's MAX_REASON (bytes)
 APPROVE_GAS = "100 Tgas"
 REJECT_GAS = "30 Tgas"
 SHA256_HEX = set("0123456789abcdef")
+EVIDENCE_ORIGIN = "submission (not re-executed)"
+EVIDENCE_NOTE = ("note: the scenario report and the crate were supplied with the submission; this review checked that "
+                 "they are the submitted files and ran the gate on them, it did not re-execute the scenarios or "
+                 "rebuild the wasm")
 NO_CHANGE_REASON = "the target account already runs this exact wasm: nothing was changed by this submission"
 
 
@@ -196,6 +205,7 @@ def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, s
         "inputs": {"crate_dir": crate_dir, "wasm": wasm, "wasm_sha256": wasm_sha,
                    "simulate_report": simulate_report, "report_sha256": report_sha},
         "checks": {"status_submitted": True, "wasm_sha256_matches": True, "report_sha256_matches": True},
+        "evidence_origin": EVIDENCE_ORIGIN,
         "gate": res.gate,
         "verdict": "approve" if passed else "reject",
         "reason": reason,
@@ -206,6 +216,7 @@ def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, s
     res.report_path, res.report_sha256 = str(path), sha256_file(path)
     res.lines.extend("gate: " + l for l in gate_lines)
     res.lines.append(f"review report written to {path} (sha256 {res.report_sha256})")
+    res.lines.append(EVIDENCE_NOTE)
     if passed:
         res.exit_code, res.verdict = 0, "approve"
         res.command = call_command(jobs_contract, "approve", {"job_id": job_id, "wasm_sha256": wasm_sha,
