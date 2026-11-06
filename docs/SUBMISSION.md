@@ -2,21 +2,21 @@
 
 Drafts for the owner to edit and publish. Nothing here has been posted or submitted. Every claim is backed by a file in this repository or by the CI run named next to it; anything not done is listed as not done. Placeholders in `{braces}` are filled by the owner on 13.11 (the repository is private until then).
 
-## 1. Form field "What did you build?" (limit 2000 characters; this text: 1984 characters, counted on the text between the markers without the final newline, 2026-11-06)
+## 1. Form field "What did you build?" (limit 2000 characters; this text: 1975 characters, counted on the text between the markers without the final newline, 2026-11-06)
 
 <!-- form-text-start -->
 BUMM Guard proves that a change to a NEAR contract works on state written by the code that is already deployed, before an agent or a human deploys it: the scenario's state, bound to the exact pair of code hashes.
 
 The problem: in NEAR, redeploying code over a contract whose stored state has a different layout, without a migration, leaves a contract that panics on every call ("Cannot deserialize the contract state."). Tests that deploy fresh do not see it.
 
-What it does: the `upgrade` step of the scenario runner deploys the old wasm in near-sandbox, writes state with transactions, deploys the new wasm on the same account (with its `migrate` call) and runs checks on the upgraded state. The deploy gate reads the account's code hash and, if it already runs code, prints the deploy command only when a passing upgrade scenario proves that exact pair. Around it: a static rule-pack (3 NEAR defect classes, 2 auto-fixed), an MCP server (6 tools) and an ABI panel.
+What it does: the `upgrade` step of the scenario runner deploys the old wasm in near-sandbox, writes state with transactions, deploys the new wasm on the same account (with its `migrate` call) and runs checks on the upgraded state. The deploy gate reads the account's code hash and, if it already runs code, prints the deploy command only when a passing upgrade scenario proves that exact pair. Around it: a static rule-pack (3 NEAR defect classes, 2 auto-fixed), an MCP server (7 tools) and an ABI panel.
 
 Evidence:
 - Sandbox, CI on every push, two pairs: migrate 16/16 and 33/33; code-only 4/16 and 9/17 (the escrow smoke view still answers, record reads panic).
-- Origin, a pilot (add a waitlist; same model and task, ONE run per arm, not statistics): both arms passed fresh-deploy checks 3/3. The arm using our earlier tool was slower and shipped no migration; the plain agent wrote one. The upgrade check was built after that.
+- Guarded jobs for agent swarms: a NEAR contract holds the reward and pays the agent only after a reviewer approves exactly the wasm hash the gate checked; `review-job` prints approve or reject, never signs. Sandbox: 3 scenarios, 81/81 steps.
 - Testnet, live, two pairs: gate blocked without proof and with a failing one, passed with the migrate proof; the owner ran the printed deploy+migrate tx; pre-upgrade state survived (a registration; a 1 NEAR escrow deal).
 
-Not done: no state copied from a live network; the panel's wallet path is unverified; no third-party contract run.
+Not done: no state copied from a live network; no real inference in the swarm, one trusted reviewer; no third-party contract run.
 
 Prior work: BUMM, the author's Solana builder, is separate and not in this repo. Built in the hackathon window; written with Claude Code.
 
@@ -53,45 +53,63 @@ Thread, reply 2 (275 characters):
 Live on testnet, two contract pairs: the gate refused without proof, passed with the migrate() proof, the owner ran the printed tx, a registration and a 1-NEAR escrow deal survived (evidence/UPGRADE_TESTNET.md). Limits: scenario-made state, regex-level checks. #NEARHackathon
 <!-- x3-end -->
 
-## 3. Video script v3 (about 2 min 20 s, screen recording, voice-over in plain statements)
+Thread, reply 3 (271 characters; after the testnet run, replace "Sandbox: 81/81 steps" with the testnet result if it fits):
 
-Changed on 2026-11-06 after an external review: the order now follows what actually happens (old deal, failing upgrade in the sandbox, passing migration, three gate decisions, the owner runs the command, the same deal on the upgraded contract), everything is on `bumm-guard-escrow2.testnet`, and the A/B pilot is not in the video (it did not show a speed-up: the tool of that day was slower and missed the problem; the upgrade check was built after it).
+<!-- x4-start -->
+Also new: guarded jobs for agent swarms. A NEAR contract holds the reward; the agent is paid only after a reviewer approves exactly the wasm hash BUMM Guard checked. review-job prints approve or reject, never signs. Sandbox: 81/81 steps. docs/SWARM_JOBS.md #NEARHackathon
+<!-- x4-end -->
 
-Recorded in parts on the owner's machine, in `bumm-guard/` on `main`, and cut together. Not one take: the agent needs about two minutes for shot 3, so its waiting time is cut and the cut is marked on screen ("waiting time cut"). Shot 4 is a real transaction signed by the owner with `sign-with-keychain`; no key, wallet or seed phrase appears in frame, and the frame carries the caption "signed by the owner". The gate never signs anything. The CI log in shot 2 is shown from the owner's logged-in browser with the run number and the commit SHA visible; use the latest green run on `main` at recording time (it becomes public with the repository). Every number on screen is in the README or in `evidence/`.
+## 3. Video script v4 (about 2 min 55 s, screen recording, voice-over in plain statements)
 
-**Order matters.** Shots 1 to 3 are read-only and can be rehearsed and re-recorded any number of times. Shot 4 changes the account from v1 to v2 and can be done once. Shot 5 is read-only again and can be re-recorded after shot 4. If the recording of shot 4 fails after the transaction went through, show the transaction on the explorer page instead; do not stage a second one.
+Changed on 2026-11-06: v3 plus guarded jobs for agent swarms (`docs/SWARM_JOBS.md`). The escrow upgrade is now a paid job: agent alice does it, a reviewer checks it with BUMM Guard, alice is paid only after the review passed, then the owner deploys and the deal survives. Order follows what actually happens; everything is on `bumm-guard-escrow2.testnet` and `bumm-guard-jobs.testnet`. The A/B pilot is not in the video (it did not show a speed-up: the tool of that day was slower and missed the problem; the upgrade check was built after it).
 
-Pre-record checks (all read-only):
+Recorded in parts on the owner's machine, in `bumm-guard/` on `main`, and cut together. The agent's waiting time in shot 4 is cut and marked on screen ("waiting time cut"). Every transaction is signed by the owner with `sign-with-keychain` on testnet accounts he controls (alice, bob, demo are his test accounts); each such frame carries the caption "signed by the owner, test account". No key, wallet or seed phrase in frame. BUMM Guard never signs. The CI log in shot 3 is shown with run number and commit SHA visible; use the latest green run on `main` at recording time. Every number on screen is in the README or in `evidence/`.
+
+**Before recording (owner, off camera, once):** steps 0 to 6 and the posting and submit of job 1 from the testnet run plan in `docs/SWARM_JOBS.md`: `bumm-guard-jobs.testnet` deployed through the gate and initialised with reviewer `bumm-guard-bob.testnet`; alice joined with 0.5 NEAR; demo posted job 0 ("upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals", 1 NEAR) and job 1 (same text, 1 NEAR); alice submitted escrow v2 to job 0 with the migrate report hash and to job 1 with the code-only report hash. Do not approve, reject or deploy anything yet.
+
+**Order matters.** Shots 1 to 5 are read-only and can be re-recorded any number of times. Shot 6 (approve) and shot 7 (deploy + migrate of escrow2) are real transactions, done once each, in that order: the review in shot 5 reads escrow2 while it still runs v1. Shot 8 is read-only again. If a recording of shot 6 or 7 fails after the transaction went through, show the transaction on the explorer instead; do not stage a second one.
+
+Pre-record checks (read-only): escrow2 still on v1 with its deal (command below, `MATCH` for `ecd8a805…`); `get_job {"id":0}` and `{"id":1}` say `Submitted` by `bumm-guard-alice.testnet`; `evidence/wasm/SHA256SUMS` checks OK; the `bumm-guard` MCP server shows as connected in Claude Code.
 
 ```
 python3 -m bumm_guard gate --verify-deployed bumm-guard-escrow2.testnet --wasm evidence/wasm/escrow_v1.wasm --network testnet --smoke 'deal_count=1' --smoke 'get_deal:{"id":0}'
 ```
-must print `MATCH` for `ecd8a805…` and the deal `{"id": 0, "buyer": "bumm-guard-demo.testnet", "seller": "bumm-guard-escrow2.testnet", "amount": "1000000000000000000000000", "released": false}` (seen 2026-11-06). `evidence/wasm/escrow_v2.wasm` sha256 is `13425a04…`; both `evidence/escrow-upgrade-*-report-ci.json` exist; the `bumm-guard` MCP server shows as connected in the Claude Code session before the first prompt.
 
 | # | Time | Screen | Shows | Voice-over |
 |---|---|---|---|---|
-| 1 | 0:00-0:15 | Terminal: the pre-record command above | `MATCH` for the v1 hash, `deal_count: ok: 1 (as expected)`, the deal: buyer, seller, 1 NEAR, `released: false` | "This escrow contract is live on NEAR testnet and holds one deal: one NEAR, not released. Version two stores a deal differently. We want to upgrade and keep this deal." |
-| 2 | 0:15-0:40 | Browser: CI job `scenario runner`, step `upgrade escrow v1 -> v2 code only`, then step `… with migrate()`; run number and SHA in frame | `FAIL … (9/17 steps)`: `deal_count` right after the upgrade **passes** with `3`, then `get_deal`, `release`, `refund` end in `Cannot deserialize element`. Then `PASS … (33/33 steps)`, `upgrade_wasm_sha256 13425a04…` | "First in a sandbox, on state the scenario wrote with the old code. New code without a migration: the deal count still answers, every call that reads a deal panics. A health check that only calls deal count misses the broken records. The same upgrade with migrate in the same transaction: 33 of 33." |
-| 3 | 0:40-1:20 | Claude Code session, three prompts typed one after another (below); waiting time cut, marked on screen | `gate_deploy` three times. 1: `passed: false`, `no passing upgrade scenario proves ecd8a805… -> 13425a04…`. 2: `upgrade scenario … for this pair did not pass`. 3: `passed: true`, `proved after upgrade (25 step(s)): …`, `migration migrate: #[private] (src/lib.rs:118)`, `deploy_command: near contract deploy bumm-guard-escrow2.testnet … with-init-call migrate …` | "Now a coding agent asks the gate through MCP. No proof: blocked, the account already runs code and nothing proves this pair of code hashes. The failing report: blocked. The migrate proof: passed. The gate lists what was proved after the upgrade, checks that migrate is private, prints one deploy command and never runs it." |
-| 4 | 1:20-1:35 | Terminal: the owner pastes the printed command; caption "signed by the owner" | The transaction result and its ID | "The owner runs the printed command with their own key. Deploy and migrate, one transaction." |
-| 5 | 1:35-2:00 | Terminal: the verify command below | `MATCH` for `13425a04…`, `deal_count: ok: 1 (as expected)`, `get_deal: ok: {… "status": "Funded", "created_at_ms": 0} (as expected)` with buyer, seller and amount readable | "Same account. The code on chain is the proven wasm. The deal made on version one is still there: same buyer, same seller, same amount, now in the version-two shape." |
-| 6 | 2:00-2:20 | README, "Honest limits", then the repo URL | Lines: scenario-made state, not live state; regex-level checks; no third-party contract run | "Limits, written down: we check the listed scenarios and these exact wasm files. The state is made by the scenario, not copied from the live network, and the source checks are regex-level. Every transaction shown is linked in the repository. {REPO}" |
+| 1 | 0:00-0:15 | Terminal: the pre-record command above | `MATCH` for v1, `deal_count: ok: 1 (as expected)`, the deal: buyer, seller, 1 NEAR, `released: false` | "This escrow contract is live on NEAR testnet and holds a one-NEAR deal. Version two stores deals differently. We want the upgrade, and we want this deal to survive." |
+| 2 | 0:15-0:30 | Terminal: `near contract call-function as-read-only bumm-guard-jobs.testnet get_job json-args '{"id":0}' network-config testnet now` | description, reward 1 NEAR, `status: Submitted`, agent `bumm-guard-alice.testnet`, `wasm_sha256 13425a04…` | "The upgrade is posted as a paid job for an agent swarm: the contract holds one NEAR. Agent alice took it and submitted the hash of her wasm and of her sandbox report. She is not paid yet." |
+| 3 | 0:30-0:55 | Browser: CI job `scenario runner`, steps `upgrade escrow v1 -> v2 code only` and `… with migrate()`; run number and SHA in frame | `FAIL … (9/17 steps)`: `deal_count` right after the upgrade **passes** with `3`, then `get_deal`, `release`, `refund` end in `Cannot deserialize element`. Then `PASS … (33/33 steps)` | "What alice's report proves, in a sandbox, on state the scenario wrote with the old code. New code without a migration: deal count still answers, every call that reads a deal panics. A health check that only calls deal count misses it. With migrate in the same transaction: 33 of 33." |
+| 4 | 0:55-1:25 | Claude Code (alice's agent), three prompts below; waiting time cut | `gate_deploy`: 1 blocked, no proof for `ecd8a805… -> 13425a04…`; 2 blocked, scenario did not pass; 3 `passed: true`, `proved after upgrade (25 step(s))`, `migrate #[private]` | "Alice's agent checks its own work through MCP before submitting. No proof: blocked. Failing report: blocked. The migrate proof: passed." |
+| 5 | 1:25-1:55 | Terminal: `review-job` for job 1, then for job 0 (commands below) | job 1: `REVIEW BLOCKED: … no passing upgrade scenario proves …`, exit 3, a `reject` command. Job 0: `wasm sha256 … = submitted`, `report sha256 … = submitted`, `REVIEW PASSED`, exit 0, an `approve` command bound to the review report hash | "Now the reviewer. Same gate, run on exactly the files the agent submitted. The submission with the failing report: blocked, reject. The one with the migrate proof: passed. The tool prints the command. It never signs." |
+| 6 | 1:55-2:10 | Terminal: bob runs the printed approve; then `get_job {"id":0}`; caption "signed by the owner, test account" | tx ID; `status: Paid`, `gate_report_sha256` recorded | "The reviewer signs. The contract pays only for the wasm hash the gate checked. Alice gets her one NEAR." |
+| 7 | 2:10-2:22 | Terminal: the owner runs the deploy command the gate printed in shot 4; caption "signed by the owner" | tx ID of deploy + migrate | "The owner deploys the approved upgrade. Deploy and migrate, one transaction." |
+| 8 | 2:22-2:40 | Terminal: the verify command below | `MATCH` for `13425a04…`, `deal_count: ok: 1 (as expected)`, `get_deal: ok: {…} (as expected)` with buyer, seller, amount readable | "Same account. The code on chain is the proven wasm, and the deal made on version one is still there, in the version-two shape." |
+| 9 | 2:40-2:55 | `docs/SWARM_JOBS.md` "Honest limits", then README "Honest limits", then the repo URL | review runs off-chain, one trusted reviewer, no real inference; scenario-made state, regex-level checks | "Limits, written down: the review runs off-chain and one reviewer signs; the state is made by the scenario, not copied from the live network. Every transaction is linked in the repository. {REPO}" |
 
-Shot 3 prompts, typed verbatim, one at a time (three explicit requests, because one general prompt does not guarantee exactly three tool calls):
+Shot 4 prompts, typed verbatim, one at a time (three explicit requests, because one general prompt does not guarantee exactly three tool calls):
 
 1. `Upgrade bumm-guard-escrow2.testnet to escrow v2: crate tests/fixtures/near/escrow_v2, wasm evidence/wasm/escrow_v2.wasm, network testnet. Call bumm-guard gate_deploy without a simulate report and show me the result. Do not deploy anything.`
 2. `Call it again with simulate_report evidence/escrow-upgrade-code-only-report-ci.json.`
 3. `And with evidence/escrow-upgrade-with-migrate-report-ci.json. Show me the deploy command; do not run it.`
 
-Shot 5 command (valid while the account holds exactly this one deal; the expected JSON is the v1 deal read on 2026-11-06 with the v2 fields a migrated deal gets):
+Shot 5 commands (read-only; they write `.bumm-guard/review-<job>.json`):
+
+```
+python3 -m bumm_guard review-job --jobs-contract bumm-guard-jobs.testnet --job 1 --crate tests/fixtures/near/escrow_v2 --wasm evidence/wasm/escrow_v2.wasm --simulate-report evidence/escrow-upgrade-code-only-report-ci.json --network testnet
+python3 -m bumm_guard review-job --jobs-contract bumm-guard-jobs.testnet --job 0 --crate tests/fixtures/near/escrow_v2 --wasm evidence/wasm/escrow_v2.wasm --simulate-report evidence/escrow-upgrade-with-migrate-report-ci.json --network testnet
+```
+After shot 6, bob may also run the printed `reject` for job 1 and demo may `cancel` it (off camera); that is in the run plan.
+
+Shot 8 command (valid while the account holds exactly this one deal; the expected JSON is the v1 deal read on 2026-11-06 with the v2 fields a migrated deal gets):
 
 ```
 python3 -m bumm_guard gate --verify-deployed bumm-guard-escrow2.testnet --wasm evidence/wasm/escrow_v2.wasm --network testnet --smoke 'deal_count=1' --smoke 'get_deal:{"id":0}={"id":0,"buyer":"bumm-guard-demo.testnet","seller":"bumm-guard-escrow2.testnet","amount":"1000000000000000000000000","status":"Funded","created_at_ms":0}'
 ```
 A `MATCH` alone proves only that the code is the candidate; the `(as expected)` lines are what show that the deal survived. The same expected-JSON syntax was run on 2026-11-06 against `bumm-guard-escrow.testnet` (upgraded on 2026-11-04) and passed.
 
-If the video runs short, one optional 10-second shot may go before shot 6: `python3 -m bumm_guard gate tests/fixtures/near/d1_vuln` → `[HIGH] BG-NEAR-001 … DEPLOY BLOCKED`, exit 3 ("The same gate also blocks three classes of NEAR defects found by static rules."). Nothing else: no ABI panel, no A/B table, no claim that BUMM Guard makes development faster.
+Nothing else in the video: no ABI panel, no A/B table, no rule-pack shot unless time is left, no claim that BUMM Guard makes development faster.
 
-After the recording: the coordinator verifies the account read-only and adds a third table to `evidence/UPGRADE_TESTNET.md` with the transaction of shot 4. The finished file still has to be watched once for readability and against these outputs before it is posted.
+After the recording: the coordinator verifies both accounts read-only and adds to `evidence/UPGRADE_TESTNET.md` the escrow2 upgrade and a new table for the guarded job (join, post, submit, review report hash, approve, payment). The finished file still has to be watched once for readability and against these outputs before it is posted.
 
 History: `bumm-guard-escrow2.testnet` was prepared on 2026-11-04 (create tx `4RhzPTdksaBccof7Gjwv1G2iz5qMkhYSVtUsqUrtmy61`, v1 deploy `yihTWZt7bYBcsZFSbrJVA2MoKJquJPzxdUqKj1EENc9`, `new` `Cv2f7M7W8n2WW22nmTPzNCwq8yAxMXjma61ARxowVqNi`, one 1 NEAR deal from `bumm-guard-demo.testnet` `BhGjfR7Nf3xVpFv2bkshysS3N7zaeHQNCcqYwJ5imF1K`). `bumm-guard-escrow.testnet` already runs v2, so the gate answers `NO CHANGE` there; it is not used in the video.
