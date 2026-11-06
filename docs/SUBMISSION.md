@@ -110,6 +110,6 @@ A `MATCH` alone proves only that the code is the candidate; the `(as expected)` 
 
 Nothing else in the video: no ABI panel, no A/B table, no rule-pack shot unless time is left, no claim that BUMM Guard makes development faster.
 
-After the recording: the coordinator verifies both accounts read-only and adds to `evidence/UPGRADE_TESTNET.md` the escrow2 upgrade and a new table for the guarded job (join, post, submit, review report hash, approve, payment). The finished file still has to be watched once for readability and against these outputs before it is posted.
+After the recording: the author verifies both accounts read-only and adds to `evidence/UPGRADE_TESTNET.md` the escrow2 upgrade and a new table for the guarded job (join, post, submit, review report hash, approve, payment). The finished file still has to be watched once for readability and against these outputs before it is posted.
 
 History: `bumm-guard-escrow2.testnet` was prepared on 2026-11-04 (create tx `4RhzPTdksaBccof7Gjwv1G2iz5qMkhYSVtUsqUrtmy61`, v1 deploy `yihTWZt7bYBcsZFSbrJVA2MoKJquJPzxdUqKj1EENc9`, `new` `Cv2f7M7W8n2WW22nmTPzNCwq8yAxMXjma61ARxowVqNi`, one 1 NEAR deal from `bumm-guard-demo.testnet` `BhGjfR7Nf3xVpFv2bkshysS3N7zaeHQNCcqYwJ5imF1K`). `bumm-guard-escrow.testnet` already runs v2, so the gate answers `NO CHANGE` there; it is not used in the video.

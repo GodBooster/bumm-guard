@@ -1,6 +1,8 @@
 # BUMM Guard NEAR rule-pack: report
 
-Date: 2026-10-30. Spec: `research/06_near_detectors_spec_2026-10-29.md`. Python 3.14.7, stdlib only (code kept 3.12 compatible).
+> Build report of 2026-10-30; numbers are of that date, the README is current.
+
+Date: 2026-10-30. Spec: the detector specification of 2026-10-29 (a working note, not in the repository). Python 3.14.7, stdlib only (code kept 3.12 compatible).
 
 ## What was built
 

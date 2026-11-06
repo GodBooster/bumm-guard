@@ -2,7 +2,7 @@ name: evaluate
 
 # Builds one NEAR contract crate from any branch and runs scenario files against it in
 # near-sandbox, using the same bumm-sim runner as the main CI. Used two ways:
-#   - by the coordinator, to score study runs against hidden acceptance scenarios;
+#   - by the author, to score study runs against hidden acceptance scenarios;
 #   - by an agent working "with BUMM", as its remote sandbox (the owner's machine has no
 #     near-sandbox binary and limited traffic).
 # Trigger: gh workflow run evaluate.yml --ref <branch> -f crate_dir=<dir> -f scenarios='<glob>'

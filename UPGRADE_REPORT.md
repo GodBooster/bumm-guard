@@ -1,5 +1,7 @@
 # Upgrade step (`upgrade`, FORMATS §2a) and upgrade proof in the gate: report, 2026-11-03
 
+> Build report of 2026-11-03; numbers are of that date, the README is current.
+
 Branch `claude/upgrade-step-e0bdc1`. Spec: `docs/FORMATS.md` §2a (not changed). `.github/` not
 changed. Nothing merged into `main`. No NEAR accounts, no testnet.
 
@@ -164,5 +166,5 @@ So the proof is bound to the exact bytes. The same N10 source built on another m
 - **No positive live run (exit 0 with `with-init-call`).** It needs the very wasm the proof was made for (CI N10, `8526195a…`), but the `simulate` job does not upload it as an artifact. It is covered by unit tests. To get it live, add an upload of `event_registration_waitlist.wasm` to `simulate` in `ci.yml` (next to `event_registration-wasm`). Then `gate … --wasm <downloaded N10> --simulate-report upgrade-with-migrate.json --account bumm-guard-demo.testnet` should give exit 0 and the command with `with-init-call migrate json-args '{}' prepaid-gas '100 Tgas'`.
 - **Non-reproducible builds.** The macOS and CI builds of the same source differ (N06: `825ddd…` vs `c3f50a…`). The gate compares bytes, so "redeploying the same source" from another machine is an upgrade needing proof. That is correct but strict. The practical rule: deploy the wasm the scenarios ran on (the CI artifact).
 - `migrate` with a deposit is not supported (§2a has no deposit); the command always has `attached-deposit '0 NEAR'`.
-- FORMATS §2a/§3 do not describe the step's new `migrate` field (I was allowed to edit only §4, where it is mentioned as the source). The coordinator may add one line to §2a "Result".
+- FORMATS §2a/§3 do not describe the step's new `migrate` field (I was allowed to edit only §4, where it is mentioned as the source). One line may be added to §2a "Result".
 - `README.md` is not updated.

@@ -1,5 +1,7 @@
 # Scenario runner (`bumm-guard simulate` / `bumm-sim`): report, 2026-11-02
 
+> Build report of 2026-11-02; numbers are of that date, the README is current.
+
 Contract: `docs/FORMATS.md` §2 (scenario file), §3 (scenario result), §6 (N06 acceptance).
 Nothing here was committed. The real sandbox run has **not** been executed; see "Unverified".
 
@@ -7,7 +9,7 @@ Nothing here was committed. The real sandbox run has **not** been executed; see 
 
 | path | what |
 |---|---|
-| `tests/fixtures/near/event_registration/` | The N06 contract. `src/lib.rs` is the pilot's `src/lib.rs` byte for byte (`research/bumm_value_study/pilot_A_N06`), with a 7-line header comment added. Its public methods: `new(capacity)` (init), `register`, `cancel`, `get_capacity`, `get_registered_count`, `get_registered`, `is_registered(account_id)`, `get_seats_left`. When the event is full it panics with `Event is full: capacity N reached, registration refused`. All 7 unit tests are kept. It is a new member of the fixtures workspace (rustc 1.85.0 pinned there), with `near-sdk =5.17.2` plus `non-contract-usage` like the other fixtures, and `unit-testing` as a dev-dependency. |
+| `tests/fixtures/near/event_registration/` | The N06 contract. `src/lib.rs` is the pilot's N06 `src/lib.rs` byte for byte (the pilot's working directory is not in the repository), with a 7-line header comment added. Its public methods: `new(capacity)` (init), `register`, `cancel`, `get_capacity`, `get_registered_count`, `get_registered`, `is_registered(account_id)`, `get_seats_left`. When the event is full it panics with `Event is full: capacity N reached, registration refused`. All 7 unit tests are kept. It is a new member of the fixtures workspace (rustc 1.85.0 pinned there), with `near-sdk =5.17.2` plus `non-contract-usage` like the other fixtures, and `unit-testing` as a dev-dependency. |
 | `contracts/sim-runner/` | Rust crate `bumm-sim` 0.4.0, a member of `contracts/` (rustc 1.99.1). `src/lib.rs` holds the logic that needs no sandbox: the §2 parser (it rejects unknown fields, step kinds and accounts, and bad amounts), amount parsing (yocto string, `"<decimal> NEAR"`, `"<n> Tgas"`, exact integer arithmetic), alias resolution, expectation evaluation, the §3 report model, hashing and CLI parsing. It has 13 unit tests. `src/main.rs` is the near-workspaces glue. |
 | `scenarios/n06/01_capacity_cancel_frees.json` | The §2 example: capacity 2, the third registration is refused with `Event is full`, cancel frees a seat, carol then registers, `get_seats_left == 0`, bob's balance is at least 9 NEAR. 9 steps. |
 | `scenarios/n06/02_duplicate_registration_refused.json` | Registering a second time fails with `is already registered`. Count 1, `get_registered == ["alice"]`, `is_registered(bob) == false`, then bob registers. 7 steps. |
@@ -44,7 +46,7 @@ cargo build --release --locked --target wasm32-unknown-unknown -p event_registra
 - **The real sandbox run.** `bumm-sim run` against near-sandbox has not been executed anywhere. near-sandbox has no macOS x86_64 binary, and starting it in the container would download the sandbox binary, which the traffic limit rules out. Not yet observed: account creation with these balances, deploy, the exact panic text as the chain returns it, gas numbers, the 50 NEAR contract balance being enough, and the three N06 scenarios actually passing. The first CI run is the first real test.
 - The Python and Rust validators are kept in sync by hand. The error texts match in substance (the tests check the same cases on both sides), but they are not generated from one source.
 
-## CI job for the coordinator to add (`.github/workflows/ci.yml`, not edited by me)
+## CI job proposed at the time (`.github/workflows/ci.yml`, not edited in this build; since added)
 
 ```yaml
   simulate:
@@ -90,4 +92,4 @@ The step fails on any non-zero exit: 1 a scenario failed or a hash mismatch, 2 i
 - Receipt failures inside a transaction whose final status is success (for example a failed callback that is handled) are not shown in `actual`. Only the final status counts.
 - `gas_burnt_tgas` is the sum of the transaction and all receipt outcomes. Init gas and deposit are fixed (30 Tgas, 0), and the contract balance is fixed at 50 NEAR.
 - Scenarios run one after another, each with its own sandbox process. Expect about 5–15 s per file on CI on top of building.
-- `README.md` was not updated. It still says "7 files" for the fixture scan, 83 tests, and does not document `simulate`. That is left to the coordinator to avoid conflicts.
+- `README.md` was not updated. It still says "7 files" for the fixture scan, 83 tests, and does not document `simulate`. That was left for the merge to avoid conflicts.

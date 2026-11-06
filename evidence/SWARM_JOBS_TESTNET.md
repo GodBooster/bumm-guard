@@ -1,6 +1,6 @@
 # Guarded jobs on NEAR testnet (`bumm-guard-jobs.testnet`)
 
-What `docs/SWARM_JOBS.md` describes, run live. Every transaction was signed by the owner with `sign-with-keychain` on test accounts he controls; BUMM Guard printed commands and read state, it signed nothing. Each row was checked by the coordinator with read-only RPC calls right after the transaction.
+What `docs/SWARM_JOBS.md` describes, run live. Every transaction was signed by the owner with `sign-with-keychain` on test accounts the owner controls; BUMM Guard printed commands and read state, it signed nothing. Each row was checked by the author with read-only RPC calls right after the transaction.
 
 ## Setup (2026-11-06)
 

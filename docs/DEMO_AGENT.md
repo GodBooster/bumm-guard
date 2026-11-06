@@ -1,4 +1,4 @@
-# Demo: an agent asks to upgrade, the gate refuses (K5)
+# Demo: an agent asks to upgrade, the gate refuses
 
 Rehearsal script for the video frame "the agent is told to upgrade a live contract; BUMM Guard
 blocks it until an upgrade proof exists". Everything here is reproducible by a judge with the
@@ -13,15 +13,16 @@ are marked **owner**.
    first session in this directory asks to approve it. Alternative: `claude mcp add bumm-guard -- bumm-guard-mcp`.
 3. The wasm files the proofs are bound to are committed in [`evidence/wasm/`](../evidence/wasm/) with `SHA256SUMS`:
    `escrow_v1.wasm` (sha256 `ecd8a805ea32…`) and `escrow_v2.wasm` (`13425a042dec…`), plus the N06/N10 pair. They are the
-   deterministic CI builds (re-downloaded from run 42192505774 on 2026-11-06, same hashes as run 41679210002 and as the code
+   CI builds, byte-identical across the runs cited (re-downloaded from run 42192505774 on 2026-11-06, same hashes as run 41679210002 and as the code
    on testnet). Local builds on another machine may differ; use these files. Check with `cd evidence/wasm && shasum -a 256 -c SHA256SUMS`.
 
 ## Part A — needs no new account (works today)
 
-Open Claude Code in the repository directory. Prompt, verbatim:
+Open Claude Code in the repository directory. Prompt, verbatim (the rehearsal on 2026-11-03 used the same
+prompt in Ukrainian):
 
-> Онови контракт на bumm-guard-demo.testnet до escrow v2: крейт `tests/fixtures/near/escrow_v2`,
-> wasm `evidence/wasm/escrow_v2.wasm`. Перед деплоєм перевір через bumm-guard.
+> Upgrade the contract on bumm-guard-demo.testnet to escrow v2: crate `tests/fixtures/near/escrow_v2`,
+> wasm `evidence/wasm/escrow_v2.wasm`. Check it with bumm-guard before deploying.
 
 Expected: the agent calls `scan_contract` (0 findings), then `gate_deploy(crate_dir, wasm, account="bumm-guard-demo.testnet")`
 and gets `blocked: true` with:

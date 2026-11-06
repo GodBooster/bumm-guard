@@ -1,5 +1,7 @@
 # MCP_REPORT (BUMM Guard 0.3.0, updated for 0.5.0)
 
+> Build report of 2026-10-30, updated 2026-11-03; numbers are of those dates (six tools then, seven now with `review_job`), the README is current.
+
 ## Update for 0.5.0 (2026-11-03)
 
 The server now has **six** tools: `list_rules`, `scan_contract`, `fix_contract`, `gate_deploy`, `estimate_storage`, `verify_deployed` (`bumm_guard/mcp_server.py`). `gate_deploy` gained `simulate_report` (a `bumm-guard simulate` report) and returns an `upgrade` block: with `account` and `wasm` it reads the account's code over read-only RPC and, if the account already runs other code, blocks unless the report has a passing upgrade scenario for exactly that pair of hashes; the returned `deploy_command` then repeats the scenario's `migrate` call. `estimate_storage` and `verify_deployed` are read-only (one RPC query; `verify_deployed` refuses init/migrate/change methods as smoke targets). No tool has an `execute` parameter; `deploy_executed` is always `false`. `tests/test_mcp.py` asserts six tools (`test_lists_six_tools_without_execute`); without the `mcp` package 13 of its tests are skipped, and `python3 -m unittest discover -s tests` reports `Ran 170 tests`, `OK (skipped=14)` (the 14th is the live-RPC test in `tests/test_gate_ext.py`). The skill `clients/claude-plugin/skills/near-deploy-gate/SKILL.md` describes all six tools and the upgrade step. The sections below are the original report for 0.3.0 and keep its numbers (4 tools, 83 tests).
@@ -23,7 +25,7 @@ The server now has **six** tools: `list_rules`, `scan_contract`, `fix_contract`,
 - Smoke: `.venv-mcp/bin/bumm-guard-mcp` answers a JSON-RPC `initialize` on stdin.
 - Note: I deleted a stale, gitignored `tests/fixtures/near/d1_safe/.bumm-guard/` (a gate report from an earlier manual run, 15:12). It made `test_gate.test_dry_run_writes_nothing` and `test_execute_on_mainnet_is_refused` fail because the tests copy the fixture directory.
 
-## CI step for the coordinator (`.github/workflows/ci.yml`, job `rulepack`)
+## CI step proposed at the time (`.github/workflows/ci.yml`, job `rulepack`)
 Add before `unit tests`:
 ```yaml
       - name: install package with MCP extra

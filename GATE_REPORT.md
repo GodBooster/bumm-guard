@@ -1,5 +1,7 @@
 # Deploy gate extension (BUMM Guard 0.5.0): report, 2026-11-02
 
+> Build report of 2026-11-02; numbers are of that date, the README is current.
+
 Contract: `docs/FORMATS.md` §4 (gate report). Nothing was committed; `README.md`, `.github/`, `scripts/`,
 `docs/`, `ui/`, `contracts/`, `scenarios/` were not touched. No NEAR account, deploy or transaction was used.
 
@@ -45,7 +47,7 @@ exit 2), so 5 is unambiguous per mode, but it is the same number; scripts must k
 - `--verify-deployed` merges `post_deploy` into `<dir or .>/.bumm-guard/gate-report.json` (creates a minimal report if
   absent). It does not rescan the crate. The MCP `verify_deployed` does not write the report (read-only).
 
-## README snippet (for the coordinator)
+## README snippet (proposed at the time)
 
 ```markdown
 ### Gate with scenario evidence and storage estimate

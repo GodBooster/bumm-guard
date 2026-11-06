@@ -2,7 +2,7 @@
 
 `event_registration_abi.json` is **hand-written**, not generated. It follows the
 near-abi schema (`schema_version`, `metadata`, `body.functions[]`, `body.root_schema`)
-and describes the N06 contract (`research/bumm_value_study/pilot_A_N06/src/lib.rs`):
+and describes the N06 contract (`tests/fixtures/near/event_registration/src/lib.rs`):
 8 functions, `new` (init), `register`, `cancel` (change calls), and `get_capacity`,
 `get_registered_count`, `get_registered`, `is_registered`, `get_seats_left` (views).
 

@@ -26,7 +26,7 @@ The same security invariant (`is_paid == false` after spoofing) is violated by
 outcomes so CI stays green when the exploit is correctly reproduced.
 
 References:
-- `../../research/06_near_detectors_spec_2026-10-29.md`, BG-NEAR-001, executable test.
+- The detector specification of 2026-10-29 (a working note, not in the repository), BG-NEAR-001, executable test.
 - `../scripts/linux-test.sh`, Linux container runner.
 - `rust-toolchain.toml`, Rust 1.99.1 and wasm32 target.
 
