@@ -7,10 +7,9 @@ the job, checks that the files are exactly the submitted ones and runs the deplo
 becomes one printed command, `approve` (the reward goes to the agent) or `reject` (the agent may resubmit). The
 reviewer signs that command with their own key; BUMM Guard never signs.
 
-**Why.** NEAR co-founder Illia Polosukhin asked hackathon builders for "Swarm-for-Hire (with guardrails or
-governance AI review, please)": jobs bid onchain, agents in a swarm funded with NEAR for inference, paid for the
-jobs they take; this is the guardrail part of that request, for agents whose work is contract code.
-<!-- TODO(owner): link the post here; the URL is not recorded in the repository or the session notes. -->
+**Why.** Motivated by the "swarm for hire, with guardrails" idea raised for this hackathon: jobs bid onchain,
+agents in a swarm funded with NEAR for inference, paid for the jobs they take. This is the guardrail part of that
+idea, for agents whose work is contract code.
 
 It is the first, deliberately small step of a larger Swarm-for-Hire effort, not a swarm.
 
@@ -85,14 +84,29 @@ python3 -m bumm_guard review-job --jobs-contract ACCOUNT --job ID --crate DIR --
 3. Runs the deploy gate in dry-run mode on that wasm for the job's `target_account` (or `--account`, which must not
    differ from it): scan of `--crate`, report bound to the wasm, `view_code` of the target and, if it has code, the
    upgrade proof for exactly (on-chain sha256 → wasm sha256) and the migration guard. Nothing is deployed.
-4. Writes the review report (`docs/FORMATS.md` §7) to `.bumm-guard/review-<job>.json` (gitignored) and prints one
+4. Writes the review report (`docs/FORMATS.md` §7) to `.bumm-guard/review-<job>.json` (gitignored), prints the line
+   `note: the scenario report and the crate were supplied with the submission; this review checked that they are
+   the submitted files and ran the gate on them, it did not re-execute the scenarios or rebuild the wasm` (the
+   report records the same as `"evidence_origin": "submission (not re-executed)"`), then the verdict and one
    command for the reviewer:
-   - gate passed (exit 0): `near contract call-function as-transaction <jobs> approve json-args
+   - gate passed and there is something to deploy (exit 0, `REVIEW PASSED`): `near contract call-function
+     as-transaction <jobs> approve json-args
      '{"job_id":..,"wasm_sha256":..,"gate_report_sha256":<sha256 of the review report>}' prepaid-gas '100 Tgas'
      attached-deposit '0 NEAR' sign-as <reviewer> network-config testnet sign-with-keychain send`;
-   - gate blocked (exit 3): the same with `reject` and `{"job_id":..,"reason":<the gate's DEPLOY BLOCKED line, ≤ 500 bytes>}`.
-   - bad input, unreadable RPC, a job that is not `Submitted`, files other than the submitted ones (exit 2): no
-     command, no report. An RPC error never turns into a reject.
+   - gate blocked (exit 3, `REVIEW BLOCKED`): the same with `reject` and
+     `{"job_id":..,"reason":<the gate's DEPLOY BLOCKED line, ≤ 500 bytes>}`;
+   - the target account already runs exactly the submitted wasm (the gate's `NO CHANGE`; exit 3, `REVIEW
+     BLOCKED`): `reject` with the reason `the target account already runs this exact wasm: nothing was changed by
+     this submission`. It is never an approve;
+   - bad input, a job that is not `Submitted`, files other than the submitted ones, or an RPC failure (exit 2): no
+     command, no report. An RPC error never turns into a reject: this holds both when the job cannot be read
+     (`get_job` / `get_reviewer`) and when the gate cannot read the target account (`view_code` / `view_account`).
+     The message says the submission was not judged; run the review again. (The plain `gate` command answers
+     `DEPLOY BLOCKED`, exit 3, when it cannot read the account; `review-job` does not turn that into a verdict.)
+
+Text that comes from the submitted report or from `get_job` (scenario names, hashes, the agent id) is printed
+without control characters and cut to 200 characters (`docs/FORMATS.md` §4), so a submission cannot draw a fake
+`REVIEW PASSED` block in the reviewer's terminal.
 
 The gate's own deploy command for the target account appears in the output for information only; it is not part
 of the job and nobody runs it during the review. MCP: the tool `review_job` (`jobs_contract`, `job_id`,
@@ -109,11 +123,35 @@ reviewer approved.
   that the caller is the reviewer and that the approved wasm hash is the submitted one. It cannot verify a sandbox
   proof by itself: a dishonest or compromised reviewer can approve anything. `gate_report_sha256` makes the
   reviewer's decision auditable, not trustless.
+- **The report and the crate are supplied by the agent, and the review does not re-run them.** `review-job` checks
+  that the two files have the submitted hashes and runs the gate on them. It does not execute the scenarios and
+  does not build the wasm. A fabricated report (a JSON file that claims a passing upgrade scenario for the right
+  pair of hashes) passes the gate. So the reviewer must take the report from a run they control: their own CI, or
+  their own `bumm-guard simulate` on the submitted wasm, and compare its sha256 with the submitted `report_sha256`.
+  In the testnet run the report is this repository's CI report, committed in `evidence/`. Nothing binds the crate
+  sources to the wasm either: the scan and the migration guard read `--crate`, the proof is about `--wasm`, and
+  no step shows that one was built from the other. The reviewer has to build the wasm from the crate (CI here)
+  to know that.
+- **`approve` binds the wasm hash only.** Its arguments are the job id, the wasm hash and the hash of the review
+  report. The contract compares the wasm hash with the submitted one; it does not compare anything with the
+  submitted `report_sha256` and does not name the agent. The reward goes to whoever is the job's agent when the
+  approve arrives. An approve command printed for one submission would also pay a later resubmission of the same
+  wasm hash by another agent with another report (possible only after a reject in between).
+- **Nothing binds a submission to its author, and nothing protects the agent from the poster.** A submission is
+  two hashes; the contract does not know who built the wasm. The files have to be public (or at least in the
+  reviewer's and poster's hands) before payment, so a copycat can submit the same hashes to another job, and the
+  poster can use the wasm without the job ever being approved. A change of the target's code after the submit
+  invalidates the proof: the proof is for exactly (code on the account → submitted wasm), so if the target's owner
+  deploys anything else, the review blocks, and if the owner deploys the submitted wasm itself, the review gives
+  `NO CHANGE` and a reject. In both cases the poster can then cancel and take the reward back. The agent has no
+  defence against that in this contract; it assumes an honest poster and reviewer.
 - **No real inference and no agent runtime.** `join_swarm` only records a budget; nothing spends it. There are no
   bids, no job assignment, no reputation, no slashing.
 - **One reviewer, no DAO.** The reviewer is fixed at `new`; there is no way to change it, no quorum and no appeal.
 - **The 0.1 NEAR minimum first deposit only raises the cost of spam.** It is not reputation and nothing is ever
   slashed: an agent that submits junk keeps its budget and can withdraw it once nothing of its is under review.
+  The floor is flat, not per job: one 0.1 NEAR deposit lets an agent keep any number of jobs under review at the
+  same time (each stays locked until the reviewer acts, see the next point).
 - **A submitted job stays locked until the reviewer acts.** While a job is `Submitted` the poster cannot cancel it
   and no other agent can submit; only `approve` or `reject` by the reviewer unlocks it. A reviewer who does nothing
   keeps the reward locked.
@@ -125,13 +163,31 @@ reviewer approved.
 - `#[init]` `new` is a separate transaction after the deploy (the gate prints `without-init-call` for a fresh
   deploy); until it runs, anyone could initialise the contract with another reviewer. Run `new` right after the
   deploy and check `get_reviewer`.
-- Storage for jobs and agents is paid from the contract's own balance; descriptions are capped at 1000 bytes,
-  profiles at 200, reasons at 500. No storage deposit is charged to posters or agents.
-- Reviewing a target that already runs the submitted wasm gives the gate's `NO CHANGE` (exit 0), i.e. approve:
-  run the review before the target is upgraded.
-- Shown in the sandbox (CI) and with unit tests; the testnet run below is a plan, not done yet.
+- **Storage is paid by the contract and records are never deleted.** Jobs and agents are stored from the
+  contract's own balance; descriptions are capped at 1000 bytes, profiles at 200, reasons at 500. No storage
+  deposit is charged to posters or agents, a job may carry a reward of 1 yoctoNEAR, and a cancelled, rejected or
+  paid job stays in the state for ever. Posting many tiny jobs with long descriptions therefore locks more and
+  more of the contract's balance as storage stake (about 0.01 NEAR per 1000 bytes) at the cost of gas only. When
+  the free balance runs out, new calls that add state fail and transfers out of the contract (a reward, a refund,
+  a budget withdrawal) may fail too, because the account must keep its storage stake. This was not tested.
+- **A target that already runs the submitted wasm is rejected, not approved.** The gate's `NO CHANGE` means there
+  is nothing to deploy; `review-job` prints `reject` with the reason `the target account already runs this exact
+  wasm: nothing was changed by this submission`. Run the review before the target is upgraded: after the upgrade
+  the same honest submission is rejected.
+- **An RPC failure is not a verdict.** If the job or the target account cannot be read, `review-job` exits 2 and
+  prints no command; nothing is approved or rejected because a node was down.
+- Shown in the sandbox (CI), with unit tests, and on testnet up to the review: the contract was deployed through
+  the gate to `bumm-guard-jobs.testnet`, an agent joined, two jobs were posted and submitted, and the review was
+  rehearsed read-only (one blocked, one passed); see
+  [evidence/SWARM_JOBS_TESTNET.md](../evidence/SWARM_JOBS_TESTNET.md). The approve and the payment are not done
+  yet.
 
 ## Testnet run plan (the owner signs every transaction; nothing here is run by BUMM Guard)
+
+Status on 2026-11-06: steps 0 to 6 and the posting and submit of job 1 (first half of step 9) are done, and the
+two reviews (step 7 and the review in step 9) were rehearsed read-only; transactions and the checks after each are
+in [evidence/SWARM_JOBS_TESTNET.md](../evidence/SWARM_JOBS_TESTNET.md). In the live run job 1 was posted before the
+two submits. Step 8 (approve, payment) and the reject of job 1 are not done yet.
 
 Accounts: `bumm-guard-jobs.testnet` (new, holds the contract), reviewer `bumm-guard-bob.testnet`, agent
 `bumm-guard-alice.testnet`, poster `bumm-guard-demo.testnet`, target `bumm-guard-escrow2.testnet` (runs escrow v1,
