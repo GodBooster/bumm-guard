@@ -1,6 +1,6 @@
 # BUMM Guard
 
-**BUMM Guard proves that a change to a NEAR contract works on state written by the code that is already deployed, before an agent or a human deploys it: the scenario's state, bound to the exact pair of code hashes (on-chain sha256 → candidate sha256).** In NEAR, redeploying new code over a contract whose stored state has a different layout, without a migration, leaves a contract that panics on every call (`Cannot deserialize the contract state.`). Tests and scenarios that deploy fresh do not see this; a unit test that starts from old-layout state can, when someone writes one. The `upgrade` step of the scenario runner deploys the old wasm in a local near-sandbox, puts real state into it with transactions, deploys the new wasm on the same account (with or without a `migrate` call) and runs the checks against the upgraded state. Around that sits the rest of the "after the contract compiles" path for coding agents on NEAR (near-sdk-rs 5.x): a static-analysis rule-pack with deterministic fixers, scenarios in a sandbox, a deploy gate, and an ABI interaction panel. Contract generation is deliberately left to the agent. Python 3.12+, standard library only, for the CLI; an optional MCP server (`bumm-guard-mcp`) exposes scan/fix/gate/storage/verify to Claude Code, Cursor, Codex or any MCP client. Track: Open Innovation (primary), NEAR HACKATHON; the rule-pack also fits AI Security & Defense.
+**BUMM Guard proves that a change to a NEAR contract works on state written by the code that is already deployed, before an agent or a human deploys it: the scenario's state, bound to the exact pair of code hashes (on-chain sha256 → candidate sha256).** In NEAR, redeploying new code over a contract whose stored state has a different layout, without a migration, leaves a contract that panics on every call (`Cannot deserialize the contract state.`). Tests and scenarios that deploy fresh do not see this; a unit test that starts from old-layout state can, when someone writes one. The `upgrade` step of the scenario runner deploys the old wasm in a local near-sandbox, puts real state into it with transactions, deploys the new wasm on the same account (with or without a `migrate` call) and runs the checks against the upgraded state. Around that sits the rest of the "after the contract compiles" path for coding agents on NEAR (near-sdk-rs 5.x): a static-analysis rule-pack with deterministic fixers, scenarios in a sandbox, a deploy gate, and an ABI interaction panel. Contract generation is deliberately left to the agent. Python 3.12+, standard library only, for the CLI; an optional MCP server (`bumm-guard-mcp`) exposes scan/fix/gate/storage/verify to Claude Code, Cursor, Codex or any MCP client. Tracks: Open Innovation and AI Security & Defense (the deploy gate is a policy check between a coding agent and a deploy), NEAR HACKATHON.
 
 ```
 scan -> fix -> simulate scenarios -> prove the upgrade of live state -> gate -> deploy -> ABI panel
@@ -80,6 +80,24 @@ On a pass it prints `migration migrate: #[private] (src/lib.rs:118)` (both fixtu
 
 **Atomicity, observed.** The upgrade is one batch (`DeployContract` + `FunctionCall`). When `migrate` fails (in the pilot: B1's build has no such method, `MethodNotFound`), NEAR reverts the whole batch and the old code stays live. A failed migration is therefore a safe failure; a missing one is not. Three qualifications, from the protocol documentation and not re-measured here: the rollback covers the one receipt that executes the batch, so a cross-contract `Promise` that `migrate` schedules runs in a later receipt and is not undone with it; the gas burnt by the batch before `migrate` fails (including the `DeployContract` action) is spent, not refunded; and `DeployContract` needs a full-access key on the account, so a function-call access key cannot upgrade a contract, and an upgrade leaves the account's keys as they were ([Access keys](https://docs.near.org/protocol/access-keys)).
 
+
+**Check the live upgrades yourself (read-only, no key, needs internet).** The wasm files the proofs are bound to are committed in [`evidence/wasm/`](evidence/wasm/) with `SHA256SUMS` (deterministic CI builds; `cd evidence/wasm && shasum -a 256 -c SHA256SUMS`). Compare them with the code on the two upgraded testnet accounts and read back the state made before each upgrade:
+```sh
+python3 -m bumm_guard gate --verify-deployed bumm-guard-escrow.testnet --wasm evidence/wasm/escrow_v2.wasm --network testnet --dry-run \
+  --smoke 'deal_count=1' \
+  --smoke 'get_deal:{"id":0}={"id":0,"buyer":"bumm-guard-demo.testnet","seller":"bumm-guard-escrow.testnet","amount":"1000000000000000000000000","status":"Funded","created_at_ms":0}'
+python3 -m bumm_guard gate --verify-deployed bumm-guard-demo.testnet --wasm evidence/wasm/event_registration_waitlist.wasm --network testnet --dry-run --smoke get_registered_count
+```
+```
+post-deploy: local wasm sha256 13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013: MATCH
+smoke deal_count: ok: 1 (as expected)
+smoke get_deal: ok: {"id": 0, "buyer": "bumm-guard-demo.testnet", ..., "status": "Funded", "created_at_ms": 0} (as expected)
+post-deploy verification passed
+...
+smoke get_registered_count: ok: 2
+post-deploy verification passed
+```
+The escrow deal was created on v1 (no `status`, no `created_at_ms`) and reads back in the v2 shape after the migration; the transactions are in [`evidence/UPGRADE_TESTNET.md`](evidence/UPGRADE_TESTNET.md). Seen on 2026-11-06. The values are what the accounts held then; anyone can still call these contracts, so a later reader may see more registrations or deals.
 ## End to end on testnet, including a live upgrade
 
 Four recorded sessions on testnet (`bumm-guard-demo.testnet`, `bumm-guard-escrow.testnet`), with the owner's own keys. Nothing in this repository signed a transaction; the gate printed the commands and the owner ran them.
@@ -288,7 +306,7 @@ cd .. && python3 -m bumm_guard simulate scenarios/n06/*.json --runner contracts/
 ## License, track, links
 
 - License: MIT (`LICENSE`).
-- Track: Open Innovation (primary), NEAR HACKATHON; the rule-pack part also fits AI Security & Defense.
+- Tracks: Open Innovation (`open`) and AI Security & Defense (`security`), NEAR HACKATHON. The security fit is the deploy gate: a policy check that refuses to hand an agent a deploy command without proof, and never signs or holds a key.
 - Repository: https://github.com/GodBooster/bumm-guard
 - Rules and dates: https://nearhackathon.com/HACKATHON.md
 - NEAR docs used: https://docs.near.org/smart-contracts/security/checklist

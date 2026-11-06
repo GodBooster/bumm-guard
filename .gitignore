@@ -28,5 +28,5 @@ target/
 # Claude Code worktrees and session files
 .claude/
 
-# CI wasm artifacts downloaded for demos (docs/DEMO_AGENT.md); never committed
+# local scratch copies of wasm files; the proven ones are committed in evidence/wasm/
 e2e/

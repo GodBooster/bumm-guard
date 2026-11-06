@@ -27,7 +27,7 @@ Field notes, checked against https://nearhackathon.com/HACKATHON.md on 2026-11-0
 
 - One submission per repository (a second one is rejected with 409). A mistake in a saved submission is fixed through https://nearhackathon.com/request-changes, reviewed by hand; it is not edited and not submitted again. So fill the form only after the repository is public, the demo post is up, and the numbers above are rechecked against the latest CI run (the form text deliberately names no run id).
 - **Leave `website` empty.** The official API contract calls it a spam trap: any non-empty value rejects the submission. It is not an optional site field.
-- Payload fields are exactly: `requestId`, `projectName`, `leadName`, `email`, `size`, `tracks`, `nearAddress`, `projectUrl`, `demoUrl`, `idea`, `consent`. `size` for one person is the string `1`. `tracks` takes several ids: `open` (Open Innovation) is the positioning of this project; `security` (AI Security & Defense) can be added for the deploy gate. The owner decides.
+- Payload fields are exactly: `requestId`, `projectName`, `leadName`, `email`, `size`, `tracks`, `nearAddress`, `projectUrl`, `demoUrl`, `idea`, `consent`. `size` for one person is the string `1`. `tracks` = `["open", "security"]`, decided by the owner on 2026-11-06: Open Innovation is the positioning; AI Security & Defense fits the deploy gate (a policy check that refuses an agent a deploy command without proof and never signs).
 - `nearAddress` is a mainnet account created by the owner; connecting a wallet is not needed to submit.
 - Nothing in the rules read on 2026-11-06 says anything about KYC or payout by country; that is a question for the organizers, not a known restriction and not a guarantee.
 
@@ -64,9 +64,9 @@ Recorded in parts on the owner's machine, in `bumm-guard/` on `main`, and cut to
 Pre-record checks (all read-only):
 
 ```
-python3 -m bumm_guard gate --verify-deployed bumm-guard-escrow2.testnet --wasm e2e/escrow/v1/escrow_v1.wasm --network testnet --smoke 'deal_count=1' --smoke 'get_deal:{"id":0}'
+python3 -m bumm_guard gate --verify-deployed bumm-guard-escrow2.testnet --wasm evidence/wasm/escrow_v1.wasm --network testnet --smoke 'deal_count=1' --smoke 'get_deal:{"id":0}'
 ```
-must print `MATCH` for `ecd8a805…` and the deal `{"id": 0, "buyer": "bumm-guard-demo.testnet", "seller": "bumm-guard-escrow2.testnet", "amount": "1000000000000000000000000", "released": false}` (seen 2026-11-06). `e2e/escrow/v2/escrow_v2.wasm` sha256 is `13425a04…`; both `evidence/escrow-upgrade-*-report-ci.json` exist; the `bumm-guard` MCP server shows as connected in the Claude Code session before the first prompt.
+must print `MATCH` for `ecd8a805…` and the deal `{"id": 0, "buyer": "bumm-guard-demo.testnet", "seller": "bumm-guard-escrow2.testnet", "amount": "1000000000000000000000000", "released": false}` (seen 2026-11-06). `evidence/wasm/escrow_v2.wasm` sha256 is `13425a04…`; both `evidence/escrow-upgrade-*-report-ci.json` exist; the `bumm-guard` MCP server shows as connected in the Claude Code session before the first prompt.
 
 | # | Time | Screen | Shows | Voice-over |
 |---|---|---|---|---|
@@ -79,14 +79,14 @@ must print `MATCH` for `ecd8a805…` and the deal `{"id": 0, "buyer": "bumm-guar
 
 Shot 3 prompts, typed verbatim, one at a time (three explicit requests, because one general prompt does not guarantee exactly three tool calls):
 
-1. `Upgrade bumm-guard-escrow2.testnet to escrow v2: crate tests/fixtures/near/escrow_v2, wasm e2e/escrow/v2/escrow_v2.wasm, network testnet. Call bumm-guard gate_deploy without a simulate report and show me the result. Do not deploy anything.`
+1. `Upgrade bumm-guard-escrow2.testnet to escrow v2: crate tests/fixtures/near/escrow_v2, wasm evidence/wasm/escrow_v2.wasm, network testnet. Call bumm-guard gate_deploy without a simulate report and show me the result. Do not deploy anything.`
 2. `Call it again with simulate_report evidence/escrow-upgrade-code-only-report-ci.json.`
 3. `And with evidence/escrow-upgrade-with-migrate-report-ci.json. Show me the deploy command; do not run it.`
 
 Shot 5 command (valid while the account holds exactly this one deal; the expected JSON is the v1 deal read on 2026-11-06 with the v2 fields a migrated deal gets):
 
 ```
-python3 -m bumm_guard gate --verify-deployed bumm-guard-escrow2.testnet --wasm e2e/escrow/v2/escrow_v2.wasm --network testnet --smoke 'deal_count=1' --smoke 'get_deal:{"id":0}={"id":0,"buyer":"bumm-guard-demo.testnet","seller":"bumm-guard-escrow2.testnet","amount":"1000000000000000000000000","status":"Funded","created_at_ms":0}'
+python3 -m bumm_guard gate --verify-deployed bumm-guard-escrow2.testnet --wasm evidence/wasm/escrow_v2.wasm --network testnet --smoke 'deal_count=1' --smoke 'get_deal:{"id":0}={"id":0,"buyer":"bumm-guard-demo.testnet","seller":"bumm-guard-escrow2.testnet","amount":"1000000000000000000000000","status":"Funded","created_at_ms":0}'
 ```
 A `MATCH` alone proves only that the code is the candidate; the `(as expected)` lines are what show that the deal survived. The same expected-JSON syntax was run on 2026-11-06 against `bumm-guard-escrow.testnet` (upgraded on 2026-11-04) and passed.
 
