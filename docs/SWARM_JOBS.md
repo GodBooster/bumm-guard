@@ -45,8 +45,8 @@ It is the first, deliberately small step of a larger Swarm-for-Hire effort, not 
 | method | who | what |
 |---|---|---|
 | `new(reviewer)` | once, `#[init]` | sets the reviewer account |
-| `join_swarm(profile)` payable | anyone except the reviewer | registers the caller as an agent (or updates the profile); the deposit is added to its budget |
-| `withdraw_budget(amount)` | the agent | sends `amount` (yoctoNEAR string) of its own budget back |
+| `join_swarm(profile)` payable | anyone except the reviewer | registers the caller as an agent (or updates the profile); the deposit is added to its budget. The first join needs at least 0.1 NEAR (`MIN_AGENT_DEPOSIT`); top-ups may be any amount |
+| `withdraw_budget(amount)` | the agent | sends `amount` (yoctoNEAR string) of its own budget back; while the agent has a job in `Submitted` or `Paying` the budget cannot drop below 0.1 NEAR |
 | `post_job(description, target_account?)` payable | anyone | reward = attached deposit (> 0); status `Open`; returns the id |
 | `submit(job_id, wasm_sha256, report_sha256)` | a registered agent | allowed while `Open` or `Rejected`; both hashes 64 lowercase hex; status `Submitted` |
 | `approve(job_id, wasm_sha256, gate_report_sha256)` | the reviewer | needs `Submitted` and `wasm_sha256` equal to the submitted one; records the report hash; `Paying`, transfers the reward, then the `#[private]` callback `on_reward_paid` sets `Paid`, or on a failed transfer `Submitted` again with the reward still in the contract |
@@ -56,17 +56,19 @@ It is the first, deliberately small step of a larger Swarm-for-Hire effort, not 
 
 `get_job` returns `{id, poster, description, target_account, reward, status, agent, wasm_sha256, report_sha256,
 gate_report_sha256, reject_reason}`; `status` is one of `Open`, `Submitted`, `Rejected`, `Paying`, `Paid`,
-`Cancelled`.
+`Cancelled`. `get_agent` returns `{account, profile, budget, jobs_paid, jobs_in_review}` (`jobs_in_review` counts the
+agent's jobs in `Submitted` or `Paying`).
 
 Checks of our own rules on the contract (dogfooding): `python3 -m bumm_guard scan tests/fixtures/near/swarm_jobs` →
 `0 finding(s) in 1 file(s)`; the callback is `#[private]` (BG-NEAR-001) and reads the promise result
-(BG-NEAR-002). Unit tests: 21 (`cargo +stable test -p swarm_jobs` from `tests/fixtures/near`; the dev-dependencies
+(BG-NEAR-002). Unit tests: 28 (`cargo +stable test -p swarm_jobs` from `tests/fixtures/near`; the dev-dependencies
 need rustc ≥ 1.88, the wasm is built with the pinned 1.85.0), one per refusal plus the happy path, a failed transfer,
-reject → resubmit → approve and the views. Scenarios on near-sandbox (CI job `scenario runner`):
+reject → resubmit → approve, the minimum first deposit, the withdraw floor while a job is under review, and the
+views. Scenarios on near-sandbox (CI job `scenario runner`):
 `scenarios/swarm_jobs/01_review_pays_agent.json` (agent +2 NEAR, job `Paid`, second approve refused),
-`02_review_guardrails.json` (unregistered submit, non-reviewer approve, approve with another wasm hash, the private
+`02_review_guardrails.json` (join with 0 and with 0.09 NEAR refused, unregistered submit, non-reviewer approve, approve with another wasm hash, the private
 callback called directly, reject → resubmit → approve), `03_cancel_refunds.json` (only the poster cancels, not
-after submit, refunds, budget withdraw). CI also gates the contract with its own report (fresh deploy) and uploads
+after submit, refunds, a withdraw below 0.1 NEAR refused while the job is under review, budget withdraw). CI also gates the contract with its own report (fresh deploy) and uploads
 the wasm as the `swarm_jobs-wasm` artifact.
 
 ## `bumm-guard review-job`
@@ -110,6 +112,14 @@ reviewer approved.
 - **No real inference and no agent runtime.** `join_swarm` only records a budget; nothing spends it. There are no
   bids, no job assignment, no reputation, no slashing.
 - **One reviewer, no DAO.** The reviewer is fixed at `new`; there is no way to change it, no quorum and no appeal.
+- **The 0.1 NEAR minimum first deposit only raises the cost of spam.** It is not reputation and nothing is ever
+  slashed: an agent that submits junk keeps its budget and can withdraw it once nothing of its is under review.
+- **A submitted job stays locked until the reviewer acts.** While a job is `Submitted` the poster cannot cancel it
+  and no other agent can submit; only `approve` or `reject` by the reviewer unlocks it. A reviewer who does nothing
+  keeps the reward locked.
+- **`withdraw_budget` and `cancel` have no transfer callback.** The state is updated before the transfer to the
+  caller; the caller account exists, so a failure is unlikely, but a failed refund is not re-credited (only
+  `approve` has a callback that undoes its state on a failed transfer).
 - The agent submits hashes, not files: the reviewer must obtain the wasm and the report out of band (here: files in
   the repository / a CI artifact).
 - `#[init]` `new` is a separate transaction after the deploy (the gate prints `without-init-call` for a fresh

@@ -23,6 +23,10 @@ const MAX_PROFILE: usize = 200;
 const MAX_REASON: usize = 500;
 const MAX_LIST: u64 = 100;
 const CALLBACK_GAS: Gas = Gas::from_tgas(10);
+/// Deposit required on an account's first `join_swarm` (0.1 NEAR). It raises the cost of spam
+/// submissions (a free account could otherwise lock any Open job until the reviewer acts); while
+/// the agent has a job under review (Submitted or Paying) its budget cannot drop below it.
+pub const MIN_AGENT_DEPOSIT: NearToken = NearToken::from_millinear(100);
 
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
@@ -83,6 +87,8 @@ pub struct Agent {
     profile: String,
     budget: NearToken,
     jobs_paid: u64,
+    /// Jobs of this agent in status Submitted or Paying.
+    jobs_in_review: u64,
 }
 
 /// What `get_job` / `list_jobs` return (JSON; `reward` is a yoctoNEAR string).
@@ -108,6 +114,7 @@ pub struct AgentView {
     pub profile: String,
     pub budget: NearToken,
     pub jobs_paid: u64,
+    pub jobs_in_review: u64,
 }
 
 fn require_sha256(name: &str, value: &str) {
@@ -132,7 +139,8 @@ impl SwarmJobs {
     }
 
     /// Registers the caller as an agent (or updates its profile). The attached deposit is added to
-    /// its inference budget. Nothing here runs inference; the budget is only tracked.
+    /// its inference budget; the first join needs at least `MIN_AGENT_DEPOSIT` (0.1 NEAR), top-ups
+    /// may be any amount. Nothing here runs inference; the budget is only tracked.
     #[payable]
     pub fn join_swarm(&mut self, profile: String) {
         let caller = env::predecessor_account_id();
@@ -145,13 +153,18 @@ impl SwarmJobs {
                 a.budget = a.budget.saturating_add(deposit);
             }
             None => {
-                self.agents.insert(caller, Agent { profile, budget: deposit, jobs_paid: 0 });
+                require!(
+                    deposit >= MIN_AGENT_DEPOSIT,
+                    "Attach at least 0.1 NEAR to join the swarm (minimum agent deposit)"
+                );
+                self.agents.insert(caller, Agent { profile, budget: deposit, jobs_paid: 0, jobs_in_review: 0 });
                 self.agent_count += 1;
             }
         }
     }
 
-    /// The agent takes `amount` (yoctoNEAR string) of its own budget back.
+    /// The agent takes `amount` (yoctoNEAR string) of its own budget back. While it has a job under
+    /// review (Submitted or Paying) the budget cannot drop below `MIN_AGENT_DEPOSIT`.
     pub fn withdraw_budget(&mut self, amount: NearToken) -> Promise {
         let caller = env::predecessor_account_id();
         require!(!amount.is_zero(), "Amount must be positive");
@@ -160,7 +173,12 @@ impl SwarmJobs {
             .get_mut(&caller)
             .unwrap_or_else(|| env::panic_str("Not a registered agent"));
         require!(amount <= agent.budget, "Amount exceeds the agent's budget");
-        agent.budget = agent.budget.saturating_sub(amount);
+        let left = agent.budget.saturating_sub(amount);
+        require!(
+            agent.jobs_in_review == 0 || left >= MIN_AGENT_DEPOSIT,
+            "Budget must stay at least 0.1 NEAR while the agent has a job under review"
+        );
+        agent.budget = left;
         Promise::new(caller).transfer(amount)
     }
 
@@ -205,11 +223,12 @@ impl SwarmJobs {
             job.status == JobStatus::Open || job.status == JobStatus::Rejected,
             format!("Job {} is not open for submissions (status {})", job_id, job.status.as_str())
         );
-        job.agent = Some(caller);
+        job.agent = Some(caller.clone());
         job.wasm_sha256 = Some(wasm_sha256);
         job.report_sha256 = Some(report_sha256);
         job.reject_reason = None;
         job.status = JobStatus::Submitted;
+        self.review_count(&caller, true);
     }
 
     /// Reviewer only: the gate passed for exactly `wasm_sha256` (must equal the submitted hash), so
@@ -251,6 +270,7 @@ impl SwarmJobs {
             let agent = job.agent.clone();
             if let Some(a) = agent.and_then(|acc| self.agents.get_mut(&acc)) {
                 a.jobs_paid += 1;
+                a.jobs_in_review = a.jobs_in_review.saturating_sub(1);
             }
         } else {
             job.status = JobStatus::Submitted;
@@ -271,6 +291,9 @@ impl SwarmJobs {
         );
         job.reject_reason = Some(reason);
         job.status = JobStatus::Rejected;
+        if let Some(agent) = job.agent.clone() {
+            self.review_count(&agent, false);
+        }
     }
 
     /// Poster only, while the job is Open or Rejected: the reward goes back to the poster.
@@ -310,6 +333,7 @@ impl SwarmJobs {
             profile: a.profile.clone(),
             budget: a.budget,
             jobs_paid: a.jobs_paid,
+            jobs_in_review: a.jobs_in_review,
         })
     }
 
@@ -319,6 +343,13 @@ impl SwarmJobs {
 
     pub fn get_reviewer(&self) -> AccountId {
         self.reviewer.clone()
+    }
+
+    /// One more (`up`) or one fewer job of `agent` in Submitted/Paying.
+    fn review_count(&mut self, agent: &AccountId, up: bool) {
+        if let Some(a) = self.agents.get_mut(agent) {
+            a.jobs_in_review = if up { a.jobs_in_review + 1 } else { a.jobs_in_review.saturating_sub(1) };
+        }
     }
 
     fn job_mut(&mut self, id: u64) -> &mut Job {
@@ -606,6 +637,82 @@ mod tests {
         let mut c = setup();
         as_account("alice.near", zero());
         c.withdraw_budget(near(2));
+    }
+
+    #[test]
+    #[should_panic(expected = "Attach at least 0.1 NEAR to join the swarm")]
+    fn first_join_without_deposit_refused() {
+        let mut c = setup();
+        as_account("dave.near", zero());
+        c.join_swarm("free rider".into());
+    }
+
+    #[test]
+    #[should_panic(expected = "Attach at least 0.1 NEAR to join the swarm")]
+    fn first_join_below_minimum_refused() {
+        let mut c = setup();
+        as_account("dave.near", NearToken::from_millinear(99));
+        c.join_swarm("almost".into());
+    }
+
+    #[test]
+    fn first_join_at_minimum_and_free_top_up_allowed() {
+        let mut c = setup();
+        as_account("dave.near", MIN_AGENT_DEPOSIT);
+        c.join_swarm("minimal".into());
+        as_account("dave.near", zero());
+        c.join_swarm("renamed".into());
+        let a = c.get_agent(acc("dave.near")).unwrap();
+        assert_eq!((a.profile.as_str(), a.budget), ("renamed", MIN_AGENT_DEPOSIT));
+    }
+
+    #[test]
+    #[should_panic(expected = "Budget must stay at least 0.1 NEAR while the agent has a job under review")]
+    fn withdraw_below_minimum_while_submitted_refused() {
+        let mut c = submitted();
+        assert_eq!(c.get_agent(acc("alice.near")).unwrap().jobs_in_review, 1);
+        as_account("alice.near", zero());
+        c.withdraw_budget(NearToken::from_millinear(901));
+    }
+
+    #[test]
+    #[should_panic(expected = "Budget must stay at least 0.1 NEAR while the agent has a job under review")]
+    fn withdraw_below_minimum_while_paying_refused() {
+        let mut c = submitted();
+        as_account("bob.near", zero());
+        c.approve(0, WASM.into(), GATE.into());
+        as_account("alice.near", zero());
+        c.withdraw_budget(near(1));
+    }
+
+    #[test]
+    fn withdraw_floor_follows_the_review() {
+        let mut c = submitted();
+        as_account("alice.near", zero());
+        c.withdraw_budget(NearToken::from_millinear(900)); // down to exactly the minimum: allowed
+        assert_eq!(c.get_agent(acc("alice.near")).unwrap().budget, MIN_AGENT_DEPOSIT);
+        as_account("bob.near", zero());
+        c.reject(0, "blocked".into());
+        assert_eq!(c.get_agent(acc("alice.near")).unwrap().jobs_in_review, 0);
+        as_account("alice.near", zero());
+        c.submit(0, WASM.into(), REPORT.into());
+        as_account("bob.near", zero());
+        c.approve(0, WASM.into(), GATE.into());
+        assert!(callback(&mut c, PromiseResult::Successful(vec![])));
+        let a = c.get_agent(acc("alice.near")).unwrap();
+        assert_eq!((a.jobs_in_review, a.jobs_paid), (0, 1));
+        as_account("alice.near", zero());
+        c.withdraw_budget(MIN_AGENT_DEPOSIT); // nothing under review: the whole budget may go
+        assert!(c.get_agent(acc("alice.near")).unwrap().budget.is_zero());
+    }
+
+    #[test]
+    fn failed_transfer_keeps_the_job_under_review() {
+        let mut c = submitted();
+        as_account("bob.near", zero());
+        c.approve(0, WASM.into(), GATE.into());
+        callback(&mut c, PromiseResult::Failed);
+        assert_eq!(c.get_agent(acc("alice.near")).unwrap().jobs_in_review, 1);
     }
 
     #[test]

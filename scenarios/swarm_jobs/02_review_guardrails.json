@@ -4,6 +4,10 @@
   "contract": {"wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/swarm_jobs.wasm",
                "init": {"method": "new", "args": {"reviewer": "bob"}}},
   "steps": [
+    {"call": "join_swarm", "by": "dave", "args": {"profile": "free rider"},
+     "expect": {"fail_contains": "Attach at least 0.1 NEAR to join the swarm"}},
+    {"call": "join_swarm", "by": "dave", "args": {"profile": "almost"}, "deposit": "0.09 NEAR",
+     "expect": {"fail_contains": "Attach at least 0.1 NEAR to join the swarm"}},
     {"call": "join_swarm", "by": "alice", "args": {"profile": "rust upgrade agent"}, "deposit": "0.5 NEAR", "expect": "ok"},
     {"call": "join_swarm", "by": "bob", "args": {"profile": "reviewer"}, "deposit": "0.5 NEAR",
      "expect": {"fail_contains": "The reviewer cannot join the swarm as an agent"}},
