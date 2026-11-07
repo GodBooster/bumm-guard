@@ -257,6 +257,13 @@ Written by `review-job` (docs/SWARM_JOBS.md) after the job and the files checked
 blocked; never on bad input and never when the job or the target account could not be read over RPC (exit 2, no
 command: an RPC failure is not a verdict; the plain `gate` command still answers `DEPLOY BLOCKED`, exit 3, there). Its sha256 is the `gate_report_sha256` in the printed `approve` command, so the
 file must be kept byte for byte (it carries a timestamp: a second run gives another hash).
+
+**swarm_jobs v2 (2026-11-07).** The contract must be v2: `get_job` carries `scenario_sha256` (`null`, or the sha256
+of the one scenario file the poster accepts) and `reward_storage_fee`. On a v1 contract (no `scenario_sha256` key in
+`get_job`) the review exits 2 without a command or a report: the v2 `approve` it prints has five arguments,
+`{"job_id", "agent", "wasm_sha256", "report_sha256", "gate_report_sha256"}` (`agent` is the job's agent as read;
+`report_sha256` the submitted report hash), which v1 refuses. The §7 report of 2026-11-06 is unchanged except for
+`checks.scenario_sha256` and the two new keys inside `job`.
 ```json
 {
   "tool": "bumm-guard", "version": "0.5.0", "kind": "review-job",
@@ -265,12 +272,14 @@ file must be kept byte for byte (it carries a timestamp: a second run gives anot
   "reviewer": "bumm-guard-bob.testnet",
   "job": {"id": 0, "poster": "…", "description": "…", "target_account": "bumm-guard-escrow2.testnet",
           "reward": "1000000000000000000000000", "status": "Submitted", "agent": "…",
-          "wasm_sha256": "13425a04…", "report_sha256": "f305461f…", "gate_report_sha256": null, "reject_reason": null},
+          "wasm_sha256": "13425a04…", "report_sha256": "f305461f…", "gate_report_sha256": null, "reject_reason": null,
+          "reward_storage_fee": "0", "scenario_sha256": null},
   "target_account": "bumm-guard-escrow2.testnet",
   "inputs": {"crate_dir": "tests/fixtures/near/escrow_v2", "wasm": "evidence/wasm/escrow_v2.wasm",
              "wasm_sha256": "13425a04…", "simulate_report": "evidence/escrow-upgrade-with-migrate-report-ci.json",
              "report_sha256": "f305461f…"},
-  "checks": {"status_submitted": true, "wasm_sha256_matches": true, "report_sha256_matches": true},
+  "checks": {"status_submitted": true, "wasm_sha256_matches": true, "report_sha256_matches": true,
+             "scenario_sha256": null},
   "evidence_origin": "submission (not re-executed)",
   "gate": {"exit_code": 0, "passed": true, "messages": ["…"], "report": {"…": "§4 gate report"},
            "upgrade": {"…": "§4 upgrade block"}, "upgrade_check": null},
@@ -280,7 +289,13 @@ file must be kept byte for byte (it carries a timestamp: a second run gives anot
 ```
 - `job` is `get_job` as read (read-only `call_function`, finality `final`); `reviewer` is the signer of the printed
   command (`--reviewer`, default the contract's `get_reviewer`).
-- `checks` are always true in a written report: a mismatch stops the review before the gate (exit 2, no file).
+- `checks.status_submitted`, `wasm_sha256_matches` and `report_sha256_matches` are always true in a written report:
+  a mismatch stops the review before the gate (exit 2, no file). `checks.scenario_sha256` is `null` when the job
+  has no pinned scenario, else `{"pinned": <the job's scenario_sha256>, "matches": bool, "report_scenario_sha256s":
+  [<the scenario_sha256 of every scenario in the submitted §3 report, cleaned>]}`; `matches` is true only when the
+  list is not empty and every entry equals `pinned`. A job whose `scenario_sha256` is present but not 64 lowercase
+  hex is refused before the gate (exit 2), like a job whose `agent` is not a valid account id (the agent is
+  repeated in the approve command).
 - `evidence_origin` is always `"submission (not re-executed)"`: the scenario report and the crate were supplied
   with the submission. The review checked that the files are the submitted ones (the two hashes) and ran the gate
   on them; it did not re-execute the scenarios and did not rebuild the wasm from the crate. The same statement is
@@ -290,10 +305,13 @@ file must be kept byte for byte (it carries a timestamp: a second run gives anot
 - `gate.report` is the §4 gate report the gate would have written (the gate runs with `--dry-run`, so the crate's own
   `gate-report.json` is not touched), `null` when it blocked; `gate.upgrade` / `gate.upgrade_check` as in §4 and in
   the MCP `gate_deploy` result.
-- `verdict`: `approve` (gate exit 0 with a deploy command, review exit 0) or `reject` (review exit 3): the gate
-  blocked (gate exit 3), or the gate said NO CHANGE (gate exit 0, `gate.passed: true`,
-  `gate.report.deploy.status: "no-change"`): the target account already runs exactly the submitted wasm, so the
-  submission changed nothing. `reason` is `null` on approve; on reject it is the gate's first `DEPLOY BLOCKED` line,
-  whitespace collapsed, cut to 500 bytes (the contract's limit), or, for NO CHANGE, the fixed sentence
-  `the target account already runs this exact wasm: nothing was changed by this submission`; it is the `reason`
-  argument of the printed `reject` command. `gate.passed` is the gate's own result, not the verdict.
+- `verdict`: `approve` (gate exit 0 with a deploy command and, when pinned, `checks.scenario_sha256.matches`
+  true; review exit 0) or `reject` (review exit 3): the pinned scenario did not match, the gate blocked (gate exit
+  3), or the gate said NO CHANGE (gate exit 0, `gate.passed: true`, `gate.report.deploy.status: "no-change"`): the
+  target account already runs exactly the submitted wasm, so the submission changed nothing. `reason` is `null` on
+  approve; on reject it is, in this order of precedence, the pin sentence `the poster accepts only the scenario
+  with sha256 <pinned>; the submitted report has <the distinct hashes found, sorted, or "no scenario at all">: run
+  that scenario file and submit its report`, or the gate's first `DEPLOY BLOCKED` line, whitespace collapsed, cut
+  to 500 bytes (the contract's limit), or, for NO CHANGE, the fixed sentence `the target account already runs this
+  exact wasm: nothing was changed by this submission`; it is the `reason` argument of the printed `reject` command.
+  `gate.passed` is the gate's own result, not the verdict (a pin mismatch with `gate.passed: true` is a reject).
