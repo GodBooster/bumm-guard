@@ -80,6 +80,9 @@ jobs:
       - name: swarm_jobs unit tests (host, stable rustc; the 1.85.0 pin is for the wasm build, dev-dependencies need >= 1.88)
         working-directory: tests/fixtures/near
         run: cargo +stable test --locked -p swarm_jobs
+      - name: swarm_jobs_v2 unit tests (host, stable rustc; includes migrate() on a v1-shaped state)
+        working-directory: tests/fixtures/near
+        run: cargo +stable test --locked -p swarm_jobs_v2
 
   # Sandbox tests (near-workspaces / near-sandbox) run only on Linux: near-sandbox has no
   # Darwin-x86_64 binary. This job is enabled once contracts/ with sandbox tests exist.
@@ -246,6 +249,59 @@ jobs:
           python -m bumm_guard gate tests/fixtures/near/swarm_jobs \
             --wasm tests/fixtures/near/target/wasm32-unknown-unknown/release/swarm_jobs.wasm \
             --simulate-report simulate-out/swarm-jobs-report.json --dry-run
+      - name: build swarm_jobs_v2 wasm (rustc 1.85.0; third upgrade pair, swarm_jobs v1 -> v2)
+        working-directory: tests/fixtures/near
+        run: cargo build --release --locked --target wasm32-unknown-unknown -p swarm_jobs_v2
+      - name: run swarm_jobs_v2 scenarios (storage fee and refund, pinned scenario, per-job floor, approve bindings, leave_swarm)
+        run: |
+          python -m bumm_guard simulate scenarios/swarm_jobs_v2/*.json \
+            --runner contracts/target/release/bumm-sim --out simulate-out/swarm-jobs-v2-report.json
+      - name: gate swarm_jobs_v2 with its simulate evidence (fresh deploy, binds the report to this wasm)
+        run: |
+          python -m bumm_guard gate tests/fixtures/near/swarm_jobs_v2 \
+            --wasm tests/fixtures/near/target/wasm32-unknown-unknown/release/swarm_jobs_v2.wasm \
+            --simulate-report simulate-out/swarm-jobs-v2-report.json --dry-run
+      - name: upgrade swarm_jobs v1 -> v2 with migrate() (expected PASS; the live testnet state, mirrored)
+        run: |
+          python -m bumm_guard simulate scenarios/upgrade/swarm_jobs_v1_to_v2_with_migrate.json \
+            --runner contracts/target/release/bumm-sim --out simulate-out/swarm-jobs-upgrade-with-migrate.json
+      - name: upgrade swarm_jobs v1 -> v2 code only (expected FAIL on every step that reads a job; four views lie)
+        run: |
+          set +e
+          python -m bumm_guard simulate scenarios/upgrade/swarm_jobs_v1_to_v2_code_only.json \
+            --runner contracts/target/release/bumm-sim --out simulate-out/swarm-jobs-upgrade-code-only.json
+          code=$?
+          set -e
+          test "$code" -eq 1 || { echo "expected exit 1 (scenario failed), got $code"; exit 1; }
+          python - <<'EOF'
+          import json
+          r = json.load(open("simulate-out/swarm-jobs-upgrade-code-only.json"))
+          (sc,) = r["scenarios"]
+          up = next(s["index"] for s in sc["steps"] if s["kind"] == "upgrade")
+          before = [s for s in sc["steps"] if s["index"] <= up]
+          lying = sc["steps"][up + 1:up + 5]
+          after = [s for s in sc["steps"] if s["index"] > up + 4]
+          assert sc.get("error") is None, sc["error"]
+          assert all(s["passed"] for s in before), [s for s in before if not s["passed"]]
+          # The root struct and the agents map did not change between v1 and v2, so the four views that
+          # read only them answer correctly right after a code-only upgrade: a smoke check cannot see this
+          # upgrade failure. Only reading a job record fails.
+          assert [s["method"] for s in lying] == ["job_count", "agent_count", "get_reviewer", "get_agent"], lying
+          assert all(s["kind"] == "view" and s["passed"] for s in lying), lying
+          assert lying[0]["actual"]["value"] == 2 and lying[1]["actual"]["value"] == 1, lying
+          assert after and all(not s["passed"] and s["actual"]["status"] == "failure" for s in after), after
+          # near-sdk store's own message for a record it cannot read (not the root-struct one).
+          lacking = [s for s in after if "Cannot deserialize element" not in s["actual"].get("error", "")]
+          assert not lacking, [(s["index"], s["kind"], s["actual"].get("error")) for s in lacking]
+          views = [s for s in after if s["kind"] == "view"]
+          calls = [s for s in after if s["kind"] == "call"]
+          assert views and all("Cannot deserialize element" in s["actual"].get("error_detail", "") for s in views), views
+          assert len(calls) == 4, [s["method"] for s in calls]
+          assert r["upgrade_wasm_sha256"] and sc["steps"][up]["actual"]["code_sha256"] == r["upgrade_wasm_sha256"]
+          print(f"swarm_jobs code-only upgrade: steps 0..{up} passed, the 4 views right after it passed (job_count 2, "
+                f"agent_count 1, get_reviewer, get_agent), {len(after)} step(s) after that failed with "
+                f"'Cannot deserialize element' ({len(views)} view steps, {len(calls)} call steps), as expected")
+          EOF
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -276,3 +332,8 @@ jobs:
         with:
           name: swarm_jobs-wasm
           path: tests/fixtures/near/target/wasm32-unknown-unknown/release/swarm_jobs.wasm
+      - name: upload the exact swarm_jobs_v2 wasm the upgrade scenario proved (deploy this file onto bumm-guard-jobs.testnet, not a local rebuild)
+        uses: actions/upload-artifact@v4
+        with:
+          name: swarm_jobs_v2-wasm
+          path: tests/fixtures/near/target/wasm32-unknown-unknown/release/swarm_jobs_v2.wasm

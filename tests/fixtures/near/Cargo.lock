@@ -1860,6 +1860,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "swarm_jobs_v2"
+version = "0.2.0"
+dependencies = [
+ "near-sdk",
+]
+
+[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"

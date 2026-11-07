@@ -1,0 +1,15 @@
+[package]
+name = "swarm_jobs_v2"
+version = "0.2.0"
+edition = "2021"
+publish = false
+description = "Guarded jobs for agent swarms, v2: posters pay the storage of their job, the agent floor is per job under review, approve binds the agent and the report, a job may pin its acceptance scenario; migrate() from swarm_jobs v1 state (scenarios/upgrade/swarm_jobs_*, docs/SWARM_JOBS.md)."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { version = "=5.17.2", features = ["non-contract-usage"] }
+
+[dev-dependencies]
+near-sdk = { version = "=5.17.2", features = ["unit-testing"] }

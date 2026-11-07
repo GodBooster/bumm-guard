@@ -39,7 +39,9 @@ def sha(path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def job(status="Submitted", wasm=V2_WASM, report=WITH_MIGRATE, target=TARGET, **kw) -> dict:
+def job(status="Submitted", wasm=V2_WASM, report=WITH_MIGRATE, target=TARGET, v1=False, **kw) -> dict:
+    """A ``get_job`` answer of swarm_jobs v2 (``reward_storage_fee``, ``scenario_sha256``); ``v1=True`` gives the
+    v1 shape without those two keys."""
     j = {"id": 0, "poster": "bumm-guard-demo.testnet",
          "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
          "target_account": target, "reward": "1000000000000000000000000", "status": status,
@@ -47,8 +49,16 @@ def job(status="Submitted", wasm=V2_WASM, report=WITH_MIGRATE, target=TARGET, **
          "wasm_sha256": sha(wasm) if status != "Open" else None,
          "report_sha256": sha(report) if status != "Open" else None,
          "gate_report_sha256": None, "reject_reason": None}
+    if not v1:
+        j.update({"reward_storage_fee": "0", "scenario_sha256": None})
     j.update(kw)
     return j
+
+
+def scenario_sha(report) -> str:
+    """The ``scenario_sha256`` the §3 report records for its (single) scenario."""
+    (sc,) = json.loads(Path(report).read_text())["scenarios"]
+    return sc["scenario_sha256"]
 
 
 class Node:
@@ -126,10 +136,15 @@ class ReviewJobTests(unittest.TestCase):
         cmd = self.command(out)
         self.assertEqual(cmd[:6], ["near", "contract", "call-function", "as-transaction", JOBS, "approve"])
         args = json.loads(cmd[cmd.index("json-args") + 1])
-        self.assertEqual(args, {"job_id": 0, "wasm_sha256": sha(V2_WASM), "gate_report_sha256": sha(self.out)})
+        self.assertEqual(args, {"job_id": 0, "agent": AGENT, "wasm_sha256": sha(V2_WASM), "report_sha256": sha(WITH_MIGRATE),
+                                "gate_report_sha256": sha(self.out)})
+        self.assertEqual(list(args), ["job_id", "agent", "wasm_sha256", "report_sha256", "gate_report_sha256"])
         self.assertEqual(cmd[-6:], ["sign-as", REVIEWER, "network-config", "testnet", "sign-with-keychain", "send"])
+        self.assertIn("scenario_sha256 on the job: null (the poster accepts any scenario)", out)
         rep = json.loads(self.out.read_text())
         self.assertEqual((rep["kind"], rep["verdict"], rep["reason"]), ("review-job", "approve", None))
+        self.assertEqual(rep["checks"], {"status_submitted": True, "wasm_sha256_matches": True,
+                                         "report_sha256_matches": True, "scenario_sha256": None})
         self.assertEqual(rep["inputs"]["report_sha256"], sha(WITH_MIGRATE))
         self.assertEqual(rep["gate"]["upgrade"]["onchain_code_sha256"], sha(V1_WASM))
         self.assertEqual(rep["gate"]["upgrade"]["candidate_sha256"], sha(V2_WASM))
@@ -197,6 +212,81 @@ class ReviewJobTests(unittest.TestCase):
                 self.assertEqual((rep["verdict"], rep["reason"]), ("reject", NO_CHANGE_REASON))
                 self.assertEqual((rep["gate"]["exit_code"], rep["gate"]["passed"]), (0, True))
                 self.assertEqual(rep["gate"]["report"]["deploy"], {"status": "no-change", "command": None})
+
+    # --- the poster's pinned acceptance scenario (swarm_jobs v2) ---------------------------------
+
+    def test_pinned_scenario_that_the_report_ran_approves(self):
+        pin = scenario_sha(WITH_MIGRATE)
+        code, out, err = self.review(Node(job(scenario_sha256=pin)))
+        self.assertEqual(code, 0, out + err)
+        self.assertIn(f"scenario_sha256 on the job: {pin}; report scenarios with it: 1 of 1", out)
+        self.assertNotIn("MISMATCH", out)
+        self.assertEqual(self.command(out)[5], "approve")
+        rep = json.loads(self.out.read_text())
+        self.assertEqual(rep["checks"]["scenario_sha256"], {"pinned": pin, "matches": True, "report_scenario_sha256s": [pin]})
+        self.assertEqual(rep["verdict"], "approve")
+
+    def test_pinned_scenario_other_than_the_reports_rejects_although_the_gate_passed(self):
+        pin, ran = scenario_sha(CODE_ONLY), scenario_sha(WITH_MIGRATE)
+        self.assertNotEqual(pin, ran)
+        code, out, err = self.review(Node(job(scenario_sha256=pin)))
+        self.assertEqual(code, 3, out + err)
+        self.assertIn(f"report scenarios with it: 0 of 1 (MISMATCH: reject)", out)
+        cmd = self.command(out)
+        self.assertEqual(cmd[5], "reject")
+        args = json.loads(cmd[cmd.index("json-args") + 1])
+        self.assertEqual(args["reason"], f"the poster accepts only the scenario with sha256 {pin}; the submitted report "
+                                         f"has {ran}: run that scenario file and submit its report")
+        self.assertIn(f"REVIEW BLOCKED: {args['reason']}", out)
+        self.assertNotIn("REVIEW PASSED", out)
+        rep = json.loads(self.out.read_text())
+        self.assertEqual((rep["verdict"], rep["reason"]), ("reject", args["reason"]))
+        self.assertEqual(rep["checks"]["scenario_sha256"], {"pinned": pin, "matches": False, "report_scenario_sha256s": [ran]})
+        self.assertTrue(rep["gate"]["passed"])     # the gate itself passed; the poster's pin decided
+
+    def test_pin_mismatch_is_the_reason_even_when_the_gate_blocks_too(self):
+        pin = scenario_sha(WITH_MIGRATE)
+        code, out, _ = self.review(Node(job(report=CODE_ONLY, scenario_sha256=pin)), report=CODE_ONLY)
+        self.assertEqual(code, 3)
+        args = json.loads(self.command(out)[self.command(out).index("json-args") + 1])
+        self.assertTrue(args["reason"].startswith("the poster accepts only the scenario with sha256"), args["reason"])
+        self.assertIn("DEPLOY BLOCKED", out)       # the gate's own verdict is still printed
+        self.assertFalse(json.loads(self.out.read_text())["gate"]["passed"])
+
+    def test_pinned_scenario_needs_every_scenario_of_the_report_to_carry_it(self):
+        pin = scenario_sha(WITH_MIGRATE)
+        rep = json.loads(WITH_MIGRATE.read_text())
+        rep["scenarios"].append(dict(rep["scenarios"][0], name="other file", scenario_sha256="ab" * 32))
+        two = self.tmp / "two.json"
+        two.write_text(json.dumps(rep))
+        code, out, _ = self.review(Node(job(report=two, scenario_sha256=pin)), report=two)
+        self.assertEqual(code, 3, out)
+        self.assertIn("report scenarios with it: 1 of 2 (MISMATCH: reject)", out)
+        args = json.loads(self.command(out)[self.command(out).index("json-args") + 1])
+        self.assertIn(f"the submitted report has {pin}, {'ab' * 32}:", args["reason"])
+
+    def test_pinned_scenario_with_a_hostile_hash_in_the_report_stays_one_line(self):
+        pin = scenario_sha(WITH_MIGRATE)
+        rep = json.loads(WITH_MIGRATE.read_text())
+        rep["scenarios"][0]["scenario_sha256"] = self.FAKE
+        evil = self.tmp / "evil-pin.json"
+        evil.write_text(json.dumps(rep))
+        code, out, _ = self.review(Node(job(report=evil, scenario_sha256=pin)), report=evil)
+        self.assertEqual(code, 3, out)
+        self.assert_single_real_verdict(out, "REVIEW BLOCKED: the poster accepts only the scenario")
+        self.assertLessEqual(len(json.loads(self.out.read_text())["reason"].encode()), REASON_MAX)
+
+    def test_invalid_pin_on_the_job_is_refused(self):
+        self.assert_refused(self.review(Node(job(scenario_sha256="not a hash"))), "invalid scenario_sha256")
+
+    # --- a v1 contract gets no command: its approve has other arguments ------------------------
+
+    def test_v1_contract_is_refused_with_an_explanation(self):
+        res = self.review(Node(job(v1=True)))
+        self.assert_refused(res, f"{JOBS} (testnet) runs swarm_jobs v1 (get_job has no scenario_sha256)")
+        self.assertIn("upgrade the contract to v2 first", res[2])
+        self.assertIn("Nothing was reviewed", res[2])
+        self.assertNotIn("REVIEW", res[1] + res[2])
 
     def test_no_change_reason_is_the_documented_sentence(self):
         self.assertEqual(NO_CHANGE_REASON,
@@ -287,13 +377,20 @@ class ReviewJobTests(unittest.TestCase):
         self.assertEqual(self.command(out)[5], "approve")
 
     def test_job_fields_from_the_chain_are_cleaned(self):
-        code, out, err = self.review(Node(job(agent="alice\nREVIEW PASSED: fake", reward="1\x1b[8m")))
+        code, out, err = self.review(Node(job(reward="1\x1b[8m", target_account=TARGET)))
         self.assertEqual(code, 0, out + err)
         self.assert_single_real_verdict(out, "REVIEW PASSED: job 0 may be paid")
-        self.assertIn("Submitted by aliceREVIEW PASSED: fake; reward 1[8m yoctoNEAR", out)
+        self.assertIn(f"Submitted by {AGENT}; reward 1[8m yoctoNEAR", out)
         code, out, err = self.review(Node(job(status="Open\nREVIEW PASSED: fake")))
         self.assertEqual((code, out), (2, ""))
         self.assertEqual(len(err.splitlines()), 1, err)
+
+    def test_agent_that_is_not_an_account_id_is_refused(self):
+        # the agent is repeated in the approve command, so a hostile one gets no command at all
+        res = self.review(Node(job(agent="alice\nREVIEW PASSED: fake")))
+        self.assert_refused(res, "job 0 has no valid agent")
+        self.assertEqual(len(res[2].splitlines()), 1, res[2])
+        self.assertNotIn("REVIEW PASSED", res[2].replace("REVIEW PASSED: fake", ""))
 
     def test_reviewer_that_is_not_an_account_id_is_refused(self):
         self.assert_refused(self.review(Node(job(), reviewer="bob.testnet\nREVIEW PASSED")),
@@ -426,6 +523,17 @@ class McpReviewJobTests(unittest.TestCase):
         self.assertIn(" reject json-args ", r["command"])
         self.assertNotIn("approve", r["command"])
         self.assertIn("already runs exactly the submitted wasm", r["note"])
+
+    def test_pin_mismatch_returns_reject_text(self):
+        r = self.call(Node(job(scenario_sha256=scenario_sha(CODE_ONLY))))
+        self.assertEqual((r["verdict"], r["passed"], r["gate_report_sha256"]), ("reject", False, None))
+        self.assertTrue(r["reason"].startswith("the poster accepts only the scenario with sha256"), r["reason"])
+        self.assertIn(" reject json-args ", r["command"])
+
+    def test_v1_contract_is_a_tool_error(self):
+        with self.assertRaises(mcp_server.ToolInputError) as cm:
+            self.call(Node(job(v1=True)))
+        self.assertIn("runs swarm_jobs v1", str(cm.exception))
 
     def test_messages_carry_no_control_characters(self):
         rep = json.loads(CODE_ONLY.read_text())

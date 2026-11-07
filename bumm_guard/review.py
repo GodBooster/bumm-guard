@@ -11,9 +11,16 @@ submitted files and runs the gate on them; it does not re-execute the scenarios 
 the wasm from the crate. It says so in one ``note:`` line before the verdict and in the report
 (``evidence_origin``).
 
+The contract must be ``swarm_jobs`` v2: ``get_job`` carries ``scenario_sha256`` (``null`` or the sha256 of the
+one scenario file the poster accepts as proof). On a v1 contract (no such key) the review stops with exit 2
+and prints nothing: the v2 ``approve`` names the agent and the report hash, which v1 would refuse. When the
+poster pinned a scenario, every scenario in the submitted report must carry that ``scenario_sha256``, or the
+verdict is ``reject`` with a reason that names both hashes.
+
 It writes the review report (docs/FORMATS.md §7) to ``.bumm-guard/review-<job>.json`` and prints ONE
-command for the reviewer: ``approve`` with ``gate_report_sha256`` = sha256 of that file when the gate
-passed, ``reject`` with the gate's reason when it blocked. A gate outcome of NO CHANGE (the target
+command for the reviewer: ``approve`` with the job's ``agent``, ``wasm_sha256``, ``report_sha256`` and
+``gate_report_sha256`` = sha256 of that file when the gate passed, ``reject`` with the gate's reason when it
+blocked. A gate outcome of NO CHANGE (the target
 account already runs exactly the submitted wasm) is a ``reject`` too: the submission changed nothing,
 so there is nothing to pay for. It never signs and never sends; the reviewer runs the command with
 their own key. If the gate cannot read the target account (``view_code`` / ``view_account`` fails), the
@@ -46,6 +53,9 @@ EVIDENCE_NOTE = ("note: the scenario report and the crate were supplied with the
                  "they are the submitted files and ran the gate on them, it did not re-execute the scenarios or "
                  "rebuild the wasm")
 NO_CHANGE_REASON = "the target account already runs this exact wasm: nothing was changed by this submission"
+V1_CONTRACT_NOTE = ("runs swarm_jobs v1 (get_job has no scenario_sha256). This review prints the v2 approve (agent, "
+                    "wasm_sha256, report_sha256, gate_report_sha256), which a v1 contract refuses; upgrade the contract "
+                    "to v2 first (docs/SWARM_JOBS.md, upgrade v1 -> v2). Nothing was reviewed.")
 
 
 @dataclass
@@ -86,14 +96,41 @@ def call_command(contract: str, method: str, args: dict, gas: str, signer: str, 
             "sign-with-keychain", "send"]
 
 
-def _reason(lines: list[str], errors: list[str]) -> str:
-    """The gate's own refusal text, cut to the contract's limit."""
-    picked = [l for l in lines if l.startswith("DEPLOY BLOCKED")] or errors or ["gate blocked"]
-    text = " ".join(picked[0].split())
+def _cut(text: str) -> str:
+    """One line, cut to the contract's reason limit (bytes)."""
+    text = " ".join(text.split())
     raw = text.encode("utf-8")
     if len(raw) > REASON_MAX:
         text = raw[:REASON_MAX - 3].decode("utf-8", errors="ignore") + "..."
     return text
+
+
+def _reason(lines: list[str], errors: list[str]) -> str:
+    """The gate's own refusal text, cut to the contract's limit."""
+    picked = [l for l in lines if l.startswith("DEPLOY BLOCKED")] or errors or ["gate blocked"]
+    return _cut(picked[0])
+
+
+def pinned_scenario_check(simulate_report: str, pinned: str) -> dict:
+    """Does every scenario of the §3 report carry the poster's ``scenario_sha256``? Returns
+    ``{"pinned", "matches", "report_scenario_sha256s", "reason"}``; ``reason`` is ``None`` when it matches,
+    else the reject reason (one line, within the contract's limit). A report that is not a JSON object with a
+    ``scenarios`` list, or has no scenario, does not match."""
+    try:
+        data = json.loads(Path(simulate_report).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        data = None
+    scenarios = data.get("scenarios") if isinstance(data, dict) else None
+    if not isinstance(scenarios, list):
+        scenarios = []
+    hashes = [clean(sc.get("scenario_sha256")) if isinstance(sc, dict) else "?" for sc in scenarios]
+    matches = bool(hashes) and all(h == pinned for h in hashes)
+    reason = None
+    if not matches:
+        found = ", ".join(sorted(set(hashes))) if hashes else "no scenario at all"
+        reason = _cut(f"the poster accepts only the scenario with sha256 {pinned}; the submitted report has {found}: "
+                      "run that scenario file and submit its report")
+    return {"pinned": pinned, "matches": matches, "report_scenario_sha256s": hashes, "reason": reason}
 
 
 def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, simulate_report: str | None = None,
@@ -127,6 +164,11 @@ def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, s
         return bad(f"job {job_id} does not exist on {jobs_contract} ({network})")
     if not isinstance(job, dict) or not isinstance(onchain_reviewer, str) or not valid_account(onchain_reviewer):
         return bad(f"{jobs_contract} does not answer like a swarm_jobs contract (get_job / get_reviewer)")
+    if "scenario_sha256" not in job:
+        return bad(f"{jobs_contract} ({network}) {V1_CONTRACT_NOTE}")
+    pinned = job.get("scenario_sha256")
+    if pinned is not None and not _is_sha256(pinned):
+        return bad(f"job {job_id} has an invalid scenario_sha256: {clean(repr(pinned))} (nothing was reviewed)")
     res = ReviewOutcome(2, job=job)
     if reviewer is not None and reviewer != onchain_reviewer:
         res.errors.append(f"bumm-guard: {jobs_contract} has reviewer {onchain_reviewer}; approve/reject signed by "
@@ -141,6 +183,11 @@ def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, s
     if not (_is_sha256(sub_wasm) and _is_sha256(sub_report)):
         res.errors.append(f"bumm-guard: job {job_id} has no valid submitted hashes: {clean(repr(sub_wasm))}, "
                           f"{clean(repr(sub_report))}")
+        return res
+    agent = job.get("agent")
+    if not isinstance(agent, str) or not valid_account(agent):
+        # The agent is repeated in the approve command, so it must be a plain account id.
+        res.errors.append(f"bumm-guard: job {job_id} has no valid agent: {clean(repr(agent))} (nothing was reviewed)")
         return res
     wasm_sha = sha256_file(wasm)
     res.lines.append(f"job {job_id} on {jobs_contract} ({network}): Submitted by {clean(job.get('agent'))}; "
@@ -160,6 +207,13 @@ def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, s
                           f"submitted {sub_report} (nothing was reviewed)")
         return res
     res.lines.append(f"report sha256 {report_sha} = submitted report_sha256")
+    pin = pinned_scenario_check(simulate_report, pinned) if pinned is not None else None
+    if pin is None:
+        res.lines.append("scenario_sha256 on the job: null (the poster accepts any scenario)")
+    else:
+        res.lines.append(f"scenario_sha256 on the job: {pinned}; report scenarios with it: "
+                         f"{sum(h == pinned for h in pin['report_scenario_sha256s'])} of {len(pin['report_scenario_sha256s'])}"
+                         + ("" if pin["matches"] else " (MISMATCH: reject)"))
     target = job.get("target_account")
     if account is not None and target is not None and account != target:
         res.errors.append(f"bumm-guard: --account {account} differs from the job's target_account {clean(target)}")
@@ -193,8 +247,10 @@ def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, s
     # The gate passes a target that already runs this wasm (nothing to deploy, exit 0). For a paid job
     # that is not a pass: the submission changed nothing, so the verdict is reject.
     no_change = gate_passed and (g.deploy or {}).get("status") == "no-change"
-    passed = gate_passed and not no_change
-    reason = None if passed else NO_CHANGE_REASON if no_change else _reason(g.lines, g.errors)
+    # The poster's pin comes first: a proof that is not the accepted scenario is rejected whatever the gate said.
+    pin_reason = pin["reason"] if pin is not None else None
+    passed = gate_passed and not no_change and pin_reason is None
+    reason = None if passed else pin_reason or (NO_CHANGE_REASON if no_change else _reason(g.lines, g.errors))
     res.gate = {"exit_code": g.exit_code, "passed": gate_passed, "messages": gate_lines + g.errors,
                 "report": g.report, "upgrade": g.upgrade, "upgrade_check": g.upgrade_check}
     report = {
@@ -204,7 +260,8 @@ def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, s
         "job": job, "target_account": target,
         "inputs": {"crate_dir": crate_dir, "wasm": wasm, "wasm_sha256": wasm_sha,
                    "simulate_report": simulate_report, "report_sha256": report_sha},
-        "checks": {"status_submitted": True, "wasm_sha256_matches": True, "report_sha256_matches": True},
+        "checks": {"status_submitted": True, "wasm_sha256_matches": True, "report_sha256_matches": True,
+                   "scenario_sha256": None if pin is None else {k: pin[k] for k in ("pinned", "matches", "report_scenario_sha256s")}},
         "evidence_origin": EVIDENCE_ORIGIN,
         "gate": res.gate,
         "verdict": "approve" if passed else "reject",
@@ -219,7 +276,8 @@ def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, s
     res.lines.append(EVIDENCE_NOTE)
     if passed:
         res.exit_code, res.verdict = 0, "approve"
-        res.command = call_command(jobs_contract, "approve", {"job_id": job_id, "wasm_sha256": wasm_sha,
+        res.command = call_command(jobs_contract, "approve", {"job_id": job_id, "agent": agent, "wasm_sha256": wasm_sha,
+                                                              "report_sha256": report_sha,
                                                               "gate_report_sha256": res.report_sha256},
                                    APPROVE_GAS, signer, network)
         res.lines.append(f"REVIEW PASSED: job {job_id} may be paid. Approve command for {signer} "
