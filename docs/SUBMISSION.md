@@ -35,10 +35,10 @@ Field notes, checked against https://nearhackathon.com/HACKATHON.md on 2026-11-0
 
 The rules require the main post to say the project was built at NEAR HACKATHON, to tag `@NEARProtocol` and `#NEARHackathon`, and to carry the demo video (Q-012: screenshots are not enough for a local-only demo). `@NearLegion` and `@NearBuilders` are optional. Counts below treat a link as 23 characters; recheck in the X editor.
 
-Main post (limit 280; this text counts 310 with the repo link; attach the video):
+Main post (limit 280; this text counts 273 with the repo link; attach the video):
 
 <!-- x1-start -->
-A NEAR contract can pass fresh-deploy tests and break on upgrade over old state. Built at NEAR HACKATHON: BUMM Guard checks the upgrade in near-sandbox on state the old code wrote and gates the deploy on that proof. Demo: an escrow deal survives on testnet. @NEARProtocol #NEARHackathon {REPO}
+A NEAR contract can pass fresh-deploy tests and break on upgrade. Built at NEAR HACKATHON: BUMM Guard checks the upgrade in near-sandbox on old-code state, then gates the deploy. Demo: an escrow deal survives on testnet. @NEARProtocol #NEARHackathon {REPO}
 <!-- x1-end -->
 
 Thread, reply 1 (278 characters), where the upgrade check came from:
