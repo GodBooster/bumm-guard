@@ -29,12 +29,13 @@ once, below the methods table.
    |                              |                                     |
    |                              |-- join_swarm(profile) + budget ---->|  (budget tracked, no inference here;
    |                              |                                     |   the record's storage part stays locked)
-   |-- post_job(desc, target, reward, scenario_sha256?) + deposit ---->| job: Open
+   |-- post_job(desc, target, reward, scenario_sha256?, assigned_agent?) + deposit -->| job: Open
    |     deposit >= reward + storage fee of the record; excess back    |
    |                              |                                     |
    |                              |  builds wasm, runs `bumm-guard simulate` (CI)
    |                              |-- submit(job, wasm_sha256, report_sha256) --> job: Submitted
-   |                              |     needs budget >= 0.1 NEAR x (jobs under review + 1)
+   |                              |     needs budget >= 0.1 NEAR x (jobs under review + 1) + storage part;
+   |                              |     only assigned_agent may submit when the job names one
    |                              |                                     |
    |                              |          bumm-guard review-job (read-only):
    |                              |            get_job -> v2? Submitted?  sha256(--wasm) == wasm_sha256?
@@ -47,7 +48,8 @@ once, below the methods table.
    |                              |                                     |
    |                              |      passed: approve(job, agent, wasm_sha256, report_sha256, sha256(review report))
    |                              |<----- reward (transfer) ------------|  job: Paying -> Paid
-   |                              |      blocked: reject(job, reason)      job: Rejected -> an agent resubmits
+   |                              |      blocked: reject(job, reason, close=false)  job: Rejected -> an agent resubmits
+   |                              |               reject(job, reason, close=true)   job: Cancelled, reward back to the poster
    |                              |                                     |
    |-- cancel(job) while Open or Rejected: reward back (the fee stays)     job: Cancelled
    |                              |-- leave_swarm() with nothing under review: whole budget back, record deleted
@@ -62,19 +64,19 @@ once, below the methods table.
 | `join_swarm(profile)` payable | anyone except the reviewer | registers the caller as an agent (or updates the profile); the deposit is added to its budget. The first join needs at least 0.1 NEAR (`MIN_AGENT_DEPOSIT`); the storage cost of the new record is measured then and recorded as the agent's storage part (shown as `storage_cost`): it stays in the budget but cannot be withdrawn while the agent is registered. Top-ups may be any amount |
 | `withdraw_budget(amount)` | the agent | sends `amount` (yoctoNEAR string) of its own budget back; what stays must be at least 0.1 NEAR per job of the agent in `Submitted` or `Paying`, plus the storage part |
 | `leave_swarm()` | the agent | refused while the agent has a job in `Submitted` or `Paying`; otherwise deletes the record, frees its storage and transfers the whole remaining budget (storage part included) back; returns the amount. Finished jobs that name the agent are kept; a later join starts again at 0.1 NEAR with `jobs_paid` 0 |
-| `post_job(description, target_account?, reward, scenario_sha256?)` payable | anyone | `reward` is a yoctoNEAR string (> 0); the attached deposit must be at least the reward plus the storage fee of the new record (bytes added × `storage_byte_cost`, measured in the call); the fee is kept by the contract, non-refundable, and recorded as `reward_storage_fee`; the excess over reward + fee is transferred back to the poster in the same call. `scenario_sha256`, when given, is the sha256 of the one scenario file the poster accepts as proof (64 lowercase hex); the contract only stores and shows it. Status `Open`; returns the id |
-| `submit(job_id, wasm_sha256, report_sha256)` | a registered agent | allowed while `Open` or `Rejected`, and only if `budget >= 0.1 NEAR × (jobs_in_review + 1)`; both hashes 64 lowercase hex; status `Submitted` |
+| `post_job(description, target_account?, reward, scenario_sha256?, assigned_agent?)` payable | anyone | `reward` is a yoctoNEAR string (> 0); the attached deposit must be at least the reward plus the storage fee of the new record (bytes added × `storage_byte_cost`, measured in the call); the fee is kept by the contract, non-refundable, and recorded as `reward_storage_fee`; the excess over reward + fee is transferred back to the poster in the same call. `scenario_sha256`, when given, is the sha256 of the one scenario file the poster accepts as proof (64 lowercase hex); the contract only stores and shows it. `assigned_agent`, when given, is the only account that may `submit`. Status `Open`; returns the id |
+| `submit(job_id, wasm_sha256, report_sha256)` | a registered agent (the `assigned_agent` if the job has one) | allowed while `Open` or `Rejected`, and only if `budget >= 0.1 NEAR × (jobs_in_review + 1)` plus the agent's storage part; both hashes 64 lowercase hex; status `Submitted` |
 | `approve(job_id, agent, wasm_sha256, report_sha256, gate_report_sha256)` | the reviewer | needs `Submitted` and `agent`, `wasm_sha256`, `report_sha256` all equal to the current submission; records the gate report hash; `Paying`, transfers the reward, then the `#[private]` callback `on_reward_paid` sets `Paid`, or on a failed transfer `Submitted` again with the reward still in the contract (exactly as in v1) |
-| `reject(job_id, reason)` | the reviewer | needs `Submitted`; stores the reason (≤ 500 bytes); `Rejected` |
+| `reject(job_id, reason, close)` | the reviewer | needs `Submitted`; stores the reason (≤ 500 bytes); the agent's `jobs_in_review` goes down. `close = false`: `Rejected`, an agent may submit again. `close = true`: `Cancelled` and the reward is transferred back to the poster in the same transaction (the fee stays), so a rejected agent cannot keep the job locked by resubmitting before the poster's `cancel` |
 | `cancel(job_id)` | the poster | only while `Open` or `Rejected`; refunds the reward, not the storage fee; `Cancelled`; the record stays |
 | views | anyone | `get_job(id)`, `list_jobs(from_index?, limit?)` (≤ 100), `job_count()`, `get_agent(account)`, `agent_count()`, `get_reviewer()` |
 
 `get_job` returns `{id, poster, description, target_account, reward, status, agent, wasm_sha256, report_sha256,
-gate_report_sha256, reject_reason, reward_storage_fee, scenario_sha256}`; `status` is one of `Open`, `Submitted`,
+gate_report_sha256, reject_reason, reward_storage_fee, scenario_sha256, assigned_agent}`; `status` is one of `Open`, `Submitted`,
 `Rejected`, `Paying`, `Paid`, `Cancelled`. `get_agent` returns `{account, profile, budget, jobs_paid, jobs_in_review,
 storage_cost}` (`jobs_in_review` counts the agent's jobs in `Submitted` or `Paying`). The v1 field names are kept and
 only new fields were added, so v1 callers keep working; `storage_cost` and `reward_storage_fee` are `"0"` for an
-agent or job that was registered or posted on v1.
+agent or job that was registered or posted on v1, and `assigned_agent` is null for a v1 job.
 
 **What v2 changed** (each item was a weakness of v1 found in the review of 2026-11-06):
 
@@ -83,16 +85,25 @@ agent or job that was registered or posted on v1.
   covers its own record and that part is locked until `leave_swarm`, which deletes the record. Spam now costs its
   storage. The fee is not refunded by `cancel`; finished jobs (`Paid`, `Cancelled`, `Rejected` without a resubmit)
   are kept as history: they are what `jobs_paid` and the reviewer's `gate_report_sha256` point to.
-- *The 0.1 NEAR floor was flat.* v2: 0.1 NEAR per job under review, checked on `submit` and on `withdraw_budget`.
+- *The 0.1 NEAR floor was flat.* v2: 0.1 NEAR per job under review plus the agent's storage part, checked on
+  `submit` and on `withdraw_budget`.
 - *`approve` bound only the wasm hash.* v2: it names the agent, the wasm hash and the report hash, and all three
   must equal the current submission, so an approve printed for one submission cannot pay a resubmission of the
   same wasm by another agent or with another report (`02_floor_per_job_and_approve_bindings.json` shows the
   copycat case).
 - *Nothing let the poster pin the acceptance criteria.* v2: `post_job` may carry `scenario_sha256`; the contract
   stores it, `review-job` rejects a report whose scenarios do not all carry it.
-- Signature changes against v1: `post_job` takes `reward` as an argument (v1: reward = attached deposit) and
-  `scenario_sha256`; `approve` has five arguments (v1: three). A v1-style `approve` on v2 fails at input
-  deserialization; `review-job` refuses to print an approve for a v1 contract (exit 2).
+- *The first submitter owned the job, and a copycat could take it over after a reject.* v2: `post_job` may name
+  `assigned_agent`; then only that account may `submit`, before and after a reject
+  (`04_reject_close_and_assigned_agent.json`). Without it the first submitter still owns the job until the
+  reviewer acts.
+- *A rejected agent could deny the poster's `cancel` by resubmitting first, forever, at gas cost.* v2:
+  `reject(job_id, reason, close)`; with `close = true` the job is `Cancelled` and the reward refunded in the same
+  transaction. `review-job` prints both variants and the reviewer picks.
+- Signature changes against v1: `post_job` takes `reward` as an argument (v1: reward = attached deposit),
+  `scenario_sha256` and `assigned_agent`; `approve` has five arguments (v1: three); `reject` has `close`. A
+  v1-style `approve` on v2 fails at input deserialization; `review-job` refuses to print an approve for a v1
+  contract (exit 2). The reward callback runs with 20 Tgas (v1: 10).
 
 **State and the upgrade from v1.** The root struct keeps the v1 shape (`reviewer`, `jobs`, `agents`, `agent_count`,
 `next_id`); only the `Job` record gained two fields. The agent's storage part is kept under its own raw key (`s` +
@@ -106,12 +117,15 @@ stays under review and the v2 `approve` pays it; migrated agents keep their budg
 
 Checks of our own rules on the contract (dogfooding): `python3 -m bumm_guard scan tests/fixtures/near/swarm_jobs_v2`
 → `0 finding(s) in 1 file(s)`; the callback is `#[private]` (BG-NEAR-001) and reads the promise result (BG-NEAR-002);
-the migration guard reports `migrate` as `#[private]` (`src/lib.rs:234`). Unit tests: 45 (`cargo +stable test -p
+the migration guard reports `migrate` as `#[private]` (`src/lib.rs:243`). Unit tests: 56 (`cargo +stable test -p
 swarm_jobs_v2` from `tests/fixtures/near`; the dev-dependencies need rustc ≥ 1.88, the wasm is built with the pinned
 1.85.0): the v1 cases kept, plus the storage fee (taken, recorded, higher for a longer description, exactly the
 reward refused, less than the reward refused, the exact amount accepted), the pinned scenario (stored, shown,
 uppercase and 63-character hashes refused), the approve bindings (other agent, other report, the copycat
-resubmission), the per-job floor on submit and withdraw, `leave_swarm` (refused while Submitted or Paying, refused
+resubmission), the per-job floor on submit and withdraw (with the storage part: exactly 0.1 NEAR is not enough for
+one job), the assigned agent (another agent refused before and after a reject, the assigned one accepted and shown),
+`reject` with `close` (Cancelled, counter down, no resubmit, no cancel, reviewer only, Submitted only; without
+`close` a resubmit still works), `leave_swarm` (refused while Submitted or Paying, refused
 for a non-agent, refunds the whole budget and frees the record, allowed after a reject) and `migrate` on a v1-shaped
 state written through v1's own Borsh structs (the live testnet state mirrored: two submitted jobs, alice with 0.5
 NEAR; the v2 approve then pays job 0 and alice may leave with her 0.5 NEAR). Scenarios on near-sandbox (CI job
@@ -120,7 +134,9 @@ refunded, four refused posts, pinned hash shown, five-argument approve, `leave_s
 `02_floor_per_job_and_approve_bindings.json` (second submit with 0.15 NEAR refused, withdraw below the floor refused,
 approve for another agent / wasm / report refused, the approve for the first agent does not pay the copycat,
 withdraw of the storage part refused, leave), `03_leave_swarm_and_cancel.json` (no leaving under review, cancel
-refunds the reward and keeps the fee, leave frees the record, rejoin at 0.1 NEAR), and the upgrade pair
+refunds the reward and keeps the fee, leave frees the record, rejoin at 0.1 NEAR), `04_reject_close_and_assigned_agent.json`
+(another agent refused on an assigned job, the assigned one accepted, reject without close then resubmit, reject
+with close: Cancelled, poster refunded, counter down, no resubmit, no cancel, not twice), and the upgrade pair
 `scenarios/upgrade/swarm_jobs_v1_to_v2_with_migrate.json` (49 steps: v1 deployed, the live state mirrored, upgrade
 with `migrate`, every field of both jobs and of the agent checked with `equals`, then the v2 path: approve of job 0,
 a v1-style approve refused, reject and cancel of job 1, a v2 job with fee and pin, alice leaves) and
@@ -166,7 +182,9 @@ python3 -m bumm_guard review-job --jobs-contract ACCOUNT --job ID --crate DIR --
    - pin mismatch (exit 3, `REVIEW BLOCKED`): `reject` with the reason `the poster accepts only the scenario with
      sha256 <pin>; the submitted report has <hashes found>: run that scenario file and submit its report`;
    - gate blocked (exit 3, `REVIEW BLOCKED`): the same with `reject` and
-     `{"job_id":..,"reason":<the gate's DEPLOY BLOCKED line, ≤ 500 bytes>}`;
+     `{"job_id":..,"reason":<the gate's DEPLOY BLOCKED line, ≤ 500 bytes>,"close":false}`, followed by one more
+     line, `or, to close the job as well (Cancelled, the reward goes back to the poster, nobody can resubmit):` and
+     the same command with `"close":true`. The reviewer picks one; every reject (pin, gate, NO CHANGE) prints both;
    - the target account already runs exactly the submitted wasm (the gate's `NO CHANGE`; exit 3, `REVIEW
      BLOCKED`): `reject` with the reason `the target account already runs this exact wasm: nothing was changed by
      this submission`. It is never an approve;
@@ -185,8 +203,9 @@ job whose `agent` is not a valid account id gets no command at all (exit 2).
 The gate's own deploy command for the target account appears in the output for information only; it is not part
 of the job and nobody runs it during the review. MCP: the tool `review_job` (`jobs_contract`, `job_id`,
 `crate_dir`, `wasm`, `simulate_report?`, `account?`, `network`, `reviewer?`) returns `{verdict, passed, reason,
-command, command_executed: false, gate_report_sha256, review_report_path, gate, job, messages, note}`; it has no
-execute, sign or send parameter; a v1 contract is a tool error.
+command, close_command, command_executed: false, gate_report_sha256, review_report_path, gate, job, messages,
+note}` (`close_command` is the `close:true` reject, null on approve); it has no execute, sign or send parameter; a
+v1 contract is a tool error.
 
 Keep the review report: `gate_report_sha256` on chain is its hash, and the file is what lets anyone check what the
 reviewer approved.
@@ -213,8 +232,11 @@ reviewer approved.
   (code on the account → submitted wasm), so if the target's owner deploys anything else, the review blocks, and
   if the owner deploys the submitted wasm itself, the review gives `NO CHANGE` and a reject. In both cases the
   poster can then cancel and take the reward back. The agent has no defence against that in this contract; it
-  assumes an honest poster and reviewer. (A copycat can still submit the same hashes to *another* job; on the same
-  job the approve now names the agent.)
+  assumes an honest poster and reviewer.
+- **The first submitter owns the job unless `assigned_agent` is set.** On an open job the first registered agent
+  to `submit` holds it until the reviewer acts, and after a reject anyone may resubmit the same hashes; the
+  approve names the agent, so the copycat is paid only if the reviewer approves *its* submission. A poster who
+  wants one agent names it in `assigned_agent`. A copycat can still submit the same hashes to *another* job.
 - **No real inference and no agent runtime.** `join_swarm` only records a budget; nothing spends it. There are no
   bids, no job assignment, no reputation, no slashing. The per-job floor raises the cost of keeping many jobs
   locked; an agent that submits junk still keeps its budget and may withdraw it once nothing of its is under
@@ -222,13 +244,24 @@ reviewer approved.
 - **One reviewer, no DAO.** The reviewer is fixed at `new`; there is no way to change it, no quorum and no appeal.
 - **A submitted job stays locked until the reviewer acts.** While a job is `Submitted` the poster cannot cancel it
   and no other agent can submit; only `approve` or `reject` by the reviewer unlocks it. A reviewer who does nothing
-  keeps the reward locked, and the agent's 0.1 NEAR for that job with it.
-- **The storage fee covers the record as posted.** `submit` and `approve` add about 200 bytes (the agent, two or
-  three hashes) that the contract pays for; the agent's storage part is measured at the first join and a longer
-  profile later is not re-measured (at most 200 bytes). Jobs and agents from v1 have no fee and no storage part.
-  These are small, bounded amounts, not the open-ended lock of v1, but they are still paid from the contract's
-  balance.
-- **`withdraw_budget`, `leave_swarm`, `cancel` and the refund in `post_job` have no transfer callback.** The state
+  keeps the reward locked, and the agent's 0.1 NEAR for that job with it. A reviewer who rejects with
+  `close = false` leaves a window in which the rejected agent may resubmit before the poster's `cancel`; `close =
+  true` ends the job instead.
+- **The migration window is one-way.** `migrate` reads the v1 jobs under the v1 prefix. A code-only v2 deploy
+  followed by one `post_job` writes a v2 record under that prefix, and `migrate` can no longer read the map: the
+  v1 jobs would be stuck. Deploy and `migrate` in one batch only (what the gate prints), never code first.
+- **`on_reward_paid` runs with 20 Tgas and has no admin path.** If that callback ever failed (it did not, in the
+  sandbox or the unit tests) the job would stay `Paying` with the reward already paid and no method to repair it.
+- **`migrate` is O(N) over the jobs.** Every record is read, rewritten (17 more bytes each) and the old one
+  removed in one transaction; hundreds of jobs could exceed the gas limit, in which case the whole batch reverts
+  and nothing is lost, but the upgrade needs another way. The live contract has two jobs.
+- **The storage fee covers the record as posted; the contract still pays bounded growth.** Per job: `submit` and
+  `approve` add about 200 bytes (the agent, two or three hashes), `reject` a reason of up to 500 bytes, `migrate`
+  17 bytes per v1 record (the two new fields and the assignment). The agent's storage part is measured at the
+  first join and a longer profile later is not re-measured (at most 200 bytes). Jobs and agents from v1 have no
+  fee and no storage part. These are small, bounded amounts, not the open-ended lock of v1, but they are still
+  paid from the contract's balance.
+- **`withdraw_budget`, `leave_swarm`, `cancel`, `reject` with `close` and the refund in `post_job` have no transfer callback.** The state
   is updated before the transfer to the caller; the caller account exists, so a failure is unlikely, but a failed
   refund is not re-credited (only `approve` has a callback that undoes its state on a failed transfer).
 - The agent submits hashes, not files: the reviewer must obtain the wasm and the report out of band (here: files in
@@ -351,7 +384,7 @@ anywhere else is refused: the report proves another pair.
    ```
 3. Gate with the migrate report (expected: `upgrade of bumm-guard-jobs.testnet: bcace583… -> <v2 sha256>, proved
    by passing scenario 'Upgrade swarm_jobs v1 → v2 (upgrade with migrate()) …'`, `proved after upgrade (37
-   step(s)): view job_count, view agent_count, …`, `migration migrate: #[private] (src/lib.rs:234)`, exit 0, and
+   step(s)): view job_count, view agent_count, …`, `migration migrate: #[private] (src/lib.rs:243)`, exit 0, and
    one deploy command). **owner** runs the printed command: one batch transaction, deploy plus `migrate`, signed by
    the contract account:
    ```
@@ -394,8 +427,10 @@ anywhere else is refused: the report proves another pair.
    python3 -m bumm_guard review-job --jobs-contract bumm-guard-jobs.testnet --job 1 --crate tests/fixtures/near/escrow_v2 \
      --wasm evidence/wasm/escrow_v2.wasm --simulate-report evidence/escrow-upgrade-code-only-report-ci.json --network testnet
    ```
-   **bob** runs it; `get_job {"id":1}` says `Rejected` with that reason, `get_agent` says `jobs_in_review` 0.
-   Optionally **demo** takes the reward back (the record stays, `Cancelled`):
+   Two commands are printed: `reject … "close":false` (job `Rejected`, alice may resubmit) and the `"close":true`
+   variant (job `Cancelled`, demo's 1 NEAR comes back in the same transaction). **bob** runs the first one;
+   `get_job {"id":1}` says `Rejected` with that reason, `get_agent` says `jobs_in_review` 0. Optionally **demo**
+   takes the reward back (the record stays, `Cancelled`):
    ```
    near contract call-function as-transaction bumm-guard-jobs.testnet cancel json-args '{"job_id":1}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as bumm-guard-demo.testnet network-config testnet sign-with-keychain send
    ```

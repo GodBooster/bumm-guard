@@ -315,3 +315,6 @@ of the one scenario file the poster accepts) and `reward_storage_fee`. On a v1 c
   to 500 bytes (the contract's limit), or, for NO CHANGE, the fixed sentence `the target account already runs this
   exact wasm: nothing was changed by this submission`; it is the `reason` argument of the printed `reject` command.
   `gate.passed` is the gate's own result, not the verdict (a pin mismatch with `gate.passed: true` is a reject).
+  The printed `reject` carries `{"job_id", "reason", "close": false}`; a second line repeats it with `"close":
+  true` (the job is cancelled and the poster refunded by the contract) for the reviewer to choose. The MCP result
+  carries them as `command` and `close_command`.

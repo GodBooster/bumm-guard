@@ -20,6 +20,11 @@
 //! - **Poster-pinned acceptance.** `post_job` may carry `scenario_sha256`, the sha256 of the scenario
 //!   file the poster accepts as proof. The contract only stores and shows it; `bumm-guard review-job`
 //!   rejects a report whose scenarios do not all have that hash.
+//! - **Assigned agent.** `post_job` may name `assigned_agent`; then only that account may `submit`
+//!   (otherwise the first submitter owns the job until the reviewer acts).
+//! - **Reject and close.** `reject(job_id, reason, close)`: with `close = true` the job is `Cancelled`
+//!   and the reward goes back to the poster in the same transaction, so a rejected agent cannot keep a
+//!   job locked by resubmitting before the poster's `cancel`.
 //!
 //! **State.** The root struct keeps the v1 shape (`reviewer`, `jobs`, `agents`, `agent_count`,
 //! `next_id`), so a code-only upgrade from v1 still answers `job_count`, `agent_count`, `get_agent`
@@ -47,7 +52,7 @@ const MAX_DESCRIPTION: usize = 1000;
 const MAX_PROFILE: usize = 200;
 const MAX_REASON: usize = 500;
 const MAX_LIST: u64 = 100;
-const CALLBACK_GAS: Gas = Gas::from_tgas(10);
+const CALLBACK_GAS: Gas = Gas::from_tgas(20);
 /// Deposit required on an account's first `join_swarm` (0.1 NEAR), and the floor per job under review
 /// (Submitted or Paying): `submit` needs `budget >= MIN_AGENT_DEPOSIT * (jobs_in_review + 1)` and
 /// `withdraw_budget` keeps `budget >= MIN_AGENT_DEPOSIT * jobs_in_review` plus the storage part.
@@ -123,6 +128,9 @@ pub struct Job {
     /// sha256 of the scenario file the poster accepts as proof (`None`: any scenario). Stored and
     /// shown only; `bumm-guard review-job` enforces it.
     scenario_sha256: Option<String>,
+    /// The only account that may `submit` to this job (`None`: any registered agent); `None` for a
+    /// job migrated from v1.
+    assigned_agent: Option<AccountId>,
 }
 
 /// Stored record of one agent (Borsh, inside `agents`); unchanged from v1.
@@ -152,6 +160,7 @@ pub struct JobView {
     pub reject_reason: Option<String>,
     pub reward_storage_fee: NearToken,
     pub scenario_sha256: Option<String>,
+    pub assigned_agent: Option<AccountId>,
 }
 
 /// What `get_agent` returns (JSON; amounts are yoctoNEAR strings). `storage_cost` is new: the part of
@@ -252,6 +261,7 @@ impl SwarmJobs {
                     reject_reason: j.reject_reason.clone(),
                     reward_storage_fee: zero(),
                     scenario_sha256: None,
+                    assigned_agent: None,
                 },
             );
         }
@@ -354,7 +364,8 @@ impl SwarmJobs {
     /// reward plus the storage fee of the new record (measured here: bytes added times
     /// `storage_byte_cost`); the fee stays in the contract, the excess goes back to the poster in this
     /// call. `scenario_sha256`, when given, is the sha256 of the one scenario file the poster accepts
-    /// as proof (64 lowercase hex). Returns the job id.
+    /// as proof (64 lowercase hex); `assigned_agent`, when given, is the only account that may
+    /// `submit`. Returns the job id.
     #[payable]
     pub fn post_job(
         &mut self,
@@ -362,6 +373,7 @@ impl SwarmJobs {
         target_account: Option<AccountId>,
         reward: NearToken,
         scenario_sha256: Option<String>,
+        assigned_agent: Option<AccountId>,
     ) -> u64 {
         let deposit = env::attached_deposit();
         require!(!reward.is_zero(), "Reward must be positive");
@@ -388,6 +400,7 @@ impl SwarmJobs {
                 reject_reason: None,
                 reward_storage_fee: zero(), // placeholder of the final size (16 bytes)
                 scenario_sha256,
+                assigned_agent,
             },
         );
         self.jobs.flush();
@@ -409,21 +422,21 @@ impl SwarmJobs {
     }
 
     /// A registered agent submits its work as two hashes: the wasm it built and the scenario
-    /// report (`bumm-guard simulate`) that proves it. Allowed while the job is Open or Rejected, and
-    /// only if the agent's budget covers `MIN_AGENT_DEPOSIT` for every job it would then have under
-    /// review.
+    /// report (`bumm-guard simulate`) that proves it. Allowed while the job is Open or Rejected, by
+    /// the job's `assigned_agent` if it has one, and only if the agent's budget covers
+    /// `MIN_AGENT_DEPOSIT` for every job it would then have under review plus its storage part.
     pub fn submit(&mut self, job_id: u64, wasm_sha256: String, report_sha256: String) {
         let caller = env::predecessor_account_id();
         let (budget, in_review) = match self.agents.get(&caller) {
             Some(a) => (a.budget, a.jobs_in_review),
             None => env::panic_str("Only a registered agent can submit; call join_swarm first"),
         };
-        let needed = Self::budget_floor(in_review + 1);
+        let needed = Self::budget_floor(in_review + 1).saturating_add(Self::storage_part(&caller));
         require!(
             budget >= needed,
             format!(
-                "Budget must be at least 0.1 NEAR per job under review: {} job(s) would need {} \
-                 yoctoNEAR, the budget is {}",
+                "Budget must be at least 0.1 NEAR per job under review plus the storage part: {} job(s) \
+                 would need {} yoctoNEAR, the budget is {}",
                 in_review + 1,
                 needed,
                 budget
@@ -432,6 +445,12 @@ impl SwarmJobs {
         require_sha256("wasm_sha256", &wasm_sha256);
         require_sha256("report_sha256", &report_sha256);
         let job = self.job_mut(job_id);
+        if let Some(assigned) = &job.assigned_agent {
+            require!(
+                assigned == &caller,
+                format!("Job {} is assigned to {}; only that agent may submit", job_id, assigned)
+            );
+        }
         require!(
             job.status == JobStatus::Open || job.status == JobStatus::Rejected,
             format!("Job {} is not open for submissions (status {})", job_id, job.status.as_str())
@@ -507,8 +526,11 @@ impl SwarmJobs {
         ok
     }
 
-    /// Reviewer only: the gate blocked. The reason is stored; an agent may submit again.
-    pub fn reject(&mut self, job_id: u64, reason: String) {
+    /// Reviewer only: the gate blocked. The reason is stored. With `close = false` the job is
+    /// `Rejected` and an agent may submit again; with `close = true` it is `Cancelled` and the reward
+    /// goes back to the poster in this transaction (the storage fee stays), so a rejected agent cannot
+    /// keep the job locked by resubmitting before the poster's `cancel`.
+    pub fn reject(&mut self, job_id: u64, reason: String, close: bool) {
         require!(env::predecessor_account_id() == self.reviewer, "Only the reviewer can reject");
         require!(reason.len() <= MAX_REASON, "Reason is too long (max 500 bytes)");
         let job = self.job_mut(job_id);
@@ -517,9 +539,13 @@ impl SwarmJobs {
             format!("Job {} is not Submitted (status {})", job_id, job.status.as_str())
         );
         job.reject_reason = Some(reason);
-        job.status = JobStatus::Rejected;
-        if let Some(agent) = job.agent.clone() {
+        job.status = if close { JobStatus::Cancelled } else { JobStatus::Rejected };
+        let (agent, poster, reward) = (job.agent.clone(), job.poster.clone(), job.reward);
+        if let Some(agent) = agent {
             self.review_count(&agent, false);
+        }
+        if close {
+            Promise::new(poster).transfer(reward);
         }
     }
 
@@ -631,6 +657,7 @@ impl SwarmJobs {
             reject_reason: j.reject_reason.clone(),
             reward_storage_fee: j.reward_storage_fee,
             scenario_sha256: j.scenario_sha256.clone(),
+            assigned_agent: j.assigned_agent.clone(),
         }
     }
 }
@@ -680,7 +707,7 @@ mod tests {
         as_account("alice.near", near(1));
         c.join_swarm("rust agent".into());
         as_account("carol.near", near(3));
-        assert_eq!(c.post_job("upgrade escrow".into(), Some(acc("escrow.near")), near(2), None), 0);
+        assert_eq!(c.post_job("upgrade escrow".into(), Some(acc("escrow.near")), near(2), None, None), 0);
         c
     }
 
@@ -820,7 +847,7 @@ mod tests {
     fn reject_then_resubmit_then_approve() {
         let mut c = submitted();
         as_account("bob.near", zero());
-        c.reject(0, "no upgrade proof for this pair".into());
+        c.reject(0, "no upgrade proof for this pair".into(), false);
         let j = c.get_job(0).unwrap();
         assert_eq!(j.status, "Rejected");
         assert_eq!(j.reject_reason.as_deref(), Some("no upgrade proof for this pair"));
@@ -837,7 +864,7 @@ mod tests {
     fn reject_by_non_reviewer_refused() {
         let mut c = submitted();
         as_account("alice.near", zero());
-        c.reject(0, "mine".into());
+        c.reject(0, "mine".into(), false);
     }
 
     #[test]
@@ -883,7 +910,7 @@ mod tests {
     fn views_list_and_count() {
         let mut c = setup();
         as_account("carol.near", near(2));
-        c.post_job("second".into(), None, near(1), Some(SCENARIO.into()));
+        c.post_job("second".into(), None, near(1), Some(SCENARIO.into()), None);
         assert_eq!(c.job_count(), 2);
         assert_eq!(c.get_reviewer(), acc("bob.near"));
         let all = c.list_jobs(None, None);
@@ -911,7 +938,7 @@ mod tests {
     fn longer_description_costs_a_higher_fee() {
         let mut c = setup();
         as_account("carol.near", near(3));
-        c.post_job("x".repeat(1000), Some(acc("escrow.near")), near(2), None);
+        c.post_job("x".repeat(1000), Some(acc("escrow.near")), near(2), None, None);
         let short = c.get_job(0).unwrap().reward_storage_fee;
         let long = c.get_job(1).unwrap().reward_storage_fee;
         assert!(long > short, "{} > {}", long, short);
@@ -925,7 +952,7 @@ mod tests {
     fn post_job_with_exactly_the_reward_refused() {
         let mut c = setup();
         as_account("carol.near", near(1));
-        c.post_job("no fee attached".into(), None, near(1), None);
+        c.post_job("no fee attached".into(), None, near(1), None, None);
     }
 
     #[test]
@@ -933,7 +960,7 @@ mod tests {
     fn post_job_with_less_than_the_reward_refused() {
         let mut c = setup();
         as_account("carol.near", milli(500));
-        c.post_job("underfunded".into(), None, near(1), None);
+        c.post_job("underfunded".into(), None, near(1), None, None);
     }
 
     #[test]
@@ -941,7 +968,7 @@ mod tests {
     fn post_job_without_reward_refused() {
         let mut c = setup();
         as_account("carol.near", near(1));
-        c.post_job("free work".into(), None, zero(), None);
+        c.post_job("free work".into(), None, zero(), None, None);
     }
 
     #[test]
@@ -950,7 +977,7 @@ mod tests {
         let fee = c.get_job(0).unwrap().reward_storage_fee;
         // The same description, target and poster give the same record size, so the same fee.
         as_account("carol.near", near(2).saturating_add(fee));
-        assert_eq!(c.post_job("upgrade escrow".into(), Some(acc("escrow.near")), near(2), None), 1);
+        assert_eq!(c.post_job("upgrade escrow".into(), Some(acc("escrow.near")), near(2), None, None), 1);
         assert_eq!(c.get_job(1).unwrap().reward_storage_fee, fee);
     }
 
@@ -960,7 +987,7 @@ mod tests {
     fn scenario_sha256_is_stored_and_shown() {
         let mut c = setup();
         as_account("carol.near", near(2));
-        c.post_job("pinned".into(), None, near(1), Some(SCENARIO.into()));
+        c.post_job("pinned".into(), None, near(1), Some(SCENARIO.into()), None);
         assert_eq!(c.get_job(1).unwrap().scenario_sha256.as_deref(), Some(SCENARIO));
         assert_eq!(c.list_jobs(Some(1), None)[0].scenario_sha256.as_deref(), Some(SCENARIO));
     }
@@ -970,7 +997,7 @@ mod tests {
     fn scenario_sha256_must_be_lowercase_hex() {
         let mut c = setup();
         as_account("carol.near", near(2));
-        c.post_job("pinned".into(), None, near(1), Some(SCENARIO.to_uppercase()));
+        c.post_job("pinned".into(), None, near(1), Some(SCENARIO.to_uppercase()), None);
     }
 
     #[test]
@@ -978,7 +1005,7 @@ mod tests {
     fn scenario_sha256_must_be_64_characters() {
         let mut c = setup();
         as_account("carol.near", near(2));
-        c.post_job("pinned".into(), None, near(1), Some(SCENARIO[..63].into()));
+        c.post_job("pinned".into(), None, near(1), Some(SCENARIO[..63].into()), None);
     }
 
     // --- approve binds agent, wasm and report ---------------------------------------------------
@@ -1004,8 +1031,8 @@ mod tests {
     fn approve_printed_for_one_submission_does_not_pay_a_resubmission_by_another_agent() {
         let mut c = submitted();
         as_account("bob.near", zero());
-        c.reject(0, "blocked".into());
-        as_account("dave.near", milli(100));
+        c.reject(0, "blocked".into(), false);
+        as_account("dave.near", milli(200));
         c.join_swarm("copycat".into());
         as_account("dave.near", zero());
         c.submit(0, WASM.into(), REPORT.into()); // same hashes, other agent
@@ -1015,11 +1042,11 @@ mod tests {
     // --- per-job floor ---------------------------------------------------------------------------
 
     #[test]
-    #[should_panic(expected = "Budget must be at least 0.1 NEAR per job under review: 2 job(s) would need")]
+    #[should_panic(expected = "Budget must be at least 0.1 NEAR per job under review plus the storage part: 2 job(s) would need")]
     fn second_submit_with_one_floor_of_budget_refused() {
         let mut c = setup();
         as_account("carol.near", near(2));
-        c.post_job("second".into(), None, near(1), None);
+        c.post_job("second".into(), None, near(1), None, None);
         as_account("dave.near", milli(150));
         c.join_swarm("one job at a time".into());
         as_account("dave.near", zero());
@@ -1031,8 +1058,8 @@ mod tests {
     fn budget_of_two_floors_allows_two_jobs_under_review() {
         let mut c = setup();
         as_account("carol.near", near(2));
-        c.post_job("second".into(), None, near(1), None);
-        as_account("dave.near", milli(200));
+        c.post_job("second".into(), None, near(1), None, None);
+        as_account("dave.near", milli(210)); // 0.2 NEAR for two jobs plus the storage part
         c.join_swarm("two jobs".into());
         as_account("dave.near", zero());
         c.submit(0, WASM.into(), REPORT.into());
@@ -1070,7 +1097,7 @@ mod tests {
     fn withdraw_floor_follows_the_jobs_under_review() {
         let mut c = setup();
         as_account("carol.near", near(2));
-        c.post_job("second".into(), None, near(1), None);
+        c.post_job("second".into(), None, near(1), None, None);
         let part = agent(&c, "alice.near").storage_cost;
         assert!(part > milli(1) && part < milli(10), "storage part {}", part);
         as_account("alice.near", zero());
@@ -1080,7 +1107,7 @@ mod tests {
         c.withdraw_budget(milli(800).saturating_sub(part));
         assert_eq!(agent(&c, "alice.near").budget, milli(200).saturating_add(part));
         as_account("bob.near", zero());
-        c.reject(1, "blocked".into());
+        c.reject(1, "blocked".into(), false);
         as_account("alice.near", zero());
         c.withdraw_budget(milli(100)); // one job under review: 0.1 + the part may stay
         assert_eq!(agent(&c, "alice.near").budget, milli(100).saturating_add(part));
@@ -1164,10 +1191,148 @@ mod tests {
     fn leave_after_reject_is_allowed() {
         let mut c = submitted();
         as_account("bob.near", zero());
-        c.reject(0, "blocked".into());
+        c.reject(0, "blocked".into(), false);
         as_account("alice.near", zero());
         assert_eq!(c.leave_swarm(), near(1));
         assert_eq!(c.get_job(0).unwrap().status, "Rejected");
+    }
+
+    // --- submit floor includes the storage part --------------------------------------------------
+
+    #[test]
+    #[should_panic(expected = "Budget must be at least 0.1 NEAR per job under review plus the storage part: 1 job(s) would need")]
+    fn submit_with_exactly_the_minimum_deposit_refused() {
+        let mut c = setup();
+        as_account("dave.near", MIN_AGENT_DEPOSIT); // the storage part eats into the 0.1 NEAR
+        c.join_swarm("minimal".into());
+        as_account("dave.near", zero());
+        c.submit(0, WASM.into(), REPORT.into());
+    }
+
+    #[test]
+    fn submit_with_the_minimum_plus_the_storage_part_allowed() {
+        let mut c = setup();
+        as_account("dave.near", milli(110));
+        c.join_swarm("minimal plus".into());
+        let part = agent(&c, "dave.near").storage_cost;
+        assert!(milli(110) >= MIN_AGENT_DEPOSIT.saturating_add(part), "storage part {}", part);
+        as_account("dave.near", zero());
+        c.submit(0, WASM.into(), REPORT.into());
+        assert_eq!(agent(&c, "dave.near").jobs_in_review, 1);
+    }
+
+    // --- assigned agent ----------------------------------------------------------------------------
+
+    fn assigned_job(c: &mut SwarmJobs) -> u64 {
+        as_account("carol.near", near(2));
+        c.post_job("for alice only".into(), None, near(1), None, Some(acc("alice.near")))
+    }
+
+    #[test]
+    #[should_panic(expected = "Job 1 is assigned to alice.near; only that agent may submit")]
+    fn submit_by_another_agent_to_an_assigned_job_refused() {
+        let mut c = setup();
+        assert_eq!(assigned_job(&mut c), 1);
+        as_account("dave.near", near(1));
+        c.join_swarm("other".into());
+        as_account("dave.near", zero());
+        c.submit(1, WASM.into(), REPORT.into());
+    }
+
+    #[test]
+    fn assigned_agent_may_submit_and_is_shown() {
+        let mut c = setup();
+        assigned_job(&mut c);
+        assert_eq!(c.get_job(1).unwrap().assigned_agent, Some(acc("alice.near")));
+        assert_eq!(c.get_job(0).unwrap().assigned_agent, None);
+        as_account("alice.near", zero());
+        c.submit(1, WASM.into(), REPORT.into());
+        assert_eq!((status(&c, 1).as_str(), c.get_job(1).unwrap().agent), ("Submitted", Some(acc("alice.near"))));
+        // ... and keeps the job after a reject: nobody else may take it over.
+        as_account("bob.near", zero());
+        c.reject(1, "blocked".into(), false);
+        as_account("alice.near", zero());
+        c.submit(1, WASM.into(), REPORT2.into());
+        assert_eq!(status(&c, 1), "Submitted");
+    }
+
+    #[test]
+    #[should_panic(expected = "Job 1 is assigned to alice.near; only that agent may submit")]
+    fn assignment_holds_after_a_reject() {
+        let mut c = setup();
+        assigned_job(&mut c);
+        as_account("alice.near", zero());
+        c.submit(1, WASM.into(), REPORT.into());
+        as_account("bob.near", zero());
+        c.reject(1, "blocked".into(), false);
+        as_account("dave.near", near(1));
+        c.join_swarm("other".into());
+        as_account("dave.near", zero());
+        c.submit(1, WASM.into(), REPORT.into());
+    }
+
+    // --- reject and close --------------------------------------------------------------------------
+
+    #[test]
+    fn reject_with_close_cancels_the_job_and_frees_the_agent() {
+        let mut c = submitted();
+        as_account("bob.near", zero());
+        c.reject(0, "blocked for good".into(), true);
+        let j = c.get_job(0).unwrap();
+        assert_eq!((j.status.as_str(), j.reject_reason.as_deref()), ("Cancelled", Some("blocked for good")));
+        assert_eq!(j.agent, Some(acc("alice.near"))); // the record keeps who submitted
+        assert_eq!(agent(&c, "alice.near").jobs_in_review, 0);
+        // The poster has nothing left to cancel and the agent cannot resubmit.
+        as_account("alice.near", zero());
+        assert_eq!(c.leave_swarm(), near(1)); // nothing under review any more
+    }
+
+    #[test]
+    #[should_panic(expected = "Job 0 is not open for submissions (status Cancelled)")]
+    fn resubmit_after_reject_with_close_refused() {
+        let mut c = submitted();
+        as_account("bob.near", zero());
+        c.reject(0, "blocked for good".into(), true);
+        as_account("alice.near", zero());
+        c.submit(0, WASM.into(), REPORT.into());
+    }
+
+    #[test]
+    #[should_panic(expected = "Job 0 cannot be cancelled (status Cancelled)")]
+    fn cancel_after_reject_with_close_refused() {
+        let mut c = submitted();
+        as_account("bob.near", zero());
+        c.reject(0, "blocked for good".into(), true);
+        as_account("carol.near", zero());
+        c.cancel(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Only the reviewer can reject")]
+    fn reject_with_close_by_non_reviewer_refused() {
+        let mut c = submitted();
+        as_account("carol.near", zero());
+        c.reject(0, "mine".into(), true);
+    }
+
+    #[test]
+    #[should_panic(expected = "Job 0 is not Submitted (status Rejected)")]
+    fn reject_with_close_of_a_rejected_job_refused() {
+        let mut c = submitted();
+        as_account("bob.near", zero());
+        c.reject(0, "blocked".into(), false);
+        c.reject(0, "blocked for good".into(), true);
+    }
+
+    #[test]
+    fn reject_without_close_still_allows_a_resubmit() {
+        let mut c = submitted();
+        as_account("bob.near", zero());
+        c.reject(0, "blocked".into(), false);
+        assert_eq!(status(&c, 0), "Rejected");
+        as_account("alice.near", zero());
+        c.submit(0, WASM.into(), REPORT2.into());
+        assert_eq!(status(&c, 0), "Submitted");
     }
 
     // --- migrate from the v1 state ---------------------------------------------------------------
@@ -1222,7 +1387,7 @@ mod tests {
         assert_eq!((j.wasm_sha256.as_deref(), j.report_sha256.as_deref()), (Some(WASM), Some(REPORT)));
         assert_eq!((j.gate_report_sha256, j.reject_reason), (None, None));
         assert_eq!((j.reward, j.reward_storage_fee), (near(1), zero()));
-        assert_eq!(j.scenario_sha256, None);
+        assert_eq!((j.scenario_sha256, j.assigned_agent), (None, None));
         assert_eq!(c.get_job(1).unwrap().report_sha256.as_deref(), Some(REPORT2));
         assert!(c.get_job(2).is_none());
         let a = agent(&c, "alice.near");
@@ -1237,11 +1402,11 @@ mod tests {
         assert_eq!(status(&c, 0), "Paid");
         assert_eq!(agent(&c, "alice.near").jobs_in_review, 1);
         as_account("bob.near", zero());
-        c.reject(1, "blocked".into());
+        c.reject(1, "blocked".into(), false);
         assert_eq!(agent(&c, "alice.near").jobs_in_review, 0);
         // ... and a new job continues the id sequence with the v2 fields.
         as_account("demo.near", near(2));
-        assert_eq!(c.post_job("third".into(), None, near(1), Some(SCENARIO.into())), 2);
+        assert_eq!(c.post_job("third".into(), None, near(1), Some(SCENARIO.into()), None), 2);
         assert_eq!(c.job_count(), 3);
         assert!(!c.get_job(2).unwrap().reward_storage_fee.is_zero());
         // A v1 agent may leave once nothing is under review; its budget comes back in full.

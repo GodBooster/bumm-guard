@@ -140,6 +140,8 @@ class ReviewJobTests(unittest.TestCase):
                                 "gate_report_sha256": sha(self.out)})
         self.assertEqual(list(args), ["job_id", "agent", "wasm_sha256", "report_sha256", "gate_report_sha256"])
         self.assertEqual(cmd[-6:], ["sign-as", REVIEWER, "network-config", "testnet", "sign-with-keychain", "send"])
+        self.assertNotIn("or, to close the job", out)      # no close variant on an approve
+        self.assertEqual(out.splitlines()[-1], "  " + shlex.join(cmd))
         self.assertIn("scenario_sha256 on the job: null (the poster accepts any scenario)", out)
         rep = json.loads(self.out.read_text())
         self.assertEqual((rep["kind"], rep["verdict"], rep["reason"]), ("review-job", "approve", None))
@@ -179,7 +181,15 @@ class ReviewJobTests(unittest.TestCase):
         self.assertEqual(args["job_id"], 0)
         self.assertTrue(args["reason"].startswith(f"DEPLOY BLOCKED: account {TARGET} already runs code {sha(V1_WASM)}"),
                         args["reason"])
+        self.assertIs(args["close"], False)
         self.assertNotIn("approve", " ".join(cmd))
+        # the close variant follows, same reason, close true, and it is the last line
+        lines = out.splitlines()
+        self.assertTrue(lines[-2].startswith("or, to close the job as well"), lines[-2])
+        close = shlex.split(lines[-1])
+        self.assertEqual(close[5], "reject")
+        self.assertEqual(json.loads(close[close.index("json-args") + 1]), dict(args, close=True))
+        self.assertEqual(close[-6:], cmd[-6:])
         rep = json.loads(self.out.read_text())
         self.assertEqual((rep["verdict"], rep["reason"]), ("reject", args["reason"]))
         self.assertEqual(rep["gate"]["upgrade_check"]["status"], "no-proof")
@@ -205,7 +215,8 @@ class ReviewJobTests(unittest.TestCase):
                 self.assertNotIn("REVIEW PASSED", out)
                 cmd = self.command(out)
                 self.assertEqual(cmd[5], "reject")
-                self.assertEqual(json.loads(cmd[cmd.index("json-args") + 1]), {"job_id": 0, "reason": NO_CHANGE_REASON})
+                self.assertEqual(json.loads(cmd[cmd.index("json-args") + 1]),
+                                 {"job_id": 0, "reason": NO_CHANGE_REASON, "close": False})
                 self.assertNotIn("approve", out)
                 self.assertNotIn("gate_report_sha256", out)
                 rep = json.loads(self.out.read_text())
@@ -335,8 +346,8 @@ class ReviewJobTests(unittest.TestCase):
         # the hostile text stays inside the line that quotes it: no other line starts like a verdict or a
         # command, and the one command comes after the one verdict line
         commands = [l for l in lines if l.lstrip().startswith("near contract call-function")]
-        self.assertEqual(len(commands), 1, out)
-        self.assertEqual(lines[-1], commands[0])
+        self.assertEqual(len(commands), 1 if verdict.startswith("REVIEW PASSED") else 2, out)
+        self.assertEqual(lines[-1], commands[-1])
         self.assertGreater(lines.index(commands[0]), lines.index(verdicts[0]))
         self.assertEqual([l for l in lines if l.lstrip().startswith("REVIEW ")], verdicts)
 
@@ -504,6 +515,7 @@ class McpReviewJobTests(unittest.TestCase):
     def test_pass_returns_approve_text_never_executed(self):
         r = self.call(Node(job()))
         self.assertEqual((r["verdict"], r["passed"], r["command_executed"]), ("approve", True, False))
+        self.assertIsNone(r["close_command"])
         self.assertTrue(r["command"].startswith(f"near contract call-function as-transaction {JOBS} approve"))
         self.assertEqual(r["gate_report_sha256"], sha(r["review_report_path"]))
         self.assertEqual(r["evidence_origin"], "submission (not re-executed)")
@@ -514,6 +526,9 @@ class McpReviewJobTests(unittest.TestCase):
         r = self.call(Node(job(report=CODE_ONLY)), simulate_report=str(CODE_ONLY))
         self.assertEqual((r["verdict"], r["passed"], r["gate_report_sha256"]), ("reject", False, None))
         self.assertIn(" reject json-args ", r["command"])
+        self.assertIn('"close":false', r["command"])
+        self.assertIn('"close":true', r["close_command"])
+        self.assertEqual(r["close_command"].replace('"close":true', '"close":false'), r["command"])
         self.assertIn("Do not approve around the gate", r["note"])
 
     def test_no_change_returns_reject_text(self):

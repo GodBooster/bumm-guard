@@ -191,6 +191,7 @@ def review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, simul
         "review_report_path": os.path.abspath(out.report_path) if out.report_path else None,
         "gate_report_sha256": out.report_sha256 if out.verdict == "approve" else None,
         "command": shlex.join(out.command) if out.command else None,
+        "close_command": shlex.join(out.close_command) if out.close_command else None,
         "command_executed": False,
         "evidence_origin": EVIDENCE_ORIGIN,
         "gate": out.gate,
@@ -304,7 +305,8 @@ def build_server():
         "already has code, migration guard) for the job's target_account (or `account`). Writes the review report "
         "(.bumm-guard/review-<job>.json) and returns `verdict` approve|reject and `command`: the near-cli "
         "`approve` call (job_id, agent, wasm_sha256, report_sha256, gate_report_sha256 = sha256 of that report) or "
-        "the `reject` call with the gate's reason, as TEXT. Needs a swarm_jobs v2 contract (get_job carries "
+        "the `reject` call with the gate's reason and close:false, as TEXT (`close_command`: the same reject with "
+        "close:true, which cancels the job and refunds the poster). Needs a swarm_jobs v2 contract (get_job carries "
         "scenario_sha256); when the poster pinned a scenario_sha256, a report whose scenarios do not all carry it "
         "is a reject. The report and the crate are the submitter's files: the review checks their hashes and "
         "runs the gate on them, it does NOT re-execute the scenarios or rebuild the wasm (`evidence_origin`). "

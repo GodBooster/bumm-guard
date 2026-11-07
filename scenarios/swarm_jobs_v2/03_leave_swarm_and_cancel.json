@@ -24,7 +24,7 @@
     {"call": "withdraw_budget", "by": "alice", "args": {"amount": "450000000000000000000000"},
      "expect": {"fail_contains": "Budget must stay at least 0.1 NEAR per job under review plus the storage part"}},
     {"view": "get_agent", "args": {"account": "alice"}, "expect": {"contains": {"budget": "500000000000000000000000", "jobs_in_review": 1}}},
-    {"call": "reject", "by": "bob", "args": {"job_id": 0, "reason": "blocked"}, "expect": "ok"},
+    {"call": "reject", "by": "bob", "args": {"job_id": 0, "reason": "blocked", "close": false}, "expect": "ok"},
     {"call": "cancel", "by": "carol", "args": {"job_id": 0}, "expect": "ok"},
     {"view": "get_job", "args": {"id": 0}, "expect": {"contains": {"status": "Cancelled", "agent": "alice", "reject_reason": "blocked"}}},
     {"balance": "carol", "expect": {"at_least": "9.9 NEAR"}},

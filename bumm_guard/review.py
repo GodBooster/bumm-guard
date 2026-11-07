@@ -19,8 +19,9 @@ verdict is ``reject`` with a reason that names both hashes.
 
 It writes the review report (docs/FORMATS.md §7) to ``.bumm-guard/review-<job>.json`` and prints ONE
 command for the reviewer: ``approve`` with the job's ``agent``, ``wasm_sha256``, ``report_sha256`` and
-``gate_report_sha256`` = sha256 of that file when the gate passed, ``reject`` with the gate's reason when it
-blocked. A gate outcome of NO CHANGE (the target
+``gate_report_sha256`` = sha256 of that file when the gate passed, ``reject`` with the gate's reason and
+``close: false`` (the agent may resubmit) when it blocked, followed by one more line, the same ``reject`` with
+``close: true`` (the job is cancelled and the poster refunded), for the reviewer to pick. A gate outcome of NO CHANGE (the target
 account already runs exactly the submitted wasm) is a ``reject`` too: the submission changed nothing,
 so there is nothing to pay for. It never signs and never sends; the reviewer runs the command with
 their own key. If the gate cannot read the target account (``view_code`` / ``view_account`` fails), the
@@ -65,6 +66,7 @@ class ReviewOutcome:
     lines: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     command: list[str] | None = None
+    close_command: list[str] | None = None   # reject with close: true (printed after the reject command)
     reason: str | None = None
     report_path: str | None = None
     report_sha256: str | None = None    # = gate_report_sha256 in the approve command
@@ -284,10 +286,15 @@ def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, s
                          "(NOT executed; the reviewer signs it):")
     else:
         res.exit_code, res.verdict, res.reason = 3, "reject", reason
-        res.command = call_command(jobs_contract, "reject", {"job_id": job_id, "reason": reason},
+        res.command = call_command(jobs_contract, "reject", {"job_id": job_id, "reason": reason, "close": False},
                                    REJECT_GAS, signer, network)
+        res.close_command = call_command(jobs_contract, "reject", {"job_id": job_id, "reason": reason, "close": True},
+                                         REJECT_GAS, signer, network)
         res.lines.append(f"REVIEW BLOCKED: {reason}")
         res.lines.append(f"Reject command for {signer} (NOT executed; the reviewer signs it; the agent may resubmit):")
     res.lines.append("  " + shlex.join(res.command))
+    if res.close_command:
+        res.lines.append("or, to close the job as well (Cancelled, the reward goes back to the poster, nobody can resubmit):")
+        res.lines.append("  " + shlex.join(res.close_command))
     return res
 
