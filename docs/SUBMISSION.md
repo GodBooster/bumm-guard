@@ -2,23 +2,23 @@
 
 Drafts for the owner to edit and publish. Nothing here has been posted or submitted. Every claim is backed by a file in this repository or by the CI run named next to it; anything not done is listed as not done. Placeholders in `{braces}` are filled by the owner on 13.11 (the repository is private until then).
 
-## 1. Form field "What did you build?" (limit 2000 characters; this text: 1968 characters, counted on the text between the markers without the final newline, 2026-11-07)
+## 1. Form field "What did you build?" (limit 2000 characters; this text: 1989 characters, counted on the text between the markers without the final newline, 2026-11-07)
 
 <!-- form-text-start -->
 BUMM Guard checks in a sandbox that a NEAR contract upgrade works on state the old code wrote, binds that proof to the exact pair of code hashes, and only then hands an agent or a human the deploy command.
 
 The problem: in NEAR, redeploying code over a contract whose stored state has a different layout, without a migration, leaves a contract that panics on every call ("Cannot deserialize the contract state."). Tests that deploy fresh do not see it.
 
-What it does: the `upgrade` step of the scenario runner deploys the old wasm in near-sandbox, writes state with transactions, deploys the new wasm on the same account (with its `migrate` call) and runs checks on the upgraded state. The deploy gate reads the account's code hash and, if it already runs code, prints the deploy command only when a passing upgrade scenario proves that exact pair. Around it: a static rule-pack (3 NEAR defect classes, 2 auto-fixed), an MCP server (7 tools) and an ABI panel.
+What it does: the `upgrade` scenario step deploys the old wasm in near-sandbox, writes state with transactions, deploys the new wasm on the same account (with its `migrate` call) and runs checks on the upgraded state. The deploy gate reads the account's code hash and, if it already runs code, prints the deploy command only when a passing upgrade scenario proves that pair. Around it: a static rule-pack (3 NEAR defect classes, 2 auto-fixed; regex-level) and an MCP server (7 tools).
 
 Evidence:
-- Sandbox, CI on every push, two pairs: migrate 16/16 and 33/33; code-only 4/16 and 9/17 (the escrow smoke view still answers, record reads panic).
-- Guarded jobs for agent swarms: a NEAR contract holds the reward and pays the agent only after a reviewer approves exactly the wasm hash the gate checked; `review-job` prints approve or reject, never signs. Sandbox: 3 scenarios, 81/81 steps.
-- Testnet, live, two pairs: gate blocked without proof and with a failing one, passed with the migrate proof; the owner ran the printed deploy+migrate tx; pre-upgrade state survived (a registration; a 1 NEAR escrow deal).
+- Sandbox, CI on every push, three pairs: migrate 16/16, 33/33, 49/49; code-only fails after the upgrade (a smoke view still answers, record reads panic).
+- Guarded jobs for agent swarms: a NEAR contract holds the reward and pays the agent only after the reviewer approves that agent, wasm and report; `review-job` prints approve or reject, never signs. On testnet: one job paid, one rejected and refunded.
+- Testnet, live, three pairs: gate blocked without proof and with a failing one, passed with the migrate proof; the owner ran the printed tx; pre-upgrade state survived (a registration, a 1 NEAR escrow deal, two submitted swarm jobs).
 
-Not done: no state copied from a live network; no real inference in the swarm, one trusted reviewer; no third-party contract run.
+Not done: no state copied from a live network; swarm review off-chain, one trusted reviewer, no real inference; testnet only; no third-party contract run.
 
-Prior work: BUMM, the author's Solana builder, is separate and not in this repo. Built in the hackathon window; written with Claude Code.
+Prior work: BUMM, the author's Solana builder, is separate, not in this repo. Built in the hackathon window with Claude Code.
 
 Try: python3 -m bumm_guard simulate scenarios/upgrade/*.json --validate-only. Real run: CI job "scenario runner".
 <!-- form-text-end -->
