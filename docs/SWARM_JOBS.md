@@ -355,6 +355,8 @@ Both reviews only read `bumm-guard-escrow2.testnet` (`view_code`); it stays on v
 
 ## Upgrade v1 → v2 on testnet (the owner signs; BUMM Guard prints and reads)
 
+**Done on 2026-11-07** (tx `6CqQJxSc…`, then approve `na3Hbkka…` and reject-close `ChUyAwT1…`): see `evidence/SWARM_JOBS_TESTNET.md`. The commands below are what was run.
+
 The live contract on `bumm-guard-jobs.testnet` (v1, code `bcace583…`) holds alice's 0.5 NEAR budget and the two
 submitted jobs. This section deploys v2 onto that account through the deploy gate, with `migrate` in the deploy
 batch, and proves on the live state what the sandbox scenario proved: the jobs survive, then the v2 approve pays

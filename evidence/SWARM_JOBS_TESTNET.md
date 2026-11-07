@@ -23,4 +23,29 @@ What `docs/SWARM_JOBS.md` describes, run live. Every transaction was signed by t
 - Job 1, code-only report: `REVIEW BLOCKED: DEPLOY BLOCKED: account bumm-guard-escrow2.testnet already runs code ecd8a805…; this is an upgrade and no passing upgrade scenario proves ecd8a805… -> 13425a04…`, exit 3, a `reject` command for bob printed.
 - Job 0, migrate report: `wasm sha256 … = submitted`, `report sha256 … = submitted`, `proved after upgrade (25 step(s))`, `migration migrate: #[private] (src/lib.rs:118)`, `REVIEW PASSED: job 0 may be paid`, exit 0, an `approve` command for bob printed with `gate_report_sha256` bound to that run's review report.
 
-Nothing was approved, rejected or deployed in the rehearsal. The approve of job 0, the upgrade of escrow2 and the payment are recorded in the video (`docs/SUBMISSION.md` §3, shots 6 and 7) and will be added below.
+Nothing was approved, rejected or deployed in the rehearsal.
+
+## Live upgrade swarm_jobs v1 -> v2 through the gate (2026-11-07): the third pair
+
+The contract on `bumm-guard-jobs.testnet` was upgraded from v1 (`bcace583…`) to v2 (`evidence/wasm/swarm_jobs_v2.wasm`, `5dbcf8cd…`) with the two submitted jobs and the agent in its state. Proof: `evidence/swarm-jobs-upgrade-with-migrate-report-ci.json` (CI run 42390541743, 49/49 steps); the code-only variant fails as asserted (`evidence/swarm-jobs-upgrade-code-only-report-ci.json`).
+
+| # | Step | Signed by | Transaction | Checked after it |
+|---|---|---|---|---|
+| 1 | Gate without a report (dry run) | (read-only) | — | `DEPLOY BLOCKED … no passing upgrade scenario proves bcace583… -> 5dbcf8cd…`, exit 3 |
+| 2 | Gate with the code-only report (dry run) | (read-only) | — | blocked: `upgrade scenario … did not pass`, exit 3 |
+| 3 | Gate with the migrate report | (read-only) | — | `upgrade of bumm-guard-jobs.testnet: bcace583… -> 5dbcf8cd…`, `proved after upgrade (37 step(s))`, `migration migrate: #[private] (src/lib.rs:243)`, `gate passed`, the `with-init-call migrate` command printed |
+| 4 | Deploy v2 + `migrate` in one batch (the printed command) | `bumm-guard-jobs.testnet` | `6CqQJxScBEZTkcdtCW6GyRqfM4ugLpazhBGsCXgXXVbs` | 25.0 Tgas; `--verify-deployed`: code `5dbcf8cd…` MATCH; `job_count` 2, `agent_count` 1, `get_reviewer` bob; `get_job 0` and `1` still `Submitted` by alice with the same `wasm_sha256`/`report_sha256`, new fields `reward_storage_fee: "0"`, `scenario_sha256: null`, `assigned_agent: null`; `get_agent alice`: budget `500000000000000000000000`, `jobs_in_review` 2, new field `storage_cost: "0"` |
+
+The state written by v1 (two jobs inside an `IterableMap`, one agent, counters) survived the layout change; the same change without `migrate` makes `get_job` fail with `Cannot deserialize element` while `job_count` still answers (sandbox, code-only report).
+
+## The guarded job completed on the upgraded contract (2026-11-07)
+
+| # | Step | Signed by | Transaction | Checked after it |
+|---|---|---|---|---|
+| 1 | `review-job` for job 0 (migrate report) | (read-only, reviewer's run) | — | `REVIEW PASSED`, review report sha256 `a27d07db3b4429afcbff1c523739c73af14704a84fa019bf80f51a9a539bfea6`, five-argument `approve` printed |
+| 2 | `review-job` for job 1 (code-only report) | (read-only) | — | `REVIEW BLOCKED: … no passing upgrade scenario proves ecd8a805… -> 13425a04…`, `reject` printed in both variants (`close: false` / `close: true`) |
+| 3 | `approve` job 0 (agent alice, wasm `13425a04…`, report `f305461f…`, gate report `a27d07db…`) | `bumm-guard-bob.testnet` | `na3HbkkajdpGxbRrCWTu6ecrsEr5PkFn1qpnCFMcmuF` | returns `true`; job 0 `Paid`, `gate_report_sha256` recorded; alice `jobs_paid` 1, `jobs_in_review` 1 → 0 after step 4; alice balance 9.4989 → 10.4989 NEAR (+1 NEAR) |
+| 4 | `reject` job 1 with `close: true` | `bumm-guard-bob.testnet` | `ChUyAwT1qm8tjioA69MN96TU3ecCK2DehthFEKkGexZC` | job 1 `Cancelled` with the gate's reason; demo balance 5.9958 → 6.9958 NEAR (+1 NEAR refund); contract balance 12.4955 → 10.4955 NEAR |
+
+Both reviews read `bumm-guard-escrow2.testnet` only; it still runs escrow v1 (`ecd8a805…`) and is upgraded in the video. Balances were read with `view_account` right after each transaction; the small differences from round numbers are gas paid by the signers.
+
