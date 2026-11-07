@@ -37,7 +37,7 @@ Everything in the repository exists to make this failure visible before deploy a
                  └──────────────────────────────────────────────────────────┘
                  contracts/sim-runner  (bumm-sim, Rust 1.99, near-workspaces 0.24)
                  contracts/sandbox     (near-workspaces test for BG-NEAR-001)
-                 tests/fixtures/near   (12 crates, rustc 1.85.0 pinned)
+                 tests/fixtures/near   (13 crates, rustc 1.85.0 pinned)
                  scenarios/            (15 JSON scenarios, 4 of them upgrades, 3 for swarm_jobs)
                  ui/                   (static ABI panel, about 840 lines JS/HTML/CSS)
                  clients/claude-plugin (Claude Code plugin + skill)
@@ -159,8 +159,8 @@ Nothing in the repository holds or uses a key. In every case below the gate prin
 | `bumm_guard/` | Python package: `cli.py`, `gate.py`, `simulate.py`, `mcp_server.py`, `review.py`, `verify.py`, `storage.py`, `sanitize.py`, `scanner.py`, `model.py`, `rulepack/near/*`, `fix/*` (about 4 100 lines in all) |
 | `contracts/sim-runner/` | `bumm-sim` (Rust): scenario execution on near-workspaces; `tests/upgrade_sandbox.rs` |
 | `contracts/sandbox/` | near-workspaces test for BG-NEAR-001 |
-| `tests/` | 12 Python test modules, 290 tests; `tests/fixtures/near/` 12 crates (d1–d3 vuln/safe, proxy, N06, N10, escrow v1, v2, `swarm_jobs`) |
-| `scenarios/` | 15 files: `n06/` (3), `n10/` (3 acceptance), `escrow/` (2), `upgrade/` (4), `swarm_jobs/` (3) |
+| `tests/` | 12 Python test modules, 300 tests; `tests/fixtures/near/` 13 crates (d1–d3 vuln/safe, proxy, N06, N10, escrow v1, v2, `swarm_jobs` v1, v2) |
+| `scenarios/` | 21 files: `n06/` (3), `n10/` (3 acceptance), `escrow/` (2), `upgrade/` (6), `swarm_jobs/` (3), `swarm_jobs_v2/` (4) |
 | `evidence/` | CI reports (6 JSON), testnet gate reports (3 JSON), `wasm/` (5 files + `SHA256SUMS`), `E2E_TESTNET.md`, `UPGRADE_TESTNET.md`, `SWARM_JOBS_TESTNET.md`, `AB_PILOT_N10.md`, `AB_TASK_N10.md` |
 | `docs/` | `FORMATS.md` (normative), `SWARM_JOBS.md` (guarded jobs), `DEMO_AGENT.md` (agent rehearsal), `SUBMISSION.md` (form text, X post, video script), this file |
 | `clients/claude-plugin/` | plugin manifest, `.mcp.json`, skill `near-deploy-gate` |

@@ -1,0 +1,1003 @@
+{
+  "tool": "bumm-guard",
+  "version": "0.4.0",
+  "runner": "bumm-sim 0.4.0",
+  "wasm_sha256": "bcace58397f2ee597dd5687187ea9e178e3cd5405dfdb810553214e416a9a92b",
+  "upgrade_wasm_sha256": "5dbcf8cd767c096c3e207e8c804e5f950bc5460de8be0e6e4132426009d33ba5",
+  "scenario_sha256": "e2ae241dd9d84a1506da00c31dc0b7fa98e768c46ba26ee9ca718c0a8cc48900",
+  "sandbox": {
+    "near_workspaces": "0.24.0",
+    "near_sandbox": "0.4.0"
+  },
+  "scenarios": [
+    {
+      "name": "Upgrade swarm_jobs v1 → v2 (upgrade with migrate()): the two submitted jobs and the agent survive, the v2 approve with agent/wasm/report bindings pays job 0, a v2 job carries its storage fee and pinned scenario",
+      "file": "scenarios/upgrade/swarm_jobs_v1_to_v2_with_migrate.json",
+      "scenario_sha256": "e2ae241dd9d84a1506da00c31dc0b7fa98e768c46ba26ee9ca718c0a8cc48900",
+      "wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/swarm_jobs.wasm",
+      "wasm_sha256": "bcace58397f2ee597dd5687187ea9e178e3cd5405dfdb810553214e416a9a92b",
+      "upgrade_wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/swarm_jobs_v2.wasm",
+      "upgrade_wasm_sha256": "5dbcf8cd767c096c3e207e8c804e5f950bc5460de8be0e6e4132426009d33ba5",
+      "passed": true,
+      "duration_s": 8.1,
+      "accounts": {
+        "alice": "alice.test.near",
+        "bob": "bob.test.near",
+        "contract": "contract.test.near",
+        "demo": "demo.test.near"
+      },
+      "init": {
+        "method": "new",
+        "passed": true,
+        "actual": {
+          "status": "success",
+          "value": null,
+          "gas_burnt_tgas": 1.631
+        }
+      },
+      "steps": [
+        {
+          "index": 0,
+          "kind": "view",
+          "method": "get_reviewer",
+          "passed": true,
+          "expected": {
+            "equals": "bob"
+          },
+          "actual": {
+            "status": "success",
+            "value": "bob.test.near"
+          }
+        },
+        {
+          "index": 1,
+          "kind": "call",
+          "method": "join_swarm",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.814
+          }
+        },
+        {
+          "index": 2,
+          "kind": "call",
+          "method": "post_job",
+          "by": "demo",
+          "passed": true,
+          "expected": {
+            "equals": 0
+          },
+          "actual": {
+            "status": "success",
+            "value": 0,
+            "gas_burnt_tgas": 1.937
+          }
+        },
+        {
+          "index": 3,
+          "kind": "call",
+          "method": "post_job",
+          "by": "demo",
+          "passed": true,
+          "expected": {
+            "equals": 1
+          },
+          "actual": {
+            "status": "success",
+            "value": 1,
+            "gas_burnt_tgas": 1.939
+          }
+        },
+        {
+          "index": 4,
+          "kind": "call",
+          "method": "submit",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.122
+          }
+        },
+        {
+          "index": 5,
+          "kind": "call",
+          "method": "submit",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.122
+          }
+        },
+        {
+          "index": 6,
+          "kind": "view",
+          "method": "job_count",
+          "passed": true,
+          "expected": {
+            "equals": 2
+          },
+          "actual": {
+            "status": "success",
+            "value": 2
+          }
+        },
+        {
+          "index": 7,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "equals": {
+              "agent": "alice",
+              "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+              "gate_report_sha256": null,
+              "id": 0,
+              "poster": "demo",
+              "reject_reason": null,
+              "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+              "reward": "1000000000000000000000000",
+              "status": "Submitted",
+              "target_account": "bumm-guard-escrow2.testnet",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": "alice.test.near",
+              "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+              "gate_report_sha256": null,
+              "id": 0,
+              "poster": "demo.test.near",
+              "reject_reason": null,
+              "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+              "reward": "1000000000000000000000000",
+              "status": "Submitted",
+              "target_account": "bumm-guard-escrow2.testnet",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          }
+        },
+        {
+          "index": 8,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "equals": {
+              "account": "alice",
+              "budget": "500000000000000000000000",
+              "jobs_in_review": 2,
+              "jobs_paid": 0,
+              "profile": "escrow upgrade agent"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "account": "alice.test.near",
+              "budget": "500000000000000000000000",
+              "jobs_in_review": 2,
+              "jobs_paid": 0,
+              "profile": "escrow upgrade agent"
+            }
+          }
+        },
+        {
+          "index": 9,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_least": "52.4 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "52497927272780830200000000",
+            "near": "52.4979272727808302"
+          }
+        },
+        {
+          "index": 10,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_most": "52.6 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "52497927272780830200000000",
+            "near": "52.4979272727808302"
+          }
+        },
+        {
+          "index": 11,
+          "kind": "upgrade",
+          "method": "migrate",
+          "by": "contract",
+          "wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/swarm_jobs_v2.wasm",
+          "migrate": {
+            "args": {},
+            "gas": "100 Tgas",
+            "method": "migrate"
+          },
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 24.484,
+            "code_sha256": "5dbcf8cd767c096c3e207e8c804e5f950bc5460de8be0e6e4132426009d33ba5"
+          }
+        },
+        {
+          "index": 12,
+          "kind": "view",
+          "method": "job_count",
+          "passed": true,
+          "expected": {
+            "equals": 2
+          },
+          "actual": {
+            "status": "success",
+            "value": 2
+          }
+        },
+        {
+          "index": 13,
+          "kind": "view",
+          "method": "agent_count",
+          "passed": true,
+          "expected": {
+            "equals": 1
+          },
+          "actual": {
+            "status": "success",
+            "value": 1
+          }
+        },
+        {
+          "index": 14,
+          "kind": "view",
+          "method": "get_reviewer",
+          "passed": true,
+          "expected": {
+            "equals": "bob"
+          },
+          "actual": {
+            "status": "success",
+            "value": "bob.test.near"
+          }
+        },
+        {
+          "index": 15,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "equals": {
+              "account": "alice",
+              "budget": "500000000000000000000000",
+              "jobs_in_review": 2,
+              "jobs_paid": 0,
+              "profile": "escrow upgrade agent",
+              "storage_cost": "0"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "account": "alice.test.near",
+              "budget": "500000000000000000000000",
+              "jobs_in_review": 2,
+              "jobs_paid": 0,
+              "profile": "escrow upgrade agent",
+              "storage_cost": "0"
+            }
+          }
+        },
+        {
+          "index": 16,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "equals": {
+              "agent": "alice",
+              "assigned_agent": null,
+              "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+              "gate_report_sha256": null,
+              "id": 0,
+              "poster": "demo",
+              "reject_reason": null,
+              "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "0",
+              "scenario_sha256": null,
+              "status": "Submitted",
+              "target_account": "bumm-guard-escrow2.testnet",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": "alice.test.near",
+              "assigned_agent": null,
+              "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+              "gate_report_sha256": null,
+              "id": 0,
+              "poster": "demo.test.near",
+              "reject_reason": null,
+              "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "0",
+              "scenario_sha256": null,
+              "status": "Submitted",
+              "target_account": "bumm-guard-escrow2.testnet",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          }
+        },
+        {
+          "index": 17,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "equals": {
+              "agent": "alice",
+              "assigned_agent": null,
+              "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+              "gate_report_sha256": null,
+              "id": 1,
+              "poster": "demo",
+              "reject_reason": null,
+              "report_sha256": "e7cfcfd8712d2dc31c1fb2c951894b367da9dc34a93376b45e1f61e249ac55c5",
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "0",
+              "scenario_sha256": null,
+              "status": "Submitted",
+              "target_account": "bumm-guard-escrow2.testnet",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": "alice.test.near",
+              "assigned_agent": null,
+              "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+              "gate_report_sha256": null,
+              "id": 1,
+              "poster": "demo.test.near",
+              "reject_reason": null,
+              "report_sha256": "e7cfcfd8712d2dc31c1fb2c951894b367da9dc34a93376b45e1f61e249ac55c5",
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "0",
+              "scenario_sha256": null,
+              "status": "Submitted",
+              "target_account": "bumm-guard-escrow2.testnet",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          }
+        },
+        {
+          "index": 18,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "equals": null
+          },
+          "actual": {
+            "status": "success",
+            "value": null
+          }
+        },
+        {
+          "index": 19,
+          "kind": "view",
+          "method": "list_jobs",
+          "passed": true,
+          "expected": {
+            "equals": [
+              {
+                "agent": "alice",
+                "assigned_agent": null,
+                "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+                "gate_report_sha256": null,
+                "id": 0,
+                "poster": "demo",
+                "reject_reason": null,
+                "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+                "reward": "1000000000000000000000000",
+                "reward_storage_fee": "0",
+                "scenario_sha256": null,
+                "status": "Submitted",
+                "target_account": "bumm-guard-escrow2.testnet",
+                "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+              },
+              {
+                "agent": "alice",
+                "assigned_agent": null,
+                "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+                "gate_report_sha256": null,
+                "id": 1,
+                "poster": "demo",
+                "reject_reason": null,
+                "report_sha256": "e7cfcfd8712d2dc31c1fb2c951894b367da9dc34a93376b45e1f61e249ac55c5",
+                "reward": "1000000000000000000000000",
+                "reward_storage_fee": "0",
+                "scenario_sha256": null,
+                "status": "Submitted",
+                "target_account": "bumm-guard-escrow2.testnet",
+                "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+              }
+            ]
+          },
+          "actual": {
+            "status": "success",
+            "value": [
+              {
+                "agent": "alice.test.near",
+                "assigned_agent": null,
+                "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+                "gate_report_sha256": null,
+                "id": 0,
+                "poster": "demo.test.near",
+                "reject_reason": null,
+                "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+                "reward": "1000000000000000000000000",
+                "reward_storage_fee": "0",
+                "scenario_sha256": null,
+                "status": "Submitted",
+                "target_account": "bumm-guard-escrow2.testnet",
+                "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+              },
+              {
+                "agent": "alice.test.near",
+                "assigned_agent": null,
+                "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+                "gate_report_sha256": null,
+                "id": 1,
+                "poster": "demo.test.near",
+                "reject_reason": null,
+                "report_sha256": "e7cfcfd8712d2dc31c1fb2c951894b367da9dc34a93376b45e1f61e249ac55c5",
+                "reward": "1000000000000000000000000",
+                "reward_storage_fee": "0",
+                "scenario_sha256": null,
+                "status": "Submitted",
+                "target_account": "bumm-guard-escrow2.testnet",
+                "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+              }
+            ]
+          }
+        },
+        {
+          "index": 20,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_least": "52.2 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "52377400292598808900000000",
+            "near": "52.3774002925988089"
+          }
+        },
+        {
+          "index": 21,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_most": "52.6 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "52377400292598808900000000",
+            "near": "52.3774002925988089"
+          }
+        },
+        {
+          "index": 22,
+          "kind": "call",
+          "method": "approve",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "equals": true
+          },
+          "actual": {
+            "status": "success",
+            "value": true,
+            "gas_burnt_tgas": 5.114
+          }
+        },
+        {
+          "index": 23,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "agent": "alice",
+              "assigned_agent": null,
+              "gate_report_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+              "reward_storage_fee": "0",
+              "scenario_sha256": null,
+              "status": "Paid",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": "alice.test.near",
+              "assigned_agent": null,
+              "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+              "gate_report_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "id": 0,
+              "poster": "demo.test.near",
+              "reject_reason": null,
+              "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "0",
+              "scenario_sha256": null,
+              "status": "Paid",
+              "target_account": "bumm-guard-escrow2.testnet",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          }
+        },
+        {
+          "index": 24,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "budget": "500000000000000000000000",
+              "jobs_in_review": 1,
+              "jobs_paid": 1,
+              "storage_cost": "0"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "account": "alice.test.near",
+              "budget": "500000000000000000000000",
+              "jobs_in_review": 1,
+              "jobs_paid": 1,
+              "profile": "escrow upgrade agent",
+              "storage_cost": "0"
+            }
+          }
+        },
+        {
+          "index": 25,
+          "kind": "balance",
+          "account": "alice",
+          "passed": true,
+          "expected": {
+            "at_least": "10.4 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "10499394225788322000000000",
+            "near": "10.499394225788322"
+          }
+        },
+        {
+          "index": 26,
+          "kind": "balance",
+          "account": "alice",
+          "passed": true,
+          "expected": {
+            "at_most": "10.5 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "10499394225788322000000000",
+            "near": "10.499394225788322"
+          }
+        },
+        {
+          "index": 27,
+          "kind": "call",
+          "method": "approve",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Failed to deserialize input from JSON"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Failed to deserialize input from JSON. Error: `missing field `agent` at line 1 column 181`\")",
+            "gas_burnt_tgas": 1.587
+          }
+        },
+        {
+          "index": 28,
+          "kind": "call",
+          "method": "approve",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "fail_contains": "report_sha256 does not match the submission of job 1"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: report_sha256 does not match the submission of job 1\")",
+            "gas_burnt_tgas": 1.769
+          }
+        },
+        {
+          "index": 29,
+          "kind": "call",
+          "method": "reject",
+          "by": "bob",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.131
+          }
+        },
+        {
+          "index": 30,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "agent": "alice",
+              "report_sha256": "e7cfcfd8712d2dc31c1fb2c951894b367da9dc34a93376b45e1f61e249ac55c5",
+              "status": "Rejected"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": "alice.test.near",
+              "assigned_agent": null,
+              "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+              "gate_report_sha256": null,
+              "id": 1,
+              "poster": "demo.test.near",
+              "reject_reason": "DEPLOY BLOCKED: account bumm-guard-escrow2.testnet already runs code ecd8a805...; this is an upgrade and no passing upgrade scenario proves ecd8a805... -> 13425a04...",
+              "report_sha256": "e7cfcfd8712d2dc31c1fb2c951894b367da9dc34a93376b45e1f61e249ac55c5",
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "0",
+              "scenario_sha256": null,
+              "status": "Rejected",
+              "target_account": "bumm-guard-escrow2.testnet",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          }
+        },
+        {
+          "index": 31,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "jobs_in_review": 0,
+              "jobs_paid": 1
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "account": "alice.test.near",
+              "budget": "500000000000000000000000",
+              "jobs_in_review": 0,
+              "jobs_paid": 1,
+              "profile": "escrow upgrade agent",
+              "storage_cost": "0"
+            }
+          }
+        },
+        {
+          "index": 32,
+          "kind": "call",
+          "method": "cancel",
+          "by": "demo",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.643
+          }
+        },
+        {
+          "index": 33,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "status": "Cancelled"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": "alice.test.near",
+              "assigned_agent": null,
+              "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+              "gate_report_sha256": null,
+              "id": 1,
+              "poster": "demo.test.near",
+              "reject_reason": "DEPLOY BLOCKED: account bumm-guard-escrow2.testnet already runs code ecd8a805...; this is an upgrade and no passing upgrade scenario proves ecd8a805... -> 13425a04...",
+              "report_sha256": "e7cfcfd8712d2dc31c1fb2c951894b367da9dc34a93376b45e1f61e249ac55c5",
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "0",
+              "scenario_sha256": null,
+              "status": "Cancelled",
+              "target_account": "bumm-guard-escrow2.testnet",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          }
+        },
+        {
+          "index": 34,
+          "kind": "balance",
+          "account": "demo",
+          "passed": true,
+          "expected": {
+            "at_least": "8.9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "8999169494996530000000000",
+            "near": "8.99916949499653"
+          }
+        },
+        {
+          "index": 35,
+          "kind": "balance",
+          "account": "demo",
+          "passed": true,
+          "expected": {
+            "at_most": "9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "8999169494996530000000000",
+            "near": "8.99916949499653"
+          }
+        },
+        {
+          "index": 36,
+          "kind": "call",
+          "method": "post_job",
+          "by": "demo",
+          "passed": true,
+          "expected": {
+            "equals": 2
+          },
+          "actual": {
+            "status": "success",
+            "value": 2,
+            "gas_burnt_tgas": 2.787
+          }
+        },
+        {
+          "index": 37,
+          "kind": "view",
+          "method": "job_count",
+          "passed": true,
+          "expected": {
+            "equals": 3
+          },
+          "actual": {
+            "status": "success",
+            "value": 3
+          }
+        },
+        {
+          "index": 38,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "id": 2,
+              "poster": "demo",
+              "reward": "1000000000000000000000000",
+              "scenario_sha256": "7e7d87ce7e6b46feeb6ac43ac345dd2f1c906c6b63c683e12f322f72871fe0bd",
+              "status": "Open",
+              "target_account": "bumm-guard-jobs.testnet"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": null,
+              "assigned_agent": null,
+              "description": "upgrade bumm-guard-jobs.testnet to swarm_jobs v2 keeping its jobs",
+              "gate_report_sha256": null,
+              "id": 2,
+              "poster": "demo.test.near",
+              "reject_reason": null,
+              "report_sha256": null,
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "3530000000000000000000",
+              "scenario_sha256": "7e7d87ce7e6b46feeb6ac43ac345dd2f1c906c6b63c683e12f322f72871fe0bd",
+              "status": "Open",
+              "target_account": "bumm-guard-jobs.testnet",
+              "wasm_sha256": null
+            }
+          }
+        },
+        {
+          "index": 39,
+          "kind": "balance",
+          "account": "demo",
+          "passed": true,
+          "expected": {
+            "at_least": "7.9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "7995383107572036700000000",
+            "near": "7.9953831075720367"
+          }
+        },
+        {
+          "index": 40,
+          "kind": "balance",
+          "account": "demo",
+          "passed": true,
+          "expected": {
+            "at_most": "8 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "7995383107572036700000000",
+            "near": "7.9953831075720367"
+          }
+        },
+        {
+          "index": 41,
+          "kind": "call",
+          "method": "withdraw_budget",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Amount exceeds the agent's budget"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Amount exceeds the agent's budget\")",
+            "gas_burnt_tgas": 1.773
+          }
+        },
+        {
+          "index": 42,
+          "kind": "call",
+          "method": "leave_swarm",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "equals": "500000000000000000000000"
+          },
+          "actual": {
+            "status": "success",
+            "value": "500000000000000000000000",
+            "gas_burnt_tgas": 2.613
+          }
+        },
+        {
+          "index": 43,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "equals": null
+          },
+          "actual": {
+            "status": "success",
+            "value": null
+          }
+        },
+        {
+          "index": 44,
+          "kind": "view",
+          "method": "agent_count",
+          "passed": true,
+          "expected": {
+            "equals": 0
+          },
+          "actual": {
+            "status": "success",
+            "value": 0
+          }
+        },
+        {
+          "index": 45,
+          "kind": "balance",
+          "account": "alice",
+          "passed": true,
+          "expected": {
+            "at_least": "10.9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "10998777150768749200000000",
+            "near": "10.9987771507687492"
+          }
+        },
+        {
+          "index": 46,
+          "kind": "balance",
+          "account": "alice",
+          "passed": true,
+          "expected": {
+            "at_most": "11 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "10998777150768749200000000",
+            "near": "10.9987771507687492"
+          }
+        },
+        {
+          "index": 47,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_least": "50.7 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "50999008889716842900000000",
+            "near": "50.9990088897168429"
+          }
+        },
+        {
+          "index": 48,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_most": "51.1 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "50999008889716842900000000",
+            "near": "50.9990088897168429"
+          }
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "scenarios": 1,
+    "passed": 1,
+    "failed": 0,
+    "steps": 49,
+    "steps_failed": 0
+  }
+}

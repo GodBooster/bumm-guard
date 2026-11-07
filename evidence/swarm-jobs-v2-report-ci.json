@@ -1,0 +1,2565 @@
+{
+  "tool": "bumm-guard",
+  "version": "0.4.0",
+  "runner": "bumm-sim 0.4.0",
+  "wasm_sha256": "5dbcf8cd767c096c3e207e8c804e5f950bc5460de8be0e6e4132426009d33ba5",
+  "upgrade_wasm_sha256": null,
+  "scenario_sha256": "e1ff77923c93dbc38fd37299f073c3eaaac115f9425031c07759827c0ad9b9ff",
+  "sandbox": {
+    "near_workspaces": "0.24.0",
+    "near_sandbox": "0.4.0"
+  },
+  "scenarios": [
+    {
+      "name": "Swarm jobs v2: poster pays the job's storage fee and gets the excess back, pins the acceptance scenario; approve binds agent, wasm and report; agent leaves with its whole budget",
+      "file": "scenarios/swarm_jobs_v2/01_storage_fee_and_pinned_scenario.json",
+      "scenario_sha256": "32d4177533d593b4c8cb0fd62fe6c9189df6a861c0e9fb89c6f38e8610a28c7c",
+      "wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/swarm_jobs_v2.wasm",
+      "wasm_sha256": "5dbcf8cd767c096c3e207e8c804e5f950bc5460de8be0e6e4132426009d33ba5",
+      "upgrade_wasm": null,
+      "upgrade_wasm_sha256": null,
+      "passed": true,
+      "duration_s": 7.1,
+      "accounts": {
+        "alice": "alice.test.near",
+        "bob": "bob.test.near",
+        "carol": "carol.test.near",
+        "contract": "contract.test.near"
+      },
+      "init": {
+        "method": "new",
+        "passed": true,
+        "actual": {
+          "status": "success",
+          "value": null,
+          "gas_burnt_tgas": 1.672
+        }
+      },
+      "steps": [
+        {
+          "index": 0,
+          "kind": "view",
+          "method": "get_reviewer",
+          "passed": true,
+          "expected": {
+            "equals": "bob"
+          },
+          "actual": {
+            "status": "success",
+            "value": "bob.test.near"
+          }
+        },
+        {
+          "index": 1,
+          "kind": "call",
+          "method": "join_swarm",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.012
+          }
+        },
+        {
+          "index": 2,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "account": "alice",
+              "budget": "500000000000000000000000",
+              "jobs_in_review": 0,
+              "jobs_paid": 0,
+              "profile": "rust upgrade agent"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "account": "alice.test.near",
+              "budget": "500000000000000000000000",
+              "jobs_in_review": 0,
+              "jobs_paid": 0,
+              "profile": "rust upgrade agent",
+              "storage_cost": "1860000000000000000000"
+            }
+          }
+        },
+        {
+          "index": 3,
+          "kind": "view",
+          "method": "agent_count",
+          "passed": true,
+          "expected": {
+            "equals": 1
+          },
+          "actual": {
+            "status": "success",
+            "value": 1
+          }
+        },
+        {
+          "index": 4,
+          "kind": "call",
+          "method": "post_job",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "equals": 0
+          },
+          "actual": {
+            "status": "success",
+            "value": 0,
+            "gas_burnt_tgas": 2.784
+          }
+        },
+        {
+          "index": 5,
+          "kind": "balance",
+          "account": "carol",
+          "passed": true,
+          "expected": {
+            "at_least": "8.95 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "8995973088542594400000000",
+            "near": "8.9959730885425944"
+          }
+        },
+        {
+          "index": 6,
+          "kind": "balance",
+          "account": "carol",
+          "passed": true,
+          "expected": {
+            "at_most": "9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "8995973088542594400000000",
+            "near": "8.9959730885425944"
+          }
+        },
+        {
+          "index": 7,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "agent": null,
+              "id": 0,
+              "poster": "carol",
+              "reward": "1000000000000000000000000",
+              "scenario_sha256": "7e7d87ce7e6b46feeb6ac43ac345dd2f1c906c6b63c683e12f322f72871fe0bd",
+              "status": "Open",
+              "target_account": "bumm-guard-escrow2.testnet"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": null,
+              "assigned_agent": null,
+              "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+              "gate_report_sha256": null,
+              "id": 0,
+              "poster": "carol.test.near",
+              "reject_reason": null,
+              "report_sha256": null,
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "3570000000000000000000",
+              "scenario_sha256": "7e7d87ce7e6b46feeb6ac43ac345dd2f1c906c6b63c683e12f322f72871fe0bd",
+              "status": "Open",
+              "target_account": "bumm-guard-escrow2.testnet",
+              "wasm_sha256": null
+            }
+          }
+        },
+        {
+          "index": 8,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_least": "51.4 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "51501221390589478400000000",
+            "near": "51.5012213905894784"
+          }
+        },
+        {
+          "index": 9,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_most": "51.6 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "51501221390589478400000000",
+            "near": "51.5012213905894784"
+          }
+        },
+        {
+          "index": 10,
+          "kind": "call",
+          "method": "post_job",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "fail_contains": "is less than the reward plus the storage fee"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Deposit 1.00 NEAR yoctoNEAR is less than the reward plus the storage fee (1.00 NEAR + 0.003 NEAR = 1.01 NEAR)\")",
+            "gas_burnt_tgas": 2.378
+          }
+        },
+        {
+          "index": 11,
+          "kind": "call",
+          "method": "post_job",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "fail_contains": "is less than the reward plus the storage fee"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Deposit 0.500 NEAR yoctoNEAR is less than the reward plus the storage fee (1.00 NEAR + 0.003 NEAR = 1.01 NEAR)\")",
+            "gas_burnt_tgas": 2.377
+          }
+        },
+        {
+          "index": 12,
+          "kind": "call",
+          "method": "post_job",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Reward must be positive"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Reward must be positive\")",
+            "gas_burnt_tgas": 2.071
+          }
+        },
+        {
+          "index": 13,
+          "kind": "call",
+          "method": "post_job",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "fail_contains": "scenario_sha256 must be 64 lowercase hex characters"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: scenario_sha256 must be 64 lowercase hex characters\")",
+            "gas_burnt_tgas": 2.091
+          }
+        },
+        {
+          "index": 14,
+          "kind": "view",
+          "method": "job_count",
+          "passed": true,
+          "expected": {
+            "equals": 1
+          },
+          "actual": {
+            "status": "success",
+            "value": 1
+          }
+        },
+        {
+          "index": 15,
+          "kind": "call",
+          "method": "submit",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.19
+          }
+        },
+        {
+          "index": 16,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "agent": "alice",
+              "gate_report_sha256": null,
+              "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+              "scenario_sha256": "7e7d87ce7e6b46feeb6ac43ac345dd2f1c906c6b63c683e12f322f72871fe0bd",
+              "status": "Submitted",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": "alice.test.near",
+              "assigned_agent": null,
+              "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+              "gate_report_sha256": null,
+              "id": 0,
+              "poster": "carol.test.near",
+              "reject_reason": null,
+              "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "3570000000000000000000",
+              "scenario_sha256": "7e7d87ce7e6b46feeb6ac43ac345dd2f1c906c6b63c683e12f322f72871fe0bd",
+              "status": "Submitted",
+              "target_account": "bumm-guard-escrow2.testnet",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          }
+        },
+        {
+          "index": 17,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "jobs_in_review": 1
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "account": "alice.test.near",
+              "budget": "500000000000000000000000",
+              "jobs_in_review": 1,
+              "jobs_paid": 0,
+              "profile": "rust upgrade agent",
+              "storage_cost": "1860000000000000000000"
+            }
+          }
+        },
+        {
+          "index": 18,
+          "kind": "call",
+          "method": "approve",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "equals": true
+          },
+          "actual": {
+            "status": "success",
+            "value": true,
+            "gas_burnt_tgas": 5.13
+          }
+        },
+        {
+          "index": 19,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "agent": "alice",
+              "gate_report_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "status": "Paid",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": "alice.test.near",
+              "assigned_agent": null,
+              "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+              "gate_report_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "id": 0,
+              "poster": "carol.test.near",
+              "reject_reason": null,
+              "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "3570000000000000000000",
+              "scenario_sha256": "7e7d87ce7e6b46feeb6ac43ac345dd2f1c906c6b63c683e12f322f72871fe0bd",
+              "status": "Paid",
+              "target_account": "bumm-guard-escrow2.testnet",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          }
+        },
+        {
+          "index": 20,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "budget": "500000000000000000000000",
+              "jobs_in_review": 0,
+              "jobs_paid": 1
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "account": "alice.test.near",
+              "budget": "500000000000000000000000",
+              "jobs_in_review": 0,
+              "jobs_paid": 1,
+              "profile": "rust upgrade agent",
+              "storage_cost": "1860000000000000000000"
+            }
+          }
+        },
+        {
+          "index": 21,
+          "kind": "balance",
+          "account": "alice",
+          "passed": true,
+          "expected": {
+            "at_least": "10.4 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "10499579863422245700000000",
+            "near": "10.4995798634222457"
+          }
+        },
+        {
+          "index": 22,
+          "kind": "balance",
+          "account": "alice",
+          "passed": true,
+          "expected": {
+            "at_most": "10.5 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "10499579863422245700000000",
+            "near": "10.4995798634222457"
+          }
+        },
+        {
+          "index": 23,
+          "kind": "call",
+          "method": "approve",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Job 0 is not Submitted (status Paid)"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Job 0 is not Submitted (status Paid)\")",
+            "gas_burnt_tgas": 1.768
+          }
+        },
+        {
+          "index": 24,
+          "kind": "call",
+          "method": "leave_swarm",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "equals": "500000000000000000000000"
+          },
+          "actual": {
+            "status": "success",
+            "value": "500000000000000000000000",
+            "gas_burnt_tgas": 2.618
+          }
+        },
+        {
+          "index": 25,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "equals": null
+          },
+          "actual": {
+            "status": "success",
+            "value": null
+          }
+        },
+        {
+          "index": 26,
+          "kind": "view",
+          "method": "agent_count",
+          "passed": true,
+          "expected": {
+            "equals": 0
+          },
+          "actual": {
+            "status": "success",
+            "value": 0
+          }
+        },
+        {
+          "index": 27,
+          "kind": "balance",
+          "account": "alice",
+          "passed": true,
+          "expected": {
+            "at_least": "10.9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "10999139526964795700000000",
+            "near": "10.9991395269647957"
+          }
+        },
+        {
+          "index": 28,
+          "kind": "balance",
+          "account": "alice",
+          "passed": true,
+          "expected": {
+            "at_most": "11 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "10999139526964795700000000",
+            "near": "10.9991395269647957"
+          }
+        },
+        {
+          "index": 29,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "agent": "alice",
+              "status": "Paid"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": "alice.test.near",
+              "assigned_agent": null,
+              "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+              "gate_report_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "id": 0,
+              "poster": "carol.test.near",
+              "reject_reason": null,
+              "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "3570000000000000000000",
+              "scenario_sha256": "7e7d87ce7e6b46feeb6ac43ac345dd2f1c906c6b63c683e12f322f72871fe0bd",
+              "status": "Paid",
+              "target_account": "bumm-guard-escrow2.testnet",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          }
+        },
+        {
+          "index": 30,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_least": "50 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "50001221390589478400000000",
+            "near": "50.0012213905894784"
+          }
+        },
+        {
+          "index": 31,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_most": "50.1 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "50001221390589478400000000",
+            "near": "50.0012213905894784"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Swarm jobs v2 guardrails: 0.1 NEAR per job under review on submit and withdraw; approve refused for another agent, wasm or report; a copycat resubmission is not paid by the approve printed for the first agent",
+      "file": "scenarios/swarm_jobs_v2/02_floor_per_job_and_approve_bindings.json",
+      "scenario_sha256": "71dd5c376e7f090d4a2fe0f730c126c56ba4463f16b6b850de9927c199529de7",
+      "wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/swarm_jobs_v2.wasm",
+      "wasm_sha256": "5dbcf8cd767c096c3e207e8c804e5f950bc5460de8be0e6e4132426009d33ba5",
+      "upgrade_wasm": null,
+      "upgrade_wasm_sha256": null,
+      "passed": true,
+      "duration_s": 13.5,
+      "accounts": {
+        "alice": "alice.test.near",
+        "bob": "bob.test.near",
+        "carol": "carol.test.near",
+        "contract": "contract.test.near",
+        "dave": "dave.test.near"
+      },
+      "init": {
+        "method": "new",
+        "passed": true,
+        "actual": {
+          "status": "success",
+          "value": null,
+          "gas_burnt_tgas": 1.672
+        }
+      },
+      "steps": [
+        {
+          "index": 0,
+          "kind": "call",
+          "method": "join_swarm",
+          "by": "dave",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Attach at least 0.1 NEAR to join the swarm"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Attach at least 0.1 NEAR to join the swarm (minimum agent deposit)\")",
+            "gas_burnt_tgas": 1.707
+          }
+        },
+        {
+          "index": 1,
+          "kind": "call",
+          "method": "join_swarm",
+          "by": "dave",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.011
+          }
+        },
+        {
+          "index": 2,
+          "kind": "call",
+          "method": "join_swarm",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.026
+          }
+        },
+        {
+          "index": 3,
+          "kind": "call",
+          "method": "join_swarm",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "fail_contains": "The reviewer cannot join the swarm as an agent"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: The reviewer cannot join the swarm as an agent\")",
+            "gas_burnt_tgas": 2.082
+          }
+        },
+        {
+          "index": 4,
+          "kind": "call",
+          "method": "post_job",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "equals": 0
+          },
+          "actual": {
+            "status": "success",
+            "value": 0,
+            "gas_burnt_tgas": 2.757
+          }
+        },
+        {
+          "index": 5,
+          "kind": "call",
+          "method": "post_job",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "equals": 1
+          },
+          "actual": {
+            "status": "success",
+            "value": 1,
+            "gas_burnt_tgas": 2.761
+          }
+        },
+        {
+          "index": 6,
+          "kind": "call",
+          "method": "submit",
+          "by": "dave",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.182
+          }
+        },
+        {
+          "index": 7,
+          "kind": "call",
+          "method": "submit",
+          "by": "dave",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Budget must be at least 0.1 NEAR per job under review plus the storage part: 2 job(s) would need"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Budget must be at least 0.1 NEAR per job under review plus the storage part: 2 job(s) would need 0.202 NEAR yoctoNEAR, the budget is 0.150 NEAR\")",
+            "gas_burnt_tgas": 1.826
+          }
+        },
+        {
+          "index": 8,
+          "kind": "call",
+          "method": "withdraw_budget",
+          "by": "dave",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Budget must stay at least 0.1 NEAR per job under review plus the storage part"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Budget must stay at least 0.1 NEAR per job under review plus the storage part (0.102 NEAR yoctoNEAR with 1 job(s) under review)\")",
+            "gas_burnt_tgas": 1.813
+          }
+        },
+        {
+          "index": 9,
+          "kind": "call",
+          "method": "join_swarm",
+          "by": "dave",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.888
+          }
+        },
+        {
+          "index": 10,
+          "kind": "call",
+          "method": "submit",
+          "by": "dave",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.183
+          }
+        },
+        {
+          "index": 11,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "budget": "210000000000000000000000",
+              "jobs_in_review": 2
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "account": "dave.test.near",
+              "budget": "210000000000000000000000",
+              "jobs_in_review": 2,
+              "jobs_paid": 0,
+              "profile": "floor test",
+              "storage_cost": "1760000000000000000000"
+            }
+          }
+        },
+        {
+          "index": 12,
+          "kind": "call",
+          "method": "withdraw_budget",
+          "by": "dave",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Budget must stay at least 0.1 NEAR per job under review plus the storage part"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Budget must stay at least 0.1 NEAR per job under review plus the storage part (0.202 NEAR yoctoNEAR with 2 job(s) under review)\")",
+            "gas_burnt_tgas": 1.813
+          }
+        },
+        {
+          "index": 13,
+          "kind": "call",
+          "method": "approve",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Only the reviewer can approve"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Only the reviewer can approve\")",
+            "gas_burnt_tgas": 1.656
+          }
+        },
+        {
+          "index": 14,
+          "kind": "call",
+          "method": "approve",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "fail_contains": "agent does not match the submission of job 0"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: agent does not match the submission of job 0\")",
+            "gas_burnt_tgas": 1.764
+          }
+        },
+        {
+          "index": 15,
+          "kind": "call",
+          "method": "approve",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "fail_contains": "wasm_sha256 does not match the submission of job 0"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: wasm_sha256 does not match the submission of job 0\")",
+            "gas_burnt_tgas": 1.766
+          }
+        },
+        {
+          "index": 16,
+          "kind": "call",
+          "method": "approve",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "fail_contains": "report_sha256 does not match the submission of job 0"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: report_sha256 does not match the submission of job 0\")",
+            "gas_burnt_tgas": 1.768
+          }
+        },
+        {
+          "index": 17,
+          "kind": "call",
+          "method": "on_reward_paid",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Method on_reward_paid is private"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Method on_reward_paid is private\")",
+            "gas_burnt_tgas": 1.557
+          }
+        },
+        {
+          "index": 18,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "agent": "dave",
+              "gate_report_sha256": null,
+              "status": "Submitted"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": "dave.test.near",
+              "assigned_agent": null,
+              "description": "upgrade escrow to v2",
+              "gate_report_sha256": null,
+              "id": 0,
+              "poster": "carol.test.near",
+              "reject_reason": null,
+              "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "2440000000000000000000",
+              "scenario_sha256": null,
+              "status": "Submitted",
+              "target_account": "bumm-guard-escrow2.testnet",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          }
+        },
+        {
+          "index": 19,
+          "kind": "call",
+          "method": "reject",
+          "by": "bob",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.121
+          }
+        },
+        {
+          "index": 20,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "jobs_in_review": 1
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "account": "dave.test.near",
+              "budget": "210000000000000000000000",
+              "jobs_in_review": 1,
+              "jobs_paid": 0,
+              "profile": "floor test",
+              "storage_cost": "1760000000000000000000"
+            }
+          }
+        },
+        {
+          "index": 21,
+          "kind": "call",
+          "method": "submit",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.2
+          }
+        },
+        {
+          "index": 22,
+          "kind": "call",
+          "method": "approve",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "fail_contains": "agent does not match the submission of job 0"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: agent does not match the submission of job 0\")",
+            "gas_burnt_tgas": 1.764
+          }
+        },
+        {
+          "index": 23,
+          "kind": "balance",
+          "account": "dave",
+          "passed": true,
+          "expected": {
+            "at_most": "9.8 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "9788457804428400900000000",
+            "near": "9.7884578044284009"
+          }
+        },
+        {
+          "index": 24,
+          "kind": "call",
+          "method": "approve",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "equals": true
+          },
+          "actual": {
+            "status": "success",
+            "value": true,
+            "gas_burnt_tgas": 5.114
+          }
+        },
+        {
+          "index": 25,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "agent": "alice",
+              "gate_report_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "status": "Paid"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": "alice.test.near",
+              "assigned_agent": null,
+              "description": "upgrade escrow to v2",
+              "gate_report_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "id": 0,
+              "poster": "carol.test.near",
+              "reject_reason": null,
+              "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "2440000000000000000000",
+              "scenario_sha256": null,
+              "status": "Paid",
+              "target_account": "bumm-guard-escrow2.testnet",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          }
+        },
+        {
+          "index": 26,
+          "kind": "balance",
+          "account": "alice",
+          "passed": true,
+          "expected": {
+            "at_least": "10.4 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "10499421745791354100000000",
+            "near": "10.4994217457913541"
+          }
+        },
+        {
+          "index": 27,
+          "kind": "balance",
+          "account": "alice",
+          "passed": true,
+          "expected": {
+            "at_most": "10.5 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "10499421745791354100000000",
+            "near": "10.4994217457913541"
+          }
+        },
+        {
+          "index": 28,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "jobs_in_review": 1,
+              "jobs_paid": 0
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "account": "dave.test.near",
+              "budget": "210000000000000000000000",
+              "jobs_in_review": 1,
+              "jobs_paid": 0,
+              "profile": "floor test",
+              "storage_cost": "1760000000000000000000"
+            }
+          }
+        },
+        {
+          "index": 29,
+          "kind": "call",
+          "method": "approve",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "equals": true
+          },
+          "actual": {
+            "status": "success",
+            "value": true,
+            "gas_burnt_tgas": 5.115
+          }
+        },
+        {
+          "index": 30,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "agent": "dave",
+              "gate_report_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+              "status": "Paid"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": "dave.test.near",
+              "assigned_agent": null,
+              "description": "upgrade escrow to v2, second job",
+              "gate_report_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+              "id": 1,
+              "poster": "carol.test.near",
+              "reject_reason": null,
+              "report_sha256": "e7cfcfd8712d2dc31c1fb2c951894b367da9dc34a93376b45e1f61e249ac55c5",
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "2560000000000000000000",
+              "scenario_sha256": null,
+              "status": "Paid",
+              "target_account": "bumm-guard-escrow2.testnet",
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          }
+        },
+        {
+          "index": 31,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "budget": "210000000000000000000000",
+              "jobs_in_review": 0,
+              "jobs_paid": 1
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "account": "dave.test.near",
+              "budget": "210000000000000000000000",
+              "jobs_in_review": 0,
+              "jobs_paid": 1,
+              "profile": "floor test",
+              "storage_cost": "1760000000000000000000"
+            }
+          }
+        },
+        {
+          "index": 32,
+          "kind": "call",
+          "method": "withdraw_budget",
+          "by": "dave",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.65
+          }
+        },
+        {
+          "index": 33,
+          "kind": "call",
+          "method": "withdraw_budget",
+          "by": "dave",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Budget must stay at least 0.1 NEAR per job under review plus the storage part"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Budget must stay at least 0.1 NEAR per job under review plus the storage part (0.002 NEAR yoctoNEAR with 0 job(s) under review)\")",
+            "gas_burnt_tgas": 1.813
+          }
+        },
+        {
+          "index": 34,
+          "kind": "call",
+          "method": "withdraw_budget",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Not a registered agent"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Not a registered agent\")",
+            "gas_burnt_tgas": 1.755
+          }
+        },
+        {
+          "index": 35,
+          "kind": "call",
+          "method": "leave_swarm",
+          "by": "dave",
+          "passed": true,
+          "expected": {
+            "equals": "60000000000000000000000"
+          },
+          "actual": {
+            "status": "success",
+            "value": "60000000000000000000000",
+            "gas_burnt_tgas": 2.629
+          }
+        },
+        {
+          "index": 36,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "equals": null
+          },
+          "actual": {
+            "status": "success",
+            "value": null
+          }
+        },
+        {
+          "index": 37,
+          "kind": "balance",
+          "account": "dave",
+          "passed": true,
+          "expected": {
+            "at_least": "10.9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "10997592480510442400000000",
+            "near": "10.9975924805104424"
+          }
+        },
+        {
+          "index": 38,
+          "kind": "balance",
+          "account": "dave",
+          "passed": true,
+          "expected": {
+            "at_most": "11 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "10997592480510442400000000",
+            "near": "10.9975924805104424"
+          }
+        },
+        {
+          "index": 39,
+          "kind": "view",
+          "method": "agent_count",
+          "passed": true,
+          "expected": {
+            "equals": 1
+          },
+          "actual": {
+            "status": "success",
+            "value": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "Swarm jobs v2 leave and cancel: no leaving with a job under review; cancel refunds the reward, not the storage fee; leave refunds the whole budget and frees the record; the storage part is never withdrawable",
+      "file": "scenarios/swarm_jobs_v2/03_leave_swarm_and_cancel.json",
+      "scenario_sha256": "5d106ca96dd182b56335e3562291b273e0f82b40c7b2bfdb7b64f366a5006e91",
+      "wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/swarm_jobs_v2.wasm",
+      "wasm_sha256": "5dbcf8cd767c096c3e207e8c804e5f950bc5460de8be0e6e4132426009d33ba5",
+      "upgrade_wasm": null,
+      "upgrade_wasm_sha256": null,
+      "passed": true,
+      "duration_s": 10.7,
+      "accounts": {
+        "alice": "alice.test.near",
+        "bob": "bob.test.near",
+        "carol": "carol.test.near",
+        "contract": "contract.test.near"
+      },
+      "init": {
+        "method": "new",
+        "passed": true,
+        "actual": {
+          "status": "success",
+          "value": null,
+          "gas_burnt_tgas": 1.672
+        }
+      },
+      "steps": [
+        {
+          "index": 0,
+          "kind": "call",
+          "method": "join_swarm",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.012
+          }
+        },
+        {
+          "index": 1,
+          "kind": "call",
+          "method": "leave_swarm",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Not a registered agent"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Not a registered agent\")",
+            "gas_burnt_tgas": 1.682
+          }
+        },
+        {
+          "index": 2,
+          "kind": "call",
+          "method": "post_job",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "equals": 0
+          },
+          "actual": {
+            "status": "success",
+            "value": 0,
+            "gas_burnt_tgas": 2.744
+          }
+        },
+        {
+          "index": 3,
+          "kind": "call",
+          "method": "post_job",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "equals": 1
+          },
+          "actual": {
+            "status": "success",
+            "value": 1,
+            "gas_burnt_tgas": 2.746
+          }
+        },
+        {
+          "index": 4,
+          "kind": "balance",
+          "account": "carol",
+          "passed": true,
+          "expected": {
+            "at_least": "6.9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "6995146522683403400000000",
+            "near": "6.9951465226834034"
+          }
+        },
+        {
+          "index": 5,
+          "kind": "balance",
+          "account": "carol",
+          "passed": true,
+          "expected": {
+            "at_most": "7 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "6995146522683403400000000",
+            "near": "6.9951465226834034"
+          }
+        },
+        {
+          "index": 6,
+          "kind": "call",
+          "method": "cancel",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Only the poster can cancel job 1"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Only the poster can cancel job 1\")",
+            "gas_burnt_tgas": 1.729
+          }
+        },
+        {
+          "index": 7,
+          "kind": "call",
+          "method": "cancel",
+          "by": "carol",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.595
+          }
+        },
+        {
+          "index": 8,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "reward": "1000000000000000000000000",
+              "scenario_sha256": null,
+              "status": "Cancelled"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": null,
+              "assigned_agent": null,
+              "description": "job B",
+              "gate_report_sha256": null,
+              "id": 1,
+              "poster": "carol.test.near",
+              "reject_reason": null,
+              "report_sha256": null,
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "1990000000000000000000",
+              "scenario_sha256": null,
+              "status": "Cancelled",
+              "target_account": null,
+              "wasm_sha256": null
+            }
+          }
+        },
+        {
+          "index": 9,
+          "kind": "balance",
+          "account": "carol",
+          "passed": true,
+          "expected": {
+            "at_least": "7.9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "7994909335854647800000000",
+            "near": "7.9949093358546478"
+          }
+        },
+        {
+          "index": 10,
+          "kind": "balance",
+          "account": "carol",
+          "passed": true,
+          "expected": {
+            "at_most": "8 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "7994909335854647800000000",
+            "near": "7.9949093358546478"
+          }
+        },
+        {
+          "index": 11,
+          "kind": "call",
+          "method": "cancel",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Job 1 cannot be cancelled (status Cancelled)"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Job 1 cannot be cancelled (status Cancelled)\")",
+            "gas_burnt_tgas": 1.733
+          }
+        },
+        {
+          "index": 12,
+          "kind": "call",
+          "method": "submit",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Job 1 is not open for submissions (status Cancelled)"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Job 1 is not open for submissions (status Cancelled)\")",
+            "gas_burnt_tgas": 1.893
+          }
+        },
+        {
+          "index": 13,
+          "kind": "call",
+          "method": "submit",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.172
+          }
+        },
+        {
+          "index": 14,
+          "kind": "call",
+          "method": "leave_swarm",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Cannot leave the swarm with 1 job(s) under review (Submitted or Paying)"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Cannot leave the swarm with 1 job(s) under review (Submitted or Paying)\")",
+            "gas_burnt_tgas": 1.709
+          }
+        },
+        {
+          "index": 15,
+          "kind": "call",
+          "method": "cancel",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Job 0 cannot be cancelled (status Submitted)"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Job 0 cannot be cancelled (status Submitted)\")",
+            "gas_burnt_tgas": 1.738
+          }
+        },
+        {
+          "index": 16,
+          "kind": "call",
+          "method": "withdraw_budget",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Budget must stay at least 0.1 NEAR per job under review plus the storage part"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Budget must stay at least 0.1 NEAR per job under review plus the storage part (0.102 NEAR yoctoNEAR with 1 job(s) under review)\")",
+            "gas_burnt_tgas": 1.813
+          }
+        },
+        {
+          "index": 17,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "budget": "500000000000000000000000",
+              "jobs_in_review": 1
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "account": "alice.test.near",
+              "budget": "500000000000000000000000",
+              "jobs_in_review": 1,
+              "jobs_paid": 0,
+              "profile": "rust upgrade agent",
+              "storage_cost": "1860000000000000000000"
+            }
+          }
+        },
+        {
+          "index": 18,
+          "kind": "call",
+          "method": "reject",
+          "by": "bob",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.102
+          }
+        },
+        {
+          "index": 19,
+          "kind": "call",
+          "method": "cancel",
+          "by": "carol",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.616
+          }
+        },
+        {
+          "index": 20,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "agent": "alice",
+              "reject_reason": "blocked",
+              "status": "Cancelled"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": "alice.test.near",
+              "assigned_agent": null,
+              "description": "job A",
+              "gate_report_sha256": null,
+              "id": 0,
+              "poster": "carol.test.near",
+              "reject_reason": "blocked",
+              "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+              "reward": "2000000000000000000000000",
+              "reward_storage_fee": "1990000000000000000000",
+              "scenario_sha256": null,
+              "status": "Cancelled",
+              "target_account": null,
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          }
+        },
+        {
+          "index": 21,
+          "kind": "balance",
+          "account": "carol",
+          "passed": true,
+          "expected": {
+            "at_least": "9.9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "9994322890004451000000000",
+            "near": "9.994322890004451"
+          }
+        },
+        {
+          "index": 22,
+          "kind": "balance",
+          "account": "carol",
+          "passed": true,
+          "expected": {
+            "at_most": "10 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "9994322890004451000000000",
+            "near": "9.994322890004451"
+          }
+        },
+        {
+          "index": 23,
+          "kind": "view",
+          "method": "job_count",
+          "passed": true,
+          "expected": {
+            "equals": 2
+          },
+          "actual": {
+            "status": "success",
+            "value": 2
+          }
+        },
+        {
+          "index": 24,
+          "kind": "call",
+          "method": "leave_swarm",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "equals": "500000000000000000000000"
+          },
+          "actual": {
+            "status": "success",
+            "value": "500000000000000000000000",
+            "gas_burnt_tgas": 2.62
+          }
+        },
+        {
+          "index": 25,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "equals": null
+          },
+          "actual": {
+            "status": "success",
+            "value": null
+          }
+        },
+        {
+          "index": 26,
+          "kind": "view",
+          "method": "agent_count",
+          "passed": true,
+          "expected": {
+            "equals": 0
+          },
+          "actual": {
+            "status": "success",
+            "value": 0
+          }
+        },
+        {
+          "index": 27,
+          "kind": "balance",
+          "account": "alice",
+          "passed": true,
+          "expected": {
+            "at_least": "9.9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "9998426717819342100000000",
+            "near": "9.9984267178193421"
+          }
+        },
+        {
+          "index": 28,
+          "kind": "balance",
+          "account": "alice",
+          "passed": true,
+          "expected": {
+            "at_most": "10 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "9998426717819342100000000",
+            "near": "9.9984267178193421"
+          }
+        },
+        {
+          "index": 29,
+          "kind": "call",
+          "method": "leave_swarm",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Not a registered agent"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Not a registered agent\")",
+            "gas_burnt_tgas": 1.682
+          }
+        },
+        {
+          "index": 30,
+          "kind": "call",
+          "method": "join_swarm",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.026
+          }
+        },
+        {
+          "index": 31,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "budget": "100000000000000000000000",
+              "jobs_in_review": 0,
+              "jobs_paid": 0,
+              "profile": "back"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "account": "alice.test.near",
+              "budget": "100000000000000000000000",
+              "jobs_in_review": 0,
+              "jobs_paid": 0,
+              "profile": "back",
+              "storage_cost": "1720000000000000000000"
+            }
+          }
+        },
+        {
+          "index": 32,
+          "kind": "view",
+          "method": "agent_count",
+          "passed": true,
+          "expected": {
+            "equals": 1
+          },
+          "actual": {
+            "status": "success",
+            "value": 1
+          }
+        },
+        {
+          "index": 33,
+          "kind": "call",
+          "method": "withdraw_budget",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Budget must stay at least 0.1 NEAR per job under review plus the storage part"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Budget must stay at least 0.1 NEAR per job under review plus the storage part (0.002 NEAR yoctoNEAR with 0 job(s) under review)\")",
+            "gas_burnt_tgas": 1.813
+          }
+        },
+        {
+          "index": 34,
+          "kind": "call",
+          "method": "withdraw_budget",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.644
+          }
+        },
+        {
+          "index": 35,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "budget": "10000000000000000000000"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "account": "alice.test.near",
+              "budget": "10000000000000000000000",
+              "jobs_in_review": 0,
+              "jobs_paid": 0,
+              "profile": "back",
+              "storage_cost": "1720000000000000000000"
+            }
+          }
+        },
+        {
+          "index": 36,
+          "kind": "call",
+          "method": "leave_swarm",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "equals": "10000000000000000000000"
+          },
+          "actual": {
+            "status": "success",
+            "value": "10000000000000000000000",
+            "gas_burnt_tgas": 2.62
+          }
+        },
+        {
+          "index": 37,
+          "kind": "view",
+          "method": "agent_count",
+          "passed": true,
+          "expected": {
+            "equals": 0
+          },
+          "actual": {
+            "status": "success",
+            "value": 0
+          }
+        },
+        {
+          "index": 38,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_least": "50 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "50001631390589478400000000",
+            "near": "50.0016313905894784"
+          }
+        },
+        {
+          "index": 39,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_most": "50.1 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "50001631390589478400000000",
+            "near": "50.0016313905894784"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Swarm jobs v2: a job assigned to one agent refuses every other agent; reject with close cancels the job and refunds the poster in the same transaction, the agent counter goes down and nobody can resubmit",
+      "file": "scenarios/swarm_jobs_v2/04_reject_close_and_assigned_agent.json",
+      "scenario_sha256": "78512c3c27892553273f46851b9c14f35ba963c1dee5b717af67fe69d73b76e5",
+      "wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/swarm_jobs_v2.wasm",
+      "wasm_sha256": "5dbcf8cd767c096c3e207e8c804e5f950bc5460de8be0e6e4132426009d33ba5",
+      "upgrade_wasm": null,
+      "upgrade_wasm_sha256": null,
+      "passed": true,
+      "duration_s": 9.8,
+      "accounts": {
+        "alice": "alice.test.near",
+        "bob": "bob.test.near",
+        "carol": "carol.test.near",
+        "contract": "contract.test.near",
+        "dave": "dave.test.near"
+      },
+      "init": {
+        "method": "new",
+        "passed": true,
+        "actual": {
+          "status": "success",
+          "value": null,
+          "gas_burnt_tgas": 1.672
+        }
+      },
+      "steps": [
+        {
+          "index": 0,
+          "kind": "call",
+          "method": "join_swarm",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.012
+          }
+        },
+        {
+          "index": 1,
+          "kind": "call",
+          "method": "join_swarm",
+          "by": "dave",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.024
+          }
+        },
+        {
+          "index": 2,
+          "kind": "call",
+          "method": "post_job",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "equals": 0
+          },
+          "actual": {
+            "status": "success",
+            "value": 0,
+            "gas_burnt_tgas": 2.754
+          }
+        },
+        {
+          "index": 3,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "agent": null,
+              "assigned_agent": "alice",
+              "status": "Open"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": null,
+              "assigned_agent": "alice.test.near",
+              "description": "for alice only",
+              "gate_report_sha256": null,
+              "id": 0,
+              "poster": "carol.test.near",
+              "reject_reason": null,
+              "report_sha256": null,
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "2270000000000000000000",
+              "scenario_sha256": null,
+              "status": "Open",
+              "target_account": null,
+              "wasm_sha256": null
+            }
+          }
+        },
+        {
+          "index": 4,
+          "kind": "call",
+          "method": "submit",
+          "by": "dave",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Job 0 is assigned to alice"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Job 0 is assigned to alice.test.near; only that agent may submit\")",
+            "gas_burnt_tgas": 1.899
+          }
+        },
+        {
+          "index": 5,
+          "kind": "call",
+          "method": "submit",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.179
+          }
+        },
+        {
+          "index": 6,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "agent": "alice",
+              "assigned_agent": "alice",
+              "status": "Submitted"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": "alice.test.near",
+              "assigned_agent": "alice.test.near",
+              "description": "for alice only",
+              "gate_report_sha256": null,
+              "id": 0,
+              "poster": "carol.test.near",
+              "reject_reason": null,
+              "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "2270000000000000000000",
+              "scenario_sha256": null,
+              "status": "Submitted",
+              "target_account": null,
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          }
+        },
+        {
+          "index": 7,
+          "kind": "call",
+          "method": "post_job",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "equals": 1
+          },
+          "actual": {
+            "status": "success",
+            "value": 1,
+            "gas_burnt_tgas": 2.75
+          }
+        },
+        {
+          "index": 8,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "assigned_agent": null,
+              "status": "Open"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": null,
+              "assigned_agent": null,
+              "description": "open to any agent",
+              "gate_report_sha256": null,
+              "id": 1,
+              "poster": "carol.test.near",
+              "reject_reason": null,
+              "report_sha256": null,
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "2110000000000000000000",
+              "scenario_sha256": null,
+              "status": "Open",
+              "target_account": null,
+              "wasm_sha256": null
+            }
+          }
+        },
+        {
+          "index": 9,
+          "kind": "call",
+          "method": "submit",
+          "by": "dave",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.177
+          }
+        },
+        {
+          "index": 10,
+          "kind": "call",
+          "method": "reject",
+          "by": "bob",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.108
+          }
+        },
+        {
+          "index": 11,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "reject_reason": "blocked once",
+              "status": "Rejected"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": "dave.test.near",
+              "assigned_agent": null,
+              "description": "open to any agent",
+              "gate_report_sha256": null,
+              "id": 1,
+              "poster": "carol.test.near",
+              "reject_reason": "blocked once",
+              "report_sha256": "e7cfcfd8712d2dc31c1fb2c951894b367da9dc34a93376b45e1f61e249ac55c5",
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "2110000000000000000000",
+              "scenario_sha256": null,
+              "status": "Rejected",
+              "target_account": null,
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          }
+        },
+        {
+          "index": 12,
+          "kind": "call",
+          "method": "submit",
+          "by": "dave",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.19
+          }
+        },
+        {
+          "index": 13,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "jobs_in_review": 1
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "account": "dave.test.near",
+              "budget": "500000000000000000000000",
+              "jobs_in_review": 1,
+              "jobs_paid": 0,
+              "profile": "other agent",
+              "storage_cost": "1770000000000000000000"
+            }
+          }
+        },
+        {
+          "index": 14,
+          "kind": "balance",
+          "account": "carol",
+          "passed": true,
+          "expected": {
+            "at_most": "8 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "7995114274751783000000000",
+            "near": "7.995114274751783"
+          }
+        },
+        {
+          "index": 15,
+          "kind": "call",
+          "method": "reject",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Only the reviewer can reject"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Only the reviewer can reject\")",
+            "gas_burnt_tgas": 1.637
+          }
+        },
+        {
+          "index": 16,
+          "kind": "call",
+          "method": "reject",
+          "by": "bob",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.801
+          }
+        },
+        {
+          "index": 17,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "agent": "dave",
+              "reject_reason": "DEPLOY BLOCKED: no passing upgrade scenario proves the on-chain code -> this wasm; closed",
+              "reward": "1000000000000000000000000",
+              "status": "Cancelled"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": "dave.test.near",
+              "assigned_agent": null,
+              "description": "open to any agent",
+              "gate_report_sha256": null,
+              "id": 1,
+              "poster": "carol.test.near",
+              "reject_reason": "DEPLOY BLOCKED: no passing upgrade scenario proves the on-chain code -> this wasm; closed",
+              "report_sha256": "e7cfcfd8712d2dc31c1fb2c951894b367da9dc34a93376b45e1f61e249ac55c5",
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "2110000000000000000000",
+              "scenario_sha256": null,
+              "status": "Cancelled",
+              "target_account": null,
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          }
+        },
+        {
+          "index": 18,
+          "kind": "view",
+          "method": "get_agent",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "budget": "500000000000000000000000",
+              "jobs_in_review": 0,
+              "jobs_paid": 0
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "account": "dave.test.near",
+              "budget": "500000000000000000000000",
+              "jobs_in_review": 0,
+              "jobs_paid": 0,
+              "profile": "other agent",
+              "storage_cost": "1770000000000000000000"
+            }
+          }
+        },
+        {
+          "index": 19,
+          "kind": "balance",
+          "account": "carol",
+          "passed": true,
+          "expected": {
+            "at_least": "8.9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "8994950592563125400000000",
+            "near": "8.9949505925631254"
+          }
+        },
+        {
+          "index": 20,
+          "kind": "balance",
+          "account": "carol",
+          "passed": true,
+          "expected": {
+            "at_most": "9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "8994950592563125400000000",
+            "near": "8.9949505925631254"
+          }
+        },
+        {
+          "index": 21,
+          "kind": "call",
+          "method": "submit",
+          "by": "dave",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Job 1 is not open for submissions (status Cancelled)"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Job 1 is not open for submissions (status Cancelled)\")",
+            "gas_burnt_tgas": 1.901
+          }
+        },
+        {
+          "index": 22,
+          "kind": "call",
+          "method": "cancel",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Job 1 cannot be cancelled (status Cancelled)"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Job 1 cannot be cancelled (status Cancelled)\")",
+            "gas_burnt_tgas": 1.741
+          }
+        },
+        {
+          "index": 23,
+          "kind": "call",
+          "method": "reject",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Job 1 is not Submitted (status Cancelled)"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Job 1 is not Submitted (status Cancelled)\")",
+            "gas_burnt_tgas": 1.744
+          }
+        },
+        {
+          "index": 24,
+          "kind": "call",
+          "method": "leave_swarm",
+          "by": "dave",
+          "passed": true,
+          "expected": {
+            "equals": "500000000000000000000000"
+          },
+          "actual": {
+            "status": "success",
+            "value": "500000000000000000000000",
+            "gas_burnt_tgas": 2.629
+          }
+        },
+        {
+          "index": 25,
+          "kind": "call",
+          "method": "approve",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "equals": true
+          },
+          "actual": {
+            "status": "success",
+            "value": true,
+            "gas_burnt_tgas": 5.106
+          }
+        },
+        {
+          "index": 26,
+          "kind": "view",
+          "method": "get_job",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "agent": "alice",
+              "assigned_agent": "alice",
+              "status": "Paid"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "agent": "alice.test.near",
+              "assigned_agent": "alice.test.near",
+              "description": "for alice only",
+              "gate_report_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "id": 0,
+              "poster": "carol.test.near",
+              "reject_reason": null,
+              "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+              "reward": "1000000000000000000000000",
+              "reward_storage_fee": "2270000000000000000000",
+              "scenario_sha256": null,
+              "status": "Paid",
+              "target_account": null,
+              "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+            }
+          }
+        },
+        {
+          "index": 27,
+          "kind": "call",
+          "method": "reject",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Job 0 is not Submitted (status Paid)"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Job 0 is not Submitted (status Paid)\")",
+            "gas_burnt_tgas": 1.744
+          }
+        },
+        {
+          "index": 28,
+          "kind": "balance",
+          "account": "alice",
+          "passed": true,
+          "expected": {
+            "at_least": "10.4 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "10499580959912538700000000",
+            "near": "10.4995809599125387"
+          }
+        },
+        {
+          "index": 29,
+          "kind": "balance",
+          "account": "alice",
+          "passed": true,
+          "expected": {
+            "at_most": "10.5 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "10499580959912538700000000",
+            "near": "10.4995809599125387"
+          }
+        },
+        {
+          "index": 30,
+          "kind": "view",
+          "method": "job_count",
+          "passed": true,
+          "expected": {
+            "equals": 2
+          },
+          "actual": {
+            "status": "success",
+            "value": 2
+          }
+        },
+        {
+          "index": 31,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_least": "50.4 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "50502031390589478400000000",
+            "near": "50.5020313905894784"
+          }
+        },
+        {
+          "index": 32,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_most": "50.6 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "50502031390589478400000000",
+            "near": "50.5020313905894784"
+          }
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "scenarios": 4,
+    "passed": 4,
+    "failed": 0,
+    "steps": 145,
+    "steps_failed": 0
+  }
+}

@@ -235,10 +235,13 @@ jobs:
       - name: build swarm_jobs wasm (rustc 1.85.0; guarded jobs, docs/SWARM_JOBS.md)
         working-directory: tests/fixtures/near
         run: cargo build --release --locked --target wasm32-unknown-unknown -p swarm_jobs
+      - name: build swarm_jobs_v2 wasm (rustc 1.85.0; third upgrade pair, swarm_jobs v1 -> v2)
+        working-directory: tests/fixtures/near
+        run: cargo build --release --locked --target wasm32-unknown-unknown -p swarm_jobs_v2
       - name: hash guard (the proven wasm files built in this job must equal evidence/wasm/SHA256SUMS)
         working-directory: tests/fixtures/near/target/wasm32-unknown-unknown/release
         run: |
-          sha256sum event_registration.wasm event_registration_waitlist.wasm escrow_v1.wasm escrow_v2.wasm swarm_jobs.wasm
+          sha256sum event_registration.wasm event_registration_waitlist.wasm escrow_v1.wasm escrow_v2.wasm swarm_jobs.wasm swarm_jobs_v2.wasm
           sha256sum --check --strict "$GITHUB_WORKSPACE/evidence/wasm/SHA256SUMS"
       - name: run swarm_jobs scenarios (review pays the agent; guardrails; cancel refunds)
         run: |
@@ -249,9 +252,6 @@ jobs:
           python -m bumm_guard gate tests/fixtures/near/swarm_jobs \
             --wasm tests/fixtures/near/target/wasm32-unknown-unknown/release/swarm_jobs.wasm \
             --simulate-report simulate-out/swarm-jobs-report.json --dry-run
-      - name: build swarm_jobs_v2 wasm (rustc 1.85.0; third upgrade pair, swarm_jobs v1 -> v2)
-        working-directory: tests/fixtures/near
-        run: cargo build --release --locked --target wasm32-unknown-unknown -p swarm_jobs_v2
       - name: run swarm_jobs_v2 scenarios (storage fee and refund, pinned scenario, per-job floor, approve bindings, leave_swarm)
         run: |
           python -m bumm_guard simulate scenarios/swarm_jobs_v2/*.json \

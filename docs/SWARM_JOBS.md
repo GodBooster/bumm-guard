@@ -143,7 +143,7 @@ a v1-style approve refused, reject and cancel of job 1, a v2 job with fee and pi
 `swarm_jobs_v1_to_v2_code_only.json` (same prefix, upgrade without `migrate`: expected to FAIL; CI asserts that
 exactly the four views pass and that all seven steps that read a job fail with `Cannot deserialize element`). CI
 also gates v2 with its own report (fresh deploy) and uploads the wasm as the `swarm_jobs_v2-wasm` artifact; the
-hash guard keeps checking the five committed wasm files, and `evidence/wasm/swarm_jobs_v2.wasm` is added to it from
+hash guard checks the six committed wasm files (`evidence/wasm/swarm_jobs_v2.wasm`, sha256 `5dbcf8cd…`, was added to it from
 the green CI run after the merge (not from a local build).
 
 ## `bumm-guard review-job`
@@ -361,7 +361,7 @@ batch, and proves on the live state what the sandbox scenario proved: the jobs s
 job 0 and job 1 is rejected. Nothing below is done yet.
 
 Files, all taken from the green CI run of the merge (artifacts `swarm_jobs_v2-wasm` and `simulate-report`), added to
-the repository by the coordinator after the merge and not by a local build: `evidence/wasm/swarm_jobs_v2.wasm` (its
+the repository by the author after the merge and not by a local build (done on 2026-11-07 from CI run 42390541743 on `00bd558`): `evidence/wasm/swarm_jobs_v2.wasm` (its
 sha256 goes into `evidence/wasm/SHA256SUMS`; written below as `<v2 sha256>`),
 `evidence/swarm-jobs-upgrade-with-migrate-report-ci.json` (the `simulate-out/swarm-jobs-upgrade-with-migrate.json`
 of that run: `wasm_sha256` `bcace583…`, `upgrade_wasm_sha256` `<v2 sha256>`, 1/1 scenario, 49/49 steps) and
