@@ -2,10 +2,10 @@
 
 Drafts for the owner to edit and publish. Nothing here has been posted or submitted. Every claim is backed by a file in this repository or by the CI run named next to it; anything not done is listed as not done. Placeholders in `{braces}` are filled by the owner on 13.11 (the repository is private until then).
 
-## 1. Form field "What did you build?" (limit 2000 characters; this text: 1975 characters, counted on the text between the markers without the final newline, 2026-11-06)
+## 1. Form field "What did you build?" (limit 2000 characters; this text: 1968 characters, counted on the text between the markers without the final newline, 2026-11-07)
 
 <!-- form-text-start -->
-BUMM Guard proves that a change to a NEAR contract works on state written by the code that is already deployed, before an agent or a human deploys it: the scenario's state, bound to the exact pair of code hashes.
+BUMM Guard checks in a sandbox that a NEAR contract upgrade works on state the old code wrote, binds that proof to the exact pair of code hashes, and only then hands an agent or a human the deploy command.
 
 The problem: in NEAR, redeploying code over a contract whose stored state has a different layout, without a migration, leaves a contract that panics on every call ("Cannot deserialize the contract state."). Tests that deploy fresh do not see it.
 
@@ -35,10 +35,10 @@ Field notes, checked against https://nearhackathon.com/HACKATHON.md on 2026-11-0
 
 The rules require the main post to say the project was built at NEAR HACKATHON, to tag `@NEARProtocol` and `#NEARHackathon`, and to carry the demo video (Q-012: screenshots are not enough for a local-only demo). `@NearLegion` and `@NearBuilders` are optional. Counts below treat a link as 23 characters; recheck in the X editor.
 
-Main post (limit 280; this text counts 274 with the repo link; attach the video):
+Main post (limit 280; this text counts 310 with the repo link; attach the video):
 
 <!-- x1-start -->
-A NEAR contract can pass fresh-deploy tests and break on upgrade over old state. Built at NEAR HACKATHON: BUMM Guard proves the upgrade in near-sandbox and gates the deploy on it. Demo: an escrow deal survives on testnet. @NEARProtocol #NEARHackathon {REPO}
+A NEAR contract can pass fresh-deploy tests and break on upgrade over old state. Built at NEAR HACKATHON: BUMM Guard checks the upgrade in near-sandbox on state the old code wrote and gates the deploy on that proof. Demo: an escrow deal survives on testnet. @NEARProtocol #NEARHackathon {REPO}
 <!-- x1-end -->
 
 Thread, reply 1 (278 characters), where the upgrade check came from:

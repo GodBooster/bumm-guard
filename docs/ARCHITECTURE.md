@@ -6,7 +6,7 @@ Repository: `GodBooster/bumm-guard`. The current commit and the full history are
 
 ## 1. The one sentence and the one failure
 
-**BUMM Guard proves that a change to a NEAR contract works on state written by the code that is already deployed, before an agent or a human deploys it: the scenario's state, bound to the exact pair of code hashes (on-chain sha256 → candidate sha256).**
+**BUMM Guard checks in a sandbox that a NEAR contract upgrade works on state the old code wrote, binds that proof to the exact pair of code hashes (on-chain sha256 → candidate sha256), and only then hands an agent or a human the deploy command.**
 
 The failure it targets is shown here for NEAR Borsh state (the general problem, new code reading state written by old code, exists on any chain with upgradeable contracts; Borsh deserialization of a changed struct is its NEAR shape). Contract state is Borsh-serialised into the account's key-value store. When new code with a different struct layout is deployed over an account that holds state written by the old layout, the deploy transaction *succeeds*, and then:
 
