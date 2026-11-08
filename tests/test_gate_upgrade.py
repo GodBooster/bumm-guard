@@ -733,7 +733,10 @@ class UpgradeCheckTests(Fixture):
 
 
 EVIDENCE = Path(__file__).parent.parent / "evidence"
-PAIRS = {  # on-chain code -> candidate, as in evidence/UPGRADE_TESTNET.md
+WASM = EVIDENCE / "wasm"
+# on-chain code -> candidate, as read on testnet right before each live upgrade
+# (evidence/UPGRADE_TESTNET.md, evidence/SWARM_JOBS_TESTNET.md); the candidates are the committed wasm files.
+PAIRS = {
     "n06_to_n10": ("c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617",
                    "8526195a51a5f5d94f15fab7df1c685804eb419a01dc1a734ac1c76d6220e079",
                    "upgrade-with-migrate-report-ci.json", "upgrade-code-only-report-ci.json",
@@ -742,34 +745,33 @@ PAIRS = {  # on-chain code -> candidate, as in evidence/UPGRADE_TESTNET.md
                         "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013",
                         "escrow-upgrade-with-migrate-report-ci.json", "escrow-upgrade-code-only-report-ci.json",
                         "escrow_v2"),
+    "swarm_jobs_v1_to_v2": ("bcace58397f2ee597dd5687187ea9e178e3cd5405dfdb810553214e416a9a92b",
+                            "5dbcf8cd767c096c3e207e8c804e5f950bc5460de8be0e6e4132426009d33ba5",
+                            "swarm-jobs-upgrade-with-migrate-report-ci.json",
+                            "swarm-jobs-upgrade-code-only-report-ci.json",
+                            "swarm_jobs_v2"),
 }
 
 
 class ShippedEvidenceTests(unittest.TestCase):
-    """The CI reports committed under evidence/ must keep their verdicts: the with-migrate reports are
-    accepted as proofs, the code-only reports are rejected. The wasm files are not in the repository,
-    so the candidate hash is injected by stubbing ``sha256_file`` for the wasm path and the on-chain
-    hash by stubbing ``onchain_code_sha256`` (no network)."""
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.wasm = Path(self.tmp.name) / "candidate.wasm"
-        self.wasm.write_bytes(NEW)
+    """Offline replay of the gate on the committed evidence: the real committed wasm (evidence/wasm/), the
+    CI reports committed under evidence/ and the fixture crates. Only the on-chain read is replaced: the
+    account's code hash is the old-version hash recorded on testnet before each live upgrade, and any
+    network use fails the test. The with-migrate reports must be accepted as proofs of exactly that pair,
+    the code-only reports must be rejected."""
 
     def gate(self, pair: str, report_name: str):
-        from bumm_guard import gate as gate_mod
-        onchain, candidate, _, _, crate = PAIRS[pair]
-        real = gate_mod.sha256_file
-
-        def fake_sha(path):
-            return candidate if Path(path) == self.wasm else real(path)
-
-        with mock.patch("bumm_guard.gate.sha256_file", fake_sha), \
-                mock.patch("bumm_guard.gate.onchain_code_sha256", return_value=onchain), \
+        onchain, _, _, _, crate = PAIRS[pair]
+        with mock.patch("bumm_guard.gate.onchain_code_sha256", return_value=onchain), \
                 mock.patch("urllib.request.urlopen", side_effect=AssertionError("network used")):
-            return run_cli("gate", str(FIXTURES / crate), "--wasm", str(self.wasm), "--account", "demo.testnet",
-                           "--simulate-report", str(EVIDENCE / report_name), "--dry-run")
+            return run_cli("gate", str(FIXTURES / crate), "--wasm", str(WASM / f"{crate}.wasm"),
+                           "--account", "demo.testnet", "--simulate-report", str(EVIDENCE / report_name),
+                           "--dry-run")
+
+    def test_committed_wasm_are_the_candidates(self):
+        for pair, (_, candidate, _, _, crate) in PAIRS.items():
+            with self.subTest(pair=pair):
+                self.assertEqual(hashlib.sha256((WASM / f"{crate}.wasm").read_bytes()).hexdigest(), candidate)
 
     def test_with_migrate_reports_are_proofs(self):
         for pair, (onchain, candidate, good, _, _) in PAIRS.items():

@@ -6,6 +6,26 @@
 scan -> fix -> simulate scenarios -> prove the upgrade of live state -> gate -> deploy -> ABI panel
 ```
 
+## For judges and AI agents
+
+One command checks the claims below; it never signs or sends anything and needs no NEAR account. From the repository root (Python 3.12+; `git clone` first):
+
+```sh
+scripts/judge-check.sh             # offline checks, then read-only testnet checks: about 1-2 minutes
+scripts/judge-check.sh --sandbox   # adds the real near-sandbox run (Linux, or macOS arm64, with cargo; cold build about 10 minutes)
+```
+
+Each check prints PASS, FAIL or SKIP with its reason, then a summary; exit `0` means nothing failed. Without internet the testnet checks are skipped with the reason, not failed. `--offline` runs only the offline group; `--sandbox --docker` runs the sandbox group in a Linux container (for macOS x86_64, where near-sandbox has no native binary). The same script runs on clean runners in the [`judge-replay`](https://github.com/GodBooster/bumm-guard/actions/workflows/judge-replay.yml) workflow on every push to `main` (ubuntu 24.04 with the "Try it" steps below run literally, macOS arm64, a Linux container, and a run with the network removed); its logs are the evidence for what your machine cannot run. Agents: see also [`AGENTS.md`](AGENTS.md).
+
+| claim | check | needs |
+|---|---|---|
+| The committed wasm files are byte-identical to the code on the testnet accounts | A3 (`evidence/wasm/SHA256SUMS`), B1-B3 | offline / internet |
+| Rule-pack finds the three NEAR defect classes; the gate blocks a crate with a high finding | A4, A5 | offline |
+| The gate takes a passing upgrade scenario as proof of exactly one pair (on-chain sha256 → candidate sha256), refuses a failing one, and prints the deploy command with `migrate` in the same batch | A7: the gate CLI on the committed CI reports and committed wasm for all three pairs; only the account's code hash is replaced, by the value **recorded** on testnet before each live upgrade (dates printed) | offline |
+| Three live testnet upgrades kept the state made before them; the jobs contract paid an agent after review | B1-B3 (`gate --verify-deployed` with smoke views) | internet |
+| The gate on the account kept for the demo video prints the proven upgrade command (or `NO CHANGE` after the upgrade) | B4 | internet |
+| In a real near-sandbox a code-only upgrade breaks the state and deploy + `migrate` in one batch keeps it | C: the six upgrade scenarios on the committed wasm, then the gate on the reports this run produced (C7) | Linux or macOS arm64 with cargo, or Docker; otherwise the `judge-replay` and `ci` logs |
+
 **Deploy gate:** if the target account already runs code, the gate treats the deploy as an upgrade and refuses to print a command until a passing upgrade scenario proves exactly that pair (on-chain code sha256 → candidate wasm sha256); the printed command then repeats the proven `migrate` call in one batch; an account that already runs the candidate wasm gets `NO CHANGE` and no command. It does not execute the command by default; `--execute` is CLI-only, refuses anything but `--network testnet`, and does not exist in the MCP tool. Done live on testnet for both pairs (2026-11-03 and 2026-11-04): blocked without proof, passed with the migrate proof, and the state made before the upgrade survived (a registration; a 1 NEAR escrow deal) ([`evidence/UPGRADE_TESTNET.md`](evidence/UPGRADE_TESTNET.md)).
 
 ## Why this is shown for NEAR Borsh state

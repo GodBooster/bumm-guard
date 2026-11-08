@@ -1,0 +1,88 @@
+name: judge-replay
+
+# Replays what a judge or an AI agent would run from the README, on clean runners with no cache:
+#   ubuntu   the README "Try it" steps literally, then scripts/judge-check.sh --sandbox
+#            (bumm-sim built cold, the six upgrade scenarios run in near-sandbox on the committed wasm)
+#   macos    scripts/judge-check.sh --sandbox natively on macOS arm64 (Apple Silicon)
+#   docker   scripts/judge-check.sh --sandbox --docker (the path for macOS x86_64)
+#   offline  scripts/judge-check.sh with the network removed: testnet checks must skip, not fail
+on:
+  push:
+    branches: [main, judge-ready]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu:
+    name: README steps + sandbox, clean ubuntu 24.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: README "Try it" steps 1-7, literally (system python3 of Ubuntu 24.04, venv as the README says)
+        run: |
+          set +e
+          expect() { want=$1; shift; echo "\$ $*"; "$@"; got=$?; echo "exit $got (README: $want)"; test "$got" -eq "$want" || exit 1; }
+          python3 --version
+          python3 -m venv .venv && . .venv/bin/activate || exit 1
+          python3 -m pip install -e . || exit 1
+          expect 0 python3 -m bumm_guard --version
+          expect 1 python3 -m bumm_guard scan tests/fixtures/near/d1_vuln
+          expect 1 python3 -m bumm_guard fix tests/fixtures/near/d1_vuln
+          cp -R tests/fixtures/near/d1_vuln /tmp/d1_fix
+          expect 0 python3 -m bumm_guard fix /tmp/d1_fix --apply
+          expect 0 python3 -m bumm_guard scan /tmp/d1_fix
+          expect 3 python3 -m bumm_guard gate tests/fixtures/near/d1_vuln
+          cp -R tests/fixtures/near/d1_safe /tmp/d1_safe
+          expect 0 python3 -m bumm_guard gate /tmp/d1_safe --wasm contract.wasm --account demo.testnet
+          expect 0 python3 -m bumm_guard simulate scenarios/upgrade/n06_*.json --validate-only
+          test -z "$(git status --porcelain --untracked-files=no)" || { git status; exit 1; }   # the repo fixtures stay untouched
+      - name: scripts/judge-check.sh --sandbox (offline + testnet + real near-sandbox, cold build)
+        run: scripts/judge-check.sh --sandbox
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: judge-reports-ubuntu
+          path: .bumm-guard/judge/
+
+  macos:
+    name: sandbox natively on macOS arm64
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: scripts/judge-check.sh --sandbox
+        run: |
+          uname -sm
+          scripts/judge-check.sh --sandbox
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: judge-reports-macos-arm64
+          path: .bumm-guard/judge/
+
+  docker:
+    name: sandbox in a Linux container (the macOS x86_64 path)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: scripts/judge-check.sh --sandbox --docker
+        run: scripts/judge-check.sh --sandbox --docker
+
+  offline:
+    name: no network (testnet checks skip with a reason)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: scripts/judge-check.sh in a network namespace without interfaces
+        run: |
+          sudo unshare --net -- sudo -u "$USER" env "PATH=$PATH" HOME="$HOME" scripts/judge-check.sh | tee judge.log
+          grep -q '^SKIP  B1 .*unreachable' judge.log
+          grep -q '^PASS  A7 ' judge.log
