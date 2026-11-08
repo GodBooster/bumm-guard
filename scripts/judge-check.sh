@@ -102,12 +102,12 @@ echo "logs and reports: .bumm-guard/judge/"
 echo; echo "== A. offline (no network, no Rust, no account)"
 check A1 "Python is 3.12 or newer" 0 "" -- "$PY" -c 'import sys; print(sys.version); sys.exit(sys.version_info < (3, 12))'
 check A2 "CLI runs from the repository root without installing" 0 "^bumm-guard [0-9]" -- "$PY" -m bumm_guard --version
-check A3 "committed wasm files equal evidence/wasm/SHA256SUMS (the files deployed on testnet)" 0 "swarm_jobs_v2.wasm: OK" -- sha_check
+check A3 "committed wasm files equal evidence/wasm/SHA256SUMS (recorded as the deployed files; B1-B3 compare them with the chain)" 0 "swarm_jobs_v2.wasm: OK" -- sha_check
 check A4 "rule-pack: the fixtures give exactly one finding per rule, exit 1" 1 "BG-NEAR-003" -- scan_three_rules
 check A5 "deploy gate blocks a crate with a high finding, exit 3" 3 "DEPLOY BLOCKED" -- "$PY" -m bumm_guard gate tests/fixtures/near/d1_vuln --dry-run
 check A6 "all 21 scenario files are valid (format check, nothing executed)" 0 "^21 scenario file\(s\) valid" -- "$PY" -m bumm_guard simulate scenarios/*/*.json --validate-only
 check A7 "gate replayed offline on the committed CI reports and wasm: migrate proofs pass, code-only refused (3 pairs; on-chain hash RECORDED)" 0 "all pairs as expected" -- "$PY" scripts/replay_gate_offline.py
-check A8 "unit tests" 0 "^OK" -- "$PY" -m unittest discover -s tests
+check A8 "unit tests (with cargo on PATH, two of them also run cargo check --offline on fixture copies)" 0 "^OK" -- "$PY" -m unittest discover -s tests
 if command -v node >/dev/null 2>&1; then
   check A9 "ABI panel tests (node)" 0 "# fail 0" -- node --test ui/test
 else

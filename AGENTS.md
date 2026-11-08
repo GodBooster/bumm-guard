@@ -11,7 +11,7 @@ scripts/judge-check.sh --sandbox   # also the real near-sandbox run (Linux, or m
 scripts/judge-check.sh --sandbox --docker   # the same in a Linux container (macOS x86_64)
 ```
 
-Every check is labelled (`A*` offline, `B*` testnet read-only, `C*` near-sandbox) and printed as PASS, FAIL or SKIP with the reason; the exit code is 0 when nothing failed. The same script runs on clean runners in the `judge-replay` workflow (`.github/workflows/judge-replay.yml`: ubuntu with the README steps run literally, macOS arm64, a Linux container, and a run with the network removed), so its logs are the evidence for whatever your machine cannot run.
+Every check is labelled (`A*` offline, `B*` testnet read-only, `C*` near-sandbox) and printed as PASS, FAIL or SKIP with the reason; the exit code is 0 when nothing failed. If `cargo` is on PATH, two unit tests in A8 run `cargo check --offline` on patched fixture copies (no download); remove cargo from PATH if you must not run it. The same script runs on clean runners in the `judge-replay` workflow (`.github/workflows/judge-replay.yml`: ubuntu with the README steps run literally, macOS arm64, a Linux container, and a run with the network removed), so its logs are the evidence for whatever your machine cannot run.
 
 | claim | check | needs |
 |---|---|---|
