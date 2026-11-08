@@ -1,0 +1,260 @@
+{
+  "tool": "bumm-guard",
+  "version": "0.4.0",
+  "runner": "bumm-sim 0.4.0",
+  "wasm_sha256": "174884d6b68d98fb0a375d38864e39ad8c864a6db8e8370f4e59aedbd1330f05",
+  "upgrade_wasm_sha256": "d3446ab320b96a8331a84496609bb7245e93f60b8dc6a5197fdd0b0de3d36e1b",
+  "scenario_sha256": "52b438e85289ea55f5eb8e572e19f48af423b45ee8eeaecfa88f3fac8d1ca9b1",
+  "sandbox": {
+    "near_workspaces": "0.24.0",
+    "near_sandbox": "0.4.0"
+  },
+  "scenarios": [
+    {
+      "name": "Upgrade a plain-struct build of the near-sdk-rs versioned example to the official code (code-only, no migrate): deposits must stay readable",
+      "file": "scenarios/upgrade/official_versioned_plain_to_v1_code_only.json",
+      "scenario_sha256": "52b438e85289ea55f5eb8e572e19f48af423b45ee8eeaecfa88f3fac8d1ca9b1",
+      "wasm": "tests/fixtures/near_official/target/wasm32-unknown-unknown/release/versioned_plain.wasm",
+      "wasm_sha256": "174884d6b68d98fb0a375d38864e39ad8c864a6db8e8370f4e59aedbd1330f05",
+      "upgrade_wasm": "tests/fixtures/near_official/target/wasm32-unknown-unknown/release/versioned.wasm",
+      "upgrade_wasm_sha256": "d3446ab320b96a8331a84496609bb7245e93f60b8dc6a5197fdd0b0de3d36e1b",
+      "passed": false,
+      "duration_s": 7.4,
+      "accounts": {
+        "alice": "alice.test.near",
+        "bob": "bob.test.near",
+        "carol": "carol.test.near",
+        "contract": "contract.test.near"
+      },
+      "steps": [
+        {
+          "index": 0,
+          "kind": "call",
+          "method": "deposit",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.704,
+            "logs": [
+              "alice.test.near deposited 1.00 NEAR yNEAR"
+            ]
+          }
+        },
+        {
+          "index": 1,
+          "kind": "call",
+          "method": "deposit",
+          "by": "bob",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.738,
+            "logs": [
+              "bob.test.near deposited 2.00 NEAR yNEAR"
+            ]
+          }
+        },
+        {
+          "index": 2,
+          "kind": "view",
+          "method": "get_deposit",
+          "passed": true,
+          "expected": {
+            "equals": "1000000000000000000000000"
+          },
+          "actual": {
+            "status": "success",
+            "value": "1000000000000000000000000"
+          }
+        },
+        {
+          "index": 3,
+          "kind": "view",
+          "method": "get_deposit",
+          "passed": true,
+          "expected": {
+            "equals": "2000000000000000000000000"
+          },
+          "actual": {
+            "status": "success",
+            "value": "2000000000000000000000000"
+          }
+        },
+        {
+          "index": 4,
+          "kind": "upgrade",
+          "by": "contract",
+          "wasm": "tests/fixtures/near_official/target/wasm32-unknown-unknown/release/versioned.wasm",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 6.828,
+            "code_sha256": "d3446ab320b96a8331a84496609bb7245e93f60b8dc6a5197fdd0b0de3d36e1b"
+          }
+        },
+        {
+          "index": 5,
+          "kind": "view",
+          "method": "get_nonce",
+          "passed": false,
+          "expected": {
+            "equals": 0
+          },
+          "actual": {
+            "status": "failure",
+            "error": "unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })",
+            "error_detail": "wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })"
+          },
+          "reason": "expected success, got failure: unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })"
+        },
+        {
+          "index": 6,
+          "kind": "view",
+          "method": "get_deposit",
+          "passed": false,
+          "expected": {
+            "equals": "1000000000000000000000000"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })",
+            "error_detail": "wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })"
+          },
+          "reason": "expected success, got failure: unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })"
+        },
+        {
+          "index": 7,
+          "kind": "view",
+          "method": "get_deposit",
+          "passed": false,
+          "expected": {
+            "equals": "2000000000000000000000000"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })",
+            "error_detail": "wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })"
+          },
+          "reason": "expected success, got failure: unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })"
+        },
+        {
+          "index": 8,
+          "kind": "call",
+          "method": "deposit",
+          "by": "carol",
+          "passed": false,
+          "expected": "ok",
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Cannot deserialize the contract state.\")",
+            "gas_burnt_tgas": 1.826
+          },
+          "reason": "expected success, got failure: Action #0: ExecutionError(\"Smart contract panicked: Cannot deserialize the contract state.\")"
+        },
+        {
+          "index": 9,
+          "kind": "view",
+          "method": "get_nonce",
+          "passed": false,
+          "expected": {
+            "equals": 1
+          },
+          "actual": {
+            "status": "failure",
+            "error": "unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })",
+            "error_detail": "wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })"
+          },
+          "reason": "expected success, got failure: unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })"
+        },
+        {
+          "index": 10,
+          "kind": "view",
+          "method": "get_deposit",
+          "passed": false,
+          "expected": {
+            "equals": "3000000000000000000000000"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })",
+            "error_detail": "wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })"
+          },
+          "reason": "expected success, got failure: unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })"
+        },
+        {
+          "index": 11,
+          "kind": "view",
+          "method": "get_deposit",
+          "passed": false,
+          "expected": {
+            "equals": "1000000000000000000000000"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })",
+            "error_detail": "wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })"
+          },
+          "reason": "expected success, got failure: unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })"
+        },
+        {
+          "index": 12,
+          "kind": "call",
+          "method": "deposit",
+          "by": "alice",
+          "passed": false,
+          "expected": "ok",
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Cannot deserialize the contract state.\")",
+            "gas_burnt_tgas": 1.826
+          },
+          "reason": "expected success, got failure: Action #0: ExecutionError(\"Smart contract panicked: Cannot deserialize the contract state.\")"
+        },
+        {
+          "index": 13,
+          "kind": "view",
+          "method": "get_deposit",
+          "passed": false,
+          "expected": {
+            "equals": "2000000000000000000000000"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })",
+            "error_detail": "wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })"
+          },
+          "reason": "expected success, got failure: unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })"
+        },
+        {
+          "index": 14,
+          "kind": "view",
+          "method": "get_nonce",
+          "passed": false,
+          "expected": {
+            "equals": 2
+          },
+          "actual": {
+            "status": "failure",
+            "error": "unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })",
+            "error_detail": "wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })"
+          },
+          "reason": "expected success, got failure: unable to fulfill the query request: wasm execution failed with error: HostError(GuestPanic { panic_msg: \"Cannot deserialize the contract state.\" })"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "scenarios": 1,
+    "passed": 0,
+    "failed": 1,
+    "steps": 15,
+    "steps_failed": 10
+  }
+}

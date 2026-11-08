@@ -195,11 +195,11 @@ PYEOF
   # third-party pairs: the official near-sdk-rs example examples/versioned (tests/fixtures/near_official/NOTICE.md)
   check C7 "sandbox: official near-sdk-rs versioned example, V0 era -> official code, code only, passes without migrate" 0 "1 scenario\(s\): 1 passed, 0 failed" -- \
     "$PY" -m bumm_guard simulate scenarios/upgrade/official_versioned_v0_to_v1_code_only.json --runner contracts/target/release/bumm-sim \
-      --wasm evidence/wasm/versioned_v0.wasm --upgrade-wasm evidence/wasm/versioned.wasm --out "$OUT/official-versioned-v0-upgrade-report.json"
+      --wasm evidence/wasm/versioned_v0.wasm --upgrade-wasm evidence/wasm/versioned.wasm --out "$OUT/official-versioned-v0-upgrade-report-ci.json"
   check C8 "sandbox: plain-struct build -> official versioned code, code only, breaks the state after the upgrade step (exit 1 expected)" 1 "^shape: " -- \
-    code_only "$OUT/official-versioned-plain-upgrade-report.json" "$PY" -m bumm_guard simulate scenarios/upgrade/official_versioned_plain_to_v1_code_only.json \
+    code_only "$OUT/official-versioned-plain-upgrade-report-ci.json" "$PY" -m bumm_guard simulate scenarios/upgrade/official_versioned_plain_to_v1_code_only.json \
       --runner contracts/target/release/bumm-sim --wasm evidence/wasm/versioned_plain.wasm --upgrade-wasm evidence/wasm/versioned.wasm \
-      --out "$OUT/official-versioned-plain-upgrade-report.json"
+      --out "$OUT/official-versioned-plain-upgrade-report-ci.json"
   check C9 "gate on the reports this run produced: migrate proofs pass, code-only refused, the official V0 proof passes without migrate" 0 "all pairs as expected" -- \
     "$PY" scripts/replay_gate_offline.py --reports-dir "$OUT"
 fi

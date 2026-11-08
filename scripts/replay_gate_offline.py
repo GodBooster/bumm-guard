@@ -62,11 +62,11 @@ SANDBOX_ACCOUNT = "sandbox-only-versioned.testnet"   # placeholder, never contac
 SANDBOX_PAIRS = {
     "official near-sdk-rs versioned: V0 era -> official code": (
         "versioned_v0", "tests/fixtures/near_official/versioned", "versioned",
-        [("official-versioned-v0-upgrade-report.json", 0)]),
+        [("official-versioned-v0-upgrade-report-ci.json", 0)]),
     "official near-sdk-rs versioned: plain struct -> official code": (
         "versioned_plain", "tests/fixtures/near_official/versioned", "versioned",
-        [("official-versioned-plain-upgrade-report.json", 3),
-         ("official-versioned-v0-upgrade-report.json", 3)]),
+        [("official-versioned-plain-upgrade-report-ci.json", 3),
+         ("official-versioned-v0-upgrade-report-ci.json", 3)]),
 }
 
 

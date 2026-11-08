@@ -865,3 +865,77 @@ class ShippedEvidenceTests(unittest.TestCase):
         code, out, err = self.gate("escrow_v1_to_v2", tmp / good)
         self.assertEqual(code, 3, out + err)
         self.assertIn("summary.steps_failed is 3 but the scenarios show 0", out)
+
+
+OFFICIAL = Path(__file__).parent / "fixtures" / "near_official"
+
+
+def git_blob_id(path: Path) -> str:
+    data = path.read_bytes()
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+class OfficialExampleEvidenceTests(unittest.TestCase):
+    """The third-party pairs built from the official near-sdk-rs example examples/versioned
+    (tests/fixtures/near_official/NOTICE.md), sandbox only. The "on-chain" hash is the old wasm the
+    sandbox ran. A passing code-only report is a proof without any migrate call; a failing one is not."""
+
+    V0, PLAIN, NEW = (hashlib.sha256((WASM / f"{n}.wasm").read_bytes()).hexdigest()
+                      for n in ("versioned_v0", "versioned_plain", "versioned"))
+
+    def gate(self, onchain: str, report: Path):
+        with mock.patch("bumm_guard.gate.onchain_code_sha256", return_value=onchain), \
+                mock.patch("urllib.request.urlopen", side_effect=AssertionError("network used")):
+            return run_cli("gate", str(OFFICIAL / "versioned"), "--wasm", str(WASM / "versioned.wasm"),
+                           "--account", "demo.testnet", "--simulate-report", str(report), "--dry-run")
+
+    def test_vendored_example_is_the_upstream_files(self):
+        # git blob ids of examples/versioned at near-sdk-rs 7476cbe4 (tag near-sdk-v5.17.2)
+        want = {"Cargo.toml": "e0f8f6076728d0b36f5ba2f4f2afb19da16c67bd",
+                "README.md": "8219ffd667a56c0bebe40cb6fdd2909dc995a6a5",
+                ".cargo/config.toml": "dadf1d355a9f4576ab064e3e4be787a1dccc741d",
+                "src/lib.rs": "7b3d55e1249294d52c99046954bcb179ced95c5f"}
+        files = sorted(p.relative_to(OFFICIAL / "versioned").as_posix()
+                       for p in (OFFICIAL / "versioned").rglob("*") if p.is_file() and ".bumm-guard" not in p.parts)
+        self.assertEqual(files, sorted(want))
+        for name, blob in want.items():
+            with self.subTest(file=name):
+                self.assertEqual(git_blob_id(OFFICIAL / "versioned" / name), blob)
+        self.assertEqual((OFFICIAL / "UPSTREAM_COMMIT").read_text().strip(), "7476cbe4328571322094f9e463f1dc9602933cb3")
+
+    def test_reports_are_bound_to_the_committed_wasm(self):
+        for name, old in (("official-versioned-v0-upgrade-report-ci.json", self.V0),
+                          ("official-versioned-plain-upgrade-report-ci.json", self.PLAIN)):
+            with self.subTest(report=name):
+                rep = json.loads((EVIDENCE / name).read_text())
+                self.assertEqual((rep["wasm_sha256"], rep["upgrade_wasm_sha256"]), (old, self.NEW))
+
+    def test_v0_report_is_a_code_only_proof(self):
+        code, out, err = self.gate(self.V0, EVIDENCE / "official-versioned-v0-upgrade-report-ci.json")
+        self.assertEqual(code, 0, out + err)
+        self.assertIn(f"upgrade of demo.testnet: {self.V0} -> {self.NEW}, proved by passing scenario", out)
+        self.assertIn("proved after upgrade (10 step(s))", out)
+        self.assertNotIn("migration migrate", out)
+        self.assertIn("use-file", out)
+        self.assertIn("without-init-call", out)
+
+    def test_plain_struct_report_is_refused(self):
+        code, out, err = self.gate(self.PLAIN, EVIDENCE / "official-versioned-plain-upgrade-report-ci.json")
+        self.assertEqual(code, 3, out + err)
+        self.assertIn(f"no passing upgrade scenario proves {self.PLAIN} -> {self.NEW}", out)
+        self.assertNotIn("near contract deploy", out)
+
+    def test_v0_proof_does_not_cover_the_plain_struct_code(self):
+        code, out, err = self.gate(self.PLAIN, EVIDENCE / "official-versioned-v0-upgrade-report-ci.json")
+        self.assertEqual(code, 3, out + err)
+        self.assertNotIn("near contract deploy", out)
+
+    def test_forged_plain_struct_report_is_refused(self):
+        rep = json.loads((EVIDENCE / "official-versioned-plain-upgrade-report-ci.json").read_text())
+        rep["scenarios"][0]["passed"] = True
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        (tmp / "forged.json").write_text(json.dumps(rep))
+        code, out, err = self.gate(self.PLAIN, tmp / "forged.json")
+        self.assertEqual(code, 3, out + err)
+        self.assertIn("the report contradicts itself (edited?)", out)

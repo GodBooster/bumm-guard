@@ -38,11 +38,12 @@ Everything in the repository exists to make this failure visible before deploy a
                  contracts/sim-runner  (bumm-sim, Rust 1.99, near-workspaces 0.24)
                  contracts/sandbox     (near-workspaces test for BG-NEAR-001)
                  tests/fixtures/near   (13 crates, rustc 1.85.0 pinned)
-                 scenarios/            (21 JSON scenarios: 6 upgrades, 3 for swarm_jobs v1, 4 for swarm_jobs v2)
+                 tests/fixtures/near_official (near-sdk-rs examples/versioned, unmodified, + 2 old variants; built in CI from the pinned commit)
+                 scenarios/            (23 JSON scenarios: 8 upgrades, 3 for swarm_jobs v1, 4 for swarm_jobs v2)
                  ui/                   (static ABI panel, about 840 lines JS/HTML/CSS)
                  clients/claude-plugin (Claude Code plugin + skill)
                  .github/workflows     (ci.yml 5 jobs, evaluate.yml dispatch)
-                 evidence/             (13 JSON reports, 5 markdown records, 6 wasm files with SHA256SUMS, the review report of the paid job)
+                 evidence/             (15 JSON reports, 5 markdown records, 9 wasm files with SHA256SUMS, the review report of the paid job)
 ```
 
 ### 2.1 Static rule-pack (`bumm_guard/scanner.py`, `rulepack/`, `fix/`)
@@ -113,7 +114,7 @@ A static page (no backend) that loads a contract ABI and calls view methods thro
 2. `ABI panel tests (node)`.
 3. `fixtures compile (cargo check, wasm32)`: `--workspace --locked`, host and `wasm32-unknown-unknown`, pinned toolchain; the `swarm_jobs` unit tests (28) with a stable rustc.
 4. `sandbox tests (near-workspaces, linux only)`: `contracts/sandbox` runs the BG-NEAR-001 exploit against the vulnerable fixture and its absence against the fixed one; the 18 `bumm-sim` lib tests and the upgrade sandbox test.
-5. `scenario runner (bumm-sim on near-sandbox, linux only)`: builds N06, N10, escrow v1, v2, `swarm_jobs` and `swarm_jobs_v2` (rustc 1.85.0) and `bumm-sim` (1.99.1); runs the N06, escrow, `swarm_jobs` and `swarm_jobs_v2` fresh scenarios; runs the gate against each report (fresh deploy, binding by hash); runs the six upgrade scenarios, three expected to pass, three expected to fail *after* the upgrade step with the exact panic string; checks the six wasm files it built against `evidence/wasm/SHA256SUMS` (hash guard); uploads `simulate-report` and the six wasm files as artifacts. **The wasm that CI simulated is the wasm the gate later accepts**: a local rebuild differs in bytes, so the artifact (now also committed in `evidence/wasm/`) is the deployable.
+5. `scenario runner (bumm-sim on near-sandbox, linux only)`: builds N06, N10, escrow v1, v2, `swarm_jobs` and `swarm_jobs_v2` (rustc 1.85.0) and `bumm-sim` (1.99.1); runs the N06, escrow, `swarm_jobs` and `swarm_jobs_v2` fresh scenarios; runs the gate against each report (fresh deploy, binding by hash); runs the six upgrade scenarios, three expected to pass, three expected to fail *after* the upgrade step with the exact panic string; checks the six wasm files it built against `evidence/wasm/SHA256SUMS` (hash guard); then builds the official near-sdk-rs example `examples/versioned` from its pinned commit with our two old variants (`scripts/build_official_example.sh`, `tests/fixtures/near_official/NOTICE.md`), runs its two code-only upgrade scenarios (V0 era expected to pass without `migrate`, plain struct expected to fail after the upgrade step) and checks those three wasm files too; uploads `simulate-report` and the nine wasm files as artifacts. **The wasm that CI simulated is the wasm the gate later accepts**: a local rebuild differs in bytes, so the artifact (now also committed in `evidence/wasm/`) is the deployable.
 
 `evaluate.yml` (manual dispatch; inputs `crate_dir`, `scenarios`, `upgrade=candidate`, `label`, `toolchain`) builds any crate from any branch and scores it with the same runner. It scored the A/B pilot.
 
@@ -159,9 +160,9 @@ Nothing in the repository holds or uses a key. In every case below the gate prin
 | `bumm_guard/` | Python package: `cli.py`, `gate.py`, `simulate.py`, `mcp_server.py`, `review.py`, `verify.py`, `storage.py`, `sanitize.py`, `scanner.py`, `model.py`, `rulepack/near/*`, `fix/*` (about 4 100 lines in all) |
 | `contracts/sim-runner/` | `bumm-sim` (Rust): scenario execution on near-workspaces; `tests/upgrade_sandbox.rs` |
 | `contracts/sandbox/` | near-workspaces test for BG-NEAR-001 |
-| `tests/` | 11 Python test modules, 302 tests; `tests/fixtures/near/` 13 crates (d1–d3 vuln/safe, proxy, N06, N10, escrow v1, v2, `swarm_jobs` v1, v2) |
-| `scenarios/` | 21 files: `n06/` (3), `n10/` (3 acceptance), `escrow/` (2), `upgrade/` (6), `swarm_jobs/` (3), `swarm_jobs_v2/` (4) |
-| `evidence/` | CI reports (6 JSON), testnet gate reports (3 JSON), `wasm/` (5 files + `SHA256SUMS`), `E2E_TESTNET.md`, `UPGRADE_TESTNET.md`, `SWARM_JOBS_TESTNET.md`, `AB_PILOT_N10.md`, `AB_TASK_N10.md` |
+| `tests/` | 11 Python test modules, 315 tests; `tests/fixtures/near/` 13 crates (d1–d3 vuln/safe, proxy, N06, N10, escrow v1, v2, `swarm_jobs` v1, v2); `tests/fixtures/near_official/` the official near-sdk-rs example `examples/versioned` (unmodified, MIT OR Apache-2.0) and our two old variants of it |
+| `scenarios/` | 23 files: `n06/` (3), `n10/` (3 acceptance), `escrow/` (2), `upgrade/` (8: three pairs of ours with and without `migrate`, two code-only upgrades to the official near-sdk-rs example), `swarm_jobs/` (3), `swarm_jobs_v2/` (4) |
+| `evidence/` | CI reports (11 JSON), testnet gate reports (3 JSON), the review report of the paid job, `wasm/` (9 files + `SHA256SUMS`), `E2E_TESTNET.md`, `UPGRADE_TESTNET.md`, `SWARM_JOBS_TESTNET.md`, `AB_PILOT_N10.md`, `AB_TASK_N10.md` |
 | `docs/` | `FORMATS.md` (normative), `SWARM_JOBS.md` (guarded jobs), `DEMO_AGENT.md` (agent rehearsal), `SUBMISSION.md` (form text, X post, video script), this file |
 | `clients/claude-plugin/` | plugin manifest, `.mcp.json`, skill `near-deploy-gate` |
 | `ui/` | ABI panel + node tests |
@@ -189,3 +190,4 @@ These are the places where the author expects disagreement or wants a second opi
 - 11-04 — live escrow v1→v2 upgrade; waitlist on testnet; video script v2; account for the recording; gate hardening (NO CHANGE, post-upgrade steps listed, proof needs a successful upgrade transaction, alias args blocked, owner-check recognition, smoke expectations); first version of this document.
 - 11-05 — submission texts aligned with the hash-bound thesis.
 - 11-06 — the four proven wasm files committed with `SHA256SUMS` and a CI hash guard; guarded jobs for agent swarms (`swarm_jobs` contract, scenarios, `review-job`, MCP `review_job`, `docs/SWARM_JOBS.md`), deployed on testnet with two jobs submitted; review fixes (NO CHANGE is a reject, RPC failure is not a verdict, report text cleaned before printing, evidence origin stated); documentation sweep; this document updated.
+- 11-08 — third-party evidence: the official near-sdk-rs example `examples/versioned` (commit `7476cbe4`, tag `near-sdk-v5.17.2`, unmodified) as the new code of two sandbox-only code-only upgrades: from its V0 era it passes 15/15 without `migrate` and the gate accepts it as a proof; from a plain-struct build it fails 5/15 with `Cannot deserialize the contract state.` and the gate refuses it.

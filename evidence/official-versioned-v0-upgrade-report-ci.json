@@ -1,0 +1,248 @@
+{
+  "tool": "bumm-guard",
+  "version": "0.4.0",
+  "runner": "bumm-sim 0.4.0",
+  "wasm_sha256": "119e849df81d2789a4eb8b546b139254d70d8fc8d8c663026af1d1bae4cf5cb1",
+  "upgrade_wasm_sha256": "d3446ab320b96a8331a84496609bb7245e93f60b8dc6a5197fdd0b0de3d36e1b",
+  "scenario_sha256": "e175c29fca1595e794f680f52459bf5672afb93928125c2a7b94472e96daa3ce",
+  "sandbox": {
+    "near_workspaces": "0.24.0",
+    "near_sandbox": "0.4.0"
+  },
+  "scenarios": [
+    {
+      "name": "Upgrade the official near-sdk-rs versioned example from its V0 era to the official code (code-only, no migrate): V0 deposits stay readable, the first new deposit moves the state to V1",
+      "file": "scenarios/upgrade/official_versioned_v0_to_v1_code_only.json",
+      "scenario_sha256": "e175c29fca1595e794f680f52459bf5672afb93928125c2a7b94472e96daa3ce",
+      "wasm": "tests/fixtures/near_official/target/wasm32-unknown-unknown/release/versioned_v0.wasm",
+      "wasm_sha256": "119e849df81d2789a4eb8b546b139254d70d8fc8d8c663026af1d1bae4cf5cb1",
+      "upgrade_wasm": "tests/fixtures/near_official/target/wasm32-unknown-unknown/release/versioned.wasm",
+      "upgrade_wasm_sha256": "d3446ab320b96a8331a84496609bb7245e93f60b8dc6a5197fdd0b0de3d36e1b",
+      "passed": true,
+      "duration_s": 3.9,
+      "accounts": {
+        "alice": "alice.test.near",
+        "bob": "bob.test.near",
+        "carol": "carol.test.near",
+        "contract": "contract.test.near"
+      },
+      "steps": [
+        {
+          "index": 0,
+          "kind": "call",
+          "method": "deposit",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.705,
+            "logs": [
+              "alice.test.near deposited 1.00 NEAR yNEAR"
+            ]
+          }
+        },
+        {
+          "index": 1,
+          "kind": "call",
+          "method": "deposit",
+          "by": "bob",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.739,
+            "logs": [
+              "bob.test.near deposited 2.00 NEAR yNEAR"
+            ]
+          }
+        },
+        {
+          "index": 2,
+          "kind": "view",
+          "method": "get_deposit",
+          "passed": true,
+          "expected": {
+            "equals": "1000000000000000000000000"
+          },
+          "actual": {
+            "status": "success",
+            "value": "1000000000000000000000000"
+          }
+        },
+        {
+          "index": 3,
+          "kind": "view",
+          "method": "get_deposit",
+          "passed": true,
+          "expected": {
+            "equals": "2000000000000000000000000"
+          },
+          "actual": {
+            "status": "success",
+            "value": "2000000000000000000000000"
+          }
+        },
+        {
+          "index": 4,
+          "kind": "upgrade",
+          "by": "contract",
+          "wasm": "tests/fixtures/near_official/target/wasm32-unknown-unknown/release/versioned.wasm",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 6.828,
+            "code_sha256": "d3446ab320b96a8331a84496609bb7245e93f60b8dc6a5197fdd0b0de3d36e1b"
+          }
+        },
+        {
+          "index": 5,
+          "kind": "view",
+          "method": "get_nonce",
+          "passed": true,
+          "expected": {
+            "equals": 0
+          },
+          "actual": {
+            "status": "success",
+            "value": 0
+          }
+        },
+        {
+          "index": 6,
+          "kind": "view",
+          "method": "get_deposit",
+          "passed": true,
+          "expected": {
+            "equals": "1000000000000000000000000"
+          },
+          "actual": {
+            "status": "success",
+            "value": "1000000000000000000000000"
+          }
+        },
+        {
+          "index": 7,
+          "kind": "view",
+          "method": "get_deposit",
+          "passed": true,
+          "expected": {
+            "equals": "2000000000000000000000000"
+          },
+          "actual": {
+            "status": "success",
+            "value": "2000000000000000000000000"
+          }
+        },
+        {
+          "index": 8,
+          "kind": "call",
+          "method": "deposit",
+          "by": "carol",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.751,
+            "logs": [
+              "carol.test.near deposited 3.00 NEAR yNEAR"
+            ]
+          }
+        },
+        {
+          "index": 9,
+          "kind": "view",
+          "method": "get_nonce",
+          "passed": true,
+          "expected": {
+            "equals": 1
+          },
+          "actual": {
+            "status": "success",
+            "value": 1
+          }
+        },
+        {
+          "index": 10,
+          "kind": "view",
+          "method": "get_deposit",
+          "passed": true,
+          "expected": {
+            "equals": "3000000000000000000000000"
+          },
+          "actual": {
+            "status": "success",
+            "value": "3000000000000000000000000"
+          }
+        },
+        {
+          "index": 11,
+          "kind": "view",
+          "method": "get_deposit",
+          "passed": true,
+          "expected": {
+            "equals": "1000000000000000000000000"
+          },
+          "actual": {
+            "status": "success",
+            "value": "1000000000000000000000000"
+          }
+        },
+        {
+          "index": 12,
+          "kind": "call",
+          "method": "deposit",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 1.754,
+            "logs": [
+              "alice.test.near deposited 1.00 NEAR yNEAR"
+            ]
+          }
+        },
+        {
+          "index": 13,
+          "kind": "view",
+          "method": "get_deposit",
+          "passed": true,
+          "expected": {
+            "equals": "2000000000000000000000000"
+          },
+          "actual": {
+            "status": "success",
+            "value": "2000000000000000000000000"
+          }
+        },
+        {
+          "index": 14,
+          "kind": "view",
+          "method": "get_nonce",
+          "passed": true,
+          "expected": {
+            "equals": 2
+          },
+          "actual": {
+            "status": "success",
+            "value": 2
+          }
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "scenarios": 1,
+    "passed": 1,
+    "failed": 0,
+    "steps": 15,
+    "steps_failed": 0
+  }
+}

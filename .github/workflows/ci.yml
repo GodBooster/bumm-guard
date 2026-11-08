@@ -306,8 +306,6 @@ jobs:
                 f"'Cannot deserialize element' ({len(views)} view steps, {len(calls)} call steps), as expected")
           EOF
       - name: build the official near-sdk-rs example examples/versioned (pinned commit, unmodified) and our two old variants (rustc 1.85.0)
-        env:
-          BUMM_OFFICIAL_NEW_LOCK: "1"
         run: scripts/build_official_example.sh
       - name: upgrade official example V0 era -> official code, code only (expected PASS without migrate)
         run: |

@@ -30,7 +30,7 @@ head="$(git -C "$WORK" rev-parse HEAD)"
 [ "$head" = "$COMMIT" ] || { echo "fetched $head, expected commit $COMMIT (a tag object id is not a commit id)" >&2; exit 1; }
 echo "near-sdk-rs at $COMMIT"
 
-diff -r "$D/versioned" "$WORK/examples/versioned"
+diff -r -x .bumm-guard "$D/versioned" "$WORK/examples/versioned"
 diff "$D/LICENSE-MIT" "$WORK/LICENSE-MIT"
 diff "$D/LICENSE-APACHE" "$WORK/LICENSE-APACHE"
 echo "tests/fixtures/near_official/versioned/ and the licences equal the upstream files"
