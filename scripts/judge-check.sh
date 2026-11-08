@@ -6,8 +6,8 @@
 #   scripts/judge-check.sh --offline   offline checks only
 #   scripts/judge-check.sh --sandbox   also build bumm-sim and run the six upgrade scenarios in a real
 #                                      near-sandbox on the committed wasm (Linux x86_64/aarch64 or
-#                                      macOS arm64; needs cargo; the cold runner build took 1m47s on a
-#                                      macOS arm64 and 5m32s on an ubuntu CI runner, and downloads Rust
+#                                      macOS arm64; needs cargo; the cold runner build took about 2 min on
+#                                      a macOS arm64 CI runner and 5.5-7 min on ubuntu, and downloads Rust
 #                                      crates and the near-sandbox binary)
 #   scripts/judge-check.sh --sandbox --docker
 #                                      the same inside a Linux container (for macOS x86_64, where
@@ -152,7 +152,7 @@ echo; echo "== C. real near-sandbox run of the upgrade scenarios"
 CI_NOTE="evidence instead: the judge-replay and ci workflows (README, 'For judges and AI agents') and the committed reports evidence/*-report-ci.json, checked offline by A7"
 os="$(uname -s)-$(uname -m)"
 if [ "$SANDBOX" = 0 ]; then
-  skip C "near-sandbox run" "not requested (pass --sandbox; cold runner build 2-6 min on CI machines). $CI_NOTE"
+  skip C "near-sandbox run" "not requested (pass --sandbox; cold runner build about 2 min on macOS arm64, about 7 min on Linux CI). $CI_NOTE"
 elif ! command -v cargo >/dev/null 2>&1; then
   skip C "near-sandbox run" "cargo not found (install rustup; contracts/rust-toolchain.toml pins 1.99.1). $CI_NOTE"
 elif [ "$os" = "Darwin-x86_64" ]; then
