@@ -171,6 +171,11 @@ def load_simulate_report(path: str, wasm_sha256: str) -> tuple[dict | None, list
         return None, [f"DEPLOY BLOCKED: simulate report has failing scenario(s): {names}"], 3
     if not rep["scenarios"]:
         return None, ["DEPLOY BLOCKED: simulate report contains no scenarios"], 3
+    why = _summary_inconsistency(rep) or next(
+        (f"scenario {clean(sc.get('name', '?'))!r} says it passed, but {w}"
+         for sc in rep["scenarios"] if isinstance(sc, dict) and (w := _scenario_inconsistency(sc))), None)
+    if why:
+        return None, [f"DEPLOY BLOCKED: simulate report contradicts itself (edited?): {why}"], 3
     return {"report": path, "passed": True, "scenarios": len(rep["scenarios"])}, [], 0
 
 
@@ -209,15 +214,73 @@ def _post_upgrade_steps(sc: dict, up_idx) -> list[dict]:
     return out
 
 
+def _scenario_inconsistency(sc: dict) -> str | None:
+    """Why a scenario that says ``passed: true`` contradicts its own trace, or ``None``. A report is
+    unsigned JSON, so the gate does not take the scenario flag on trust: the init call and every step
+    must say ``passed`` too, and each passed step must agree with what the chain answered (an ``ok`` or
+    value expectation needs ``status: success``; a ``fail_contains`` expectation needs a failure whose
+    error text contains it). This catches an edited verdict; a report fabricated end to end still
+    passes, so take reports from a run you control (README, "What the gate trusts")."""
+    if sc.get("error") is not None:
+        return "the scenario recorded an error"
+    init = sc.get("init")
+    if isinstance(init, dict) and (init.get("passed") is not True
+                                   or (init.get("actual") or {}).get("status") != "success"):
+        return "its init call did not pass"
+    steps = sc.get("steps")
+    if not isinstance(steps, list):
+        return "it has no list of steps"
+    for st in steps:
+        if not isinstance(st, dict) or st.get("passed") is not True:
+            idx = st.get("index") if isinstance(st, dict) else "?"
+            return f"step {clean(idx)} did not pass"
+        actual = st.get("actual") if isinstance(st.get("actual"), dict) else {}
+        status, expected = actual.get("status"), st.get("expected")
+        wants_failure = isinstance(expected, dict) and "fail_contains" in expected
+        if wants_failure:
+            text = f"{actual.get('error', '')}{actual.get('error_detail', '')}"
+            if status != "failure" or not isinstance(expected["fail_contains"], str) \
+                    or expected["fail_contains"] not in text:
+                return f"step {clean(st.get('index'))} is marked passed but did not fail as expected"
+        elif status != "success":
+            return f"step {clean(st.get('index'))} is marked passed but its status is {clean(status)}"
+    return None
+
+
+def _summary_inconsistency(rep: dict) -> str | None:
+    """Why the report's ``summary`` does not add up to its scenarios and steps, or ``None``."""
+    sm = rep.get("summary") if isinstance(rep.get("summary"), dict) else {}
+    scen = [sc for sc in rep.get("scenarios") or [] if isinstance(sc, dict)]
+    steps = [st for sc in scen for st in (sc.get("steps") or []) if isinstance(st, dict)]
+    want = {"failed": sum(1 for sc in scen if sc.get("passed") is not True),
+            "steps_failed": sum(1 for st in steps if st.get("passed") is not True)}
+    for key, value in want.items():
+        if sm.get(key) != value:
+            return (f"summary.{key} is {clean(json.dumps(sm.get(key)))} but the scenarios show {value}")
+    return None
+
+
+def _state_written_before(sc: dict, up_idx) -> bool:
+    """Did a ``call`` step succeed before the upgrade step? Without one, the old code never wrote
+    state beyond its init, and an upgrade proven on that state proves little about live data."""
+    return any(isinstance(st, dict) and st.get("kind") == "call" and _is_int(st.get("index"))
+               and _is_int(up_idx) and st["index"] < up_idx and st.get("passed") is True
+               and (st.get("actual") or {}).get("status") == "success"
+               for st in sc.get("steps") or [])
+
+
 def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | None, list[str]]:
     """The first passing scenario of a §3 report whose upgrade step goes from ``onchain`` (the
     scenario's ``wasm_sha256``) to ``candidate`` (``upgrade_wasm_sha256`` and the step's
     ``code_sha256``, which must be recorded), whose upgrade transaction succeeded (expectation
     ``"ok"`` and ``actual.status == "success"``: a rolled-back upgrade proves nothing) and that has
-    at least one step after the upgrade (otherwise nothing was proven on the migrated state).
+    at least one step after the upgrade (otherwise nothing was proven on the migrated state), at least
+    one successful ``call`` before it (state written by the old code), and whose trace and the report's
+    summary agree with its ``passed`` flag (``_scenario_inconsistency``, ``_summary_inconsistency``).
     Returns ``(upgrade block, notes)``; the block lists the steps after the upgrade in
     ``post_upgrade_steps`` (docs/FORMATS.md §4); notes explain near misses."""
     notes, proofs = [], []
+    bad_summary = _summary_inconsistency(rep)
     for sc in rep.get("scenarios") or []:
         if not isinstance(sc, dict) or not _upgrade_steps(sc):
             continue
@@ -247,6 +310,19 @@ def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | 
             continue
         if not sc.get("passed"):
             notes.append(f"upgrade scenario {name!r} for this pair did not pass")
+            continue
+        why = _scenario_inconsistency(sc)
+        if why:
+            notes.append(f"upgrade scenario {name!r} says it passed, but {why}: the report contradicts itself "
+                         "(edited?) and is not accepted as a proof")
+            continue
+        if bad_summary:
+            notes.append(f"upgrade scenario {name!r}: the report's {bad_summary} (edited?); not accepted as a proof")
+            continue
+        if not _state_written_before(sc, step.get("index")):
+            notes.append(f"upgrade scenario {name!r} makes no successful call before the upgrade: the old code "
+                         "wrote no state beyond its init, so the upgrade was not tested on stored data; add a "
+                         "state-changing call before the upgrade step")
             continue
         if step.get("method") and not isinstance(step.get("migrate"), dict):
             notes.append(f"upgrade scenario {name!r} has a migration call but the report does not record its "

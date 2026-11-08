@@ -248,6 +248,17 @@ class SimulateBindingTests(Base):
         rep.write_text(json.dumps(data))
         self.assertEqual(run_cli("gate", str(self.crate()), "--wasm", str(self.wasm), "--simulate-report", str(rep))[0], 3)
 
+    def test_fresh_report_with_a_forged_scenario_flag_blocks(self):
+        rep = self.root / "sim.json"
+        data = sim_report(names=("a",))
+        data["scenarios"][0]["steps"] = [{"index": 0, "kind": "call", "method": "register", "passed": False,
+                                          "expected": "ok", "actual": {"status": "failure", "error": "x"}}]
+        data["summary"].update(steps=1, steps_failed=1)   # summary adds up, the scenario verdict was edited
+        rep.write_text(json.dumps(data))
+        code, out, _ = run_cli("gate", str(self.crate()), "--wasm", str(self.wasm), "--simulate-report", str(rep))
+        self.assertEqual(code, 3, out)
+        self.assertIn("simulate report contradicts itself (edited?): scenario 'a' says it passed, but step 0 did not pass", out)
+
     def test_bad_inputs_exit_2(self):
         crate = str(self.crate())
         self.assertEqual(run_cli("gate", crate, "--wasm", str(self.wasm), "--simulate-report", "/nope.json")[0], 2)

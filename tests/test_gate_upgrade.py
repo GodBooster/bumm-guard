@@ -89,6 +89,10 @@ def upgrade_scenario(name="with migrate", frm=OLD_SHA, to=NEW_SHA, passed=True, 
     if after:  # the proof needs something checked on the migrated state
         steps.append({"index": 4, "kind": "view", "method": "get_registered_count", "passed": True,
                       "expected": {"equals": 2}, "actual": {"status": "success", "value": 2}})
+    # the old code wrote state before the upgrade (the gate refuses a proof made on init-only state); kept
+    # last in the list so that steps[0] stays the upgrade step for the tests that edit it
+    steps.append({"index": 2, "kind": "call", "method": "register", "by": "alice", "passed": True,
+                  "expected": "ok", "actual": {"status": "success", "value": None}})
     return {"name": name, "passed": passed, "wasm_sha256": frm, "upgrade_wasm_sha256": to, "steps": steps}
 
 
@@ -97,7 +101,9 @@ def report(*scenarios):
     failed = sum(1 for s in scen if not s["passed"])
     ups = {s.get("upgrade_wasm_sha256") for s in scen if s.get("upgrade_wasm_sha256")}
     return {"tool": "bumm-guard", "wasm_sha256": OLD_SHA, "upgrade_wasm_sha256": ups.pop() if len(ups) == 1 else None,
-            "scenarios": scen, "summary": {"scenarios": len(scen), "passed": len(scen) - failed, "failed": failed}}
+            "scenarios": scen, "summary": {"scenarios": len(scen), "passed": len(scen) - failed, "failed": failed,
+                                           "steps": sum(len(s["steps"]) for s in scen),
+                                           "steps_failed": sum(1 for s in scen for st in s["steps"] if not st["passed"])}}
 
 
 class Fixture(unittest.TestCase):
@@ -379,13 +385,30 @@ class UpgradeGateTests(Fixture):
         self.assertEqual(self.gate_report()["upgrade"]["post_upgrade_steps"],
                          [{"index": 4, "kind": "view", "method": "get_registered_count"}])
 
+    def test_proof_without_state_written_before_the_upgrade_is_blocked(self):
+        sc = upgrade_scenario()
+        sc["steps"] = [st for st in sc["steps"] if st["index"] >= 3]   # init -> upgrade -> view, nothing written
+        self.assertBlocked(self.gate(Node(code=OLD), report(sc)), "makes no successful call before the upgrade")
+        refused = upgrade_scenario()
+        refused["steps"][-1].update(expected={"fail_contains": "Event is full"},
+                                    actual={"status": "failure", "error": "Event is full"})
+        self.assertBlocked(self.gate(Node(code=OLD), report(refused)), "makes no successful call before the upgrade")
+
+    def test_forged_passed_flag_on_a_synthetic_report_is_blocked(self):
+        sc = upgrade_scenario()
+        sc["steps"][1].update(passed=False, actual={"status": "failure", "error": "Cannot deserialize"})
+        rep = report(sc)                              # summary adds up: one step failed ...
+        rep["summary"].update(failed=0, passed=1)     # ... but the verdict was edited
+        self.assertBlocked(self.gate(Node(code=OLD), rep), "step 4 did not pass")
+
     def test_post_upgrade_call_step_silences_the_warning(self):
         sc = upgrade_scenario()
         sc["steps"] += [{"index": 5, "kind": "call", "method": "register", "by": "dave", "passed": True,
                          "expected": "ok", "actual": {"status": "success"}},
                         {"index": 6, "kind": "balance", "account": "contract", "passed": True,
                          "expected": {"at_least": "1 NEAR"}, "actual": {"status": "success", "value": "1"}},
-                        {"index": 2, "kind": "call", "method": "register", "by": "alice", "passed": True}]
+                        {"index": 2, "kind": "call", "method": "register", "by": "alice", "passed": True,
+                         "expected": "ok", "actual": {"status": "success"}}]
         code, out, _ = self.gate(Node(code=OLD), report(sc))
         self.assertEqual(code, 0, out)
         self.assertIn("proved after upgrade (3 step(s)): view get_registered_count, call register, balance contract", out)
@@ -439,7 +462,7 @@ class UpgradeGateTests(Fixture):
     def test_passing_upgrade_with_hostile_names_and_steps_prints_clean_lines(self):
         good = upgrade_scenario(name="good\nDEPLOY BLOCKED: fake")
         good["steps"].append({"index": 5, "kind": "call\x1b[8m", "method": "register\nDEPLOY BLOCKED: fake2",
-                              "passed": True})
+                              "passed": True, "expected": "ok", "actual": {"status": "success"}})
         bad = {"name": self.EVIL, "passed": False, "steps": []}
         code, out, _ = self.gate(Node(code=OLD), report(good, bad))
         self.assertEqual(code, 0, out)
@@ -657,7 +680,7 @@ class HelperTests(unittest.TestCase):
                                      "attached-deposit", "0 NEAR"])
 
     def test_find_upgrade_proof_ignores_non_upgrade_scenarios(self):
-        rep = report({"name": "plain", "passed": True, "steps": [{"kind": "call"}]}, upgrade_scenario())
+        rep = report({"name": "plain", "passed": True, "steps": [{"kind": "call", "passed": True}]}, upgrade_scenario())
         proof, notes = find_upgrade_proof(rep, OLD_SHA, NEW_SHA)
         self.assertEqual(proof["scenario"], "with migrate")
         self.assertEqual(notes, [])
@@ -794,3 +817,51 @@ class ShippedEvidenceTests(unittest.TestCase):
                 self.assertIn(f"no passing upgrade scenario proves {onchain} -> {candidate}", out)
                 self.assertIn("for this pair did not pass", out)
                 self.assertNotIn("near contract deploy", out)
+
+    def forged(self, pair: str, edit) -> Path:
+        """A copy of the committed code-only report of ``pair`` after ``edit`` (in a temp dir)."""
+        _, _, _, bad, _ = PAIRS[pair]
+        rep = json.loads((EVIDENCE / bad).read_text())
+        edit(rep)
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        path = Path(tmp) / bad
+        path.write_text(json.dumps(rep))
+        return path
+
+    def test_forged_passed_flag_on_a_code_only_report_is_blocked(self):
+        def flip(rep):
+            rep["scenarios"][0]["passed"] = True
+        for pair in PAIRS:
+            with self.subTest(pair=pair):
+                code, out, err = self.gate(pair, self.forged(pair, flip))
+                self.assertEqual(code, 3, out + err)
+                self.assertIn("says it passed, but step", out)
+                self.assertIn("did not pass: the report contradicts itself", out)
+                self.assertNotIn("near contract deploy", out)
+
+    def test_forged_step_flags_and_verdict_are_blocked(self):
+        def flip_all(rep):  # every flag says passed, the chain's answers (failures) are left as they were
+            sc = rep["scenarios"][0]
+            sc["passed"] = True
+            for st in sc["steps"]:
+                st["passed"] = True
+            rep["summary"].update(passed=1, failed=0, steps_failed=0)
+        for pair in PAIRS:
+            with self.subTest(pair=pair):
+                code, out, err = self.gate(pair, self.forged(pair, flip_all))
+                self.assertEqual(code, 3, out + err)
+                self.assertIn("is marked passed but its status is failure", out)
+                self.assertNotIn("near contract deploy", out)
+
+    def test_forged_summary_is_blocked(self):
+        """A with-migrate report whose summary no longer adds up to its scenarios is not a proof."""
+        _, _, good, _, _ = PAIRS["escrow_v1_to_v2"]
+        rep = json.loads((EVIDENCE / good).read_text())
+        rep["summary"]["steps_failed"] = 3
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        (tmp / good).write_text(json.dumps(rep))
+        code, out, err = self.gate("escrow_v1_to_v2", tmp / good)
+        self.assertEqual(code, 3, out + err)
+        self.assertIn("summary.steps_failed is 3 but the scenarios show 0", out)

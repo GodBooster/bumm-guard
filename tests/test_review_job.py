@@ -157,7 +157,7 @@ class ReviewJobTests(unittest.TestCase):
 
     def test_fresh_target_passes_with_a_report_bound_to_the_wasm(self):
         fresh = self.tmp / "fresh.json"
-        fresh.write_text(json.dumps({"wasm_sha256": sha(V1_WASM), "summary": {"scenarios": 1, "passed": 1, "failed": 0},
+        fresh.write_text(json.dumps({"wasm_sha256": sha(V1_WASM), "summary": {"scenarios": 1, "passed": 1, "failed": 0, "steps": 0, "steps_failed": 0},
                                      "scenarios": [{"name": "fresh", "passed": True, "steps": []}]}))
         node = Node(job(wasm=V1_WASM, report=fresh), code=None)
         code, out, err = self.review(node, crate=ESCROW_V1, wasm=V1_WASM, report=fresh)
@@ -193,6 +193,16 @@ class ReviewJobTests(unittest.TestCase):
         rep = json.loads(self.out.read_text())
         self.assertEqual((rep["verdict"], rep["reason"]), ("reject", args["reason"]))
         self.assertEqual(rep["gate"]["upgrade_check"]["status"], "no-proof")
+
+    def test_code_only_report_with_a_forged_verdict_is_rejected(self):
+        rep = json.loads(CODE_ONLY.read_text())
+        rep["scenarios"][0]["passed"] = True
+        forged = self.tmp / "forged.json"
+        forged.write_text(json.dumps(rep))
+        code, out, err = self.review(Node(job(report=forged)), report=forged)
+        self.assertEqual(code, 3, out + err)
+        self.assertIn("the report contradicts itself", out)
+        self.assertEqual(self.command(out)[5], "reject")
 
     def test_blocking_finding_in_the_crate_rejects(self):
         fresh = self.tmp / "fresh.json"
@@ -353,7 +363,7 @@ class ReviewJobTests(unittest.TestCase):
 
     def test_failing_scenario_name_cannot_fake_a_passed_review(self):
         evil = self.tmp / "evil.json"
-        evil.write_text(json.dumps({"wasm_sha256": sha(V1_WASM), "summary": {"scenarios": 1, "passed": 0, "failed": 1},
+        evil.write_text(json.dumps({"wasm_sha256": sha(V1_WASM), "summary": {"scenarios": 1, "passed": 0, "failed": 1, "steps": 0, "steps_failed": 0},
                                     "scenarios": [{"name": self.FAKE, "passed": False, "steps": []}]}))
         code, out, err = self.review(Node(job(wasm=V1_WASM, report=evil), code=None),
                                      crate=ESCROW_V1, wasm=V1_WASM, report=evil)
@@ -380,6 +390,8 @@ class ReviewJobTests(unittest.TestCase):
     def test_passing_review_with_a_hostile_failing_scenario_keeps_one_verdict(self):
         rep = json.loads(WITH_MIGRATE.read_text())
         rep["scenarios"].append({"name": self.FAKE.replace("PASSED", "BLOCKED"), "passed": False, "steps": []})
+        rep["summary"]["scenarios"] += 1
+        rep["summary"]["failed"] += 1  # a combined report that adds up: the passing proof still counts
         evil = self.tmp / "evil-pass.json"
         evil.write_text(json.dumps(rep))
         code, out, err = self.review(Node(job(report=evil)), report=evil)
@@ -465,7 +477,7 @@ class ReviewJobTests(unittest.TestCase):
     def test_target_account_unreadable_is_refused_not_rejected(self):
         # no code on the target, then view_account (global-contract check) fails
         fresh = self.tmp / "fresh.json"
-        fresh.write_text(json.dumps({"wasm_sha256": sha(V1_WASM), "summary": {"scenarios": 1, "passed": 1, "failed": 0},
+        fresh.write_text(json.dumps({"wasm_sha256": sha(V1_WASM), "summary": {"scenarios": 1, "passed": 1, "failed": 0, "steps": 0, "steps_failed": 0},
                                      "scenarios": [{"name": "fresh", "passed": True, "steps": []}]}))
         node = Node(job(wasm=V1_WASM, report=fresh), code=None, target_down="view_account")
         res = self.review(node, crate=ESCROW_V1, wasm=V1_WASM, report=fresh)
