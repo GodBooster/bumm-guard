@@ -29,6 +29,7 @@ Field notes, checked against https://nearhackathon.com/HACKATHON.md on 2026-11-0
 - **Leave `website` empty.** The official API contract calls it a spam trap: any non-empty value rejects the submission. It is not an optional site field.
 - Payload fields are exactly: `requestId`, `projectName`, `leadName`, `email`, `size`, `tracks`, `nearAddress`, `projectUrl`, `demoUrl`, `idea`, `consent`. `size` for one person is the string `1`. `tracks` = `["open", "security"]`, decided by the owner on 2026-11-06: Open Innovation is the positioning; AI Security & Defense fits the deploy gate (a policy check that refuses an agent a deploy command without proof and never signs).
 - `consent` is `true` only after the owner has agreed to the contact notice, read to them verbatim: "I agree that the organizers may use these details to review our submission and contact us about this hackathon."
+- The author submits a second, independent project, Forecast Evidence Swarm (https://github.com/GodBooster/forecast-evidence-swarm); each README names the other (rule Q-015: one person, at most two independent projects, disclosed). Both repositories must be public before the deadline.
 - `nearAddress` is a mainnet account created by the owner; connecting a wallet is not needed to submit.
 - Nothing in the rules read on 2026-11-06 says anything about KYC or payout by country; that is a question for the organizers, not a known restriction and not a guarantee.
 
