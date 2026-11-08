@@ -49,3 +49,18 @@ The state written by v1 (two jobs inside an `IterableMap`, one agent, counters) 
 
 Both reviews read `bumm-guard-escrow2.testnet` only; it still runs escrow v1 (`ecd8a805…`) and is upgraded in the video. Balances were read with `view_account` right after each transaction; the small differences from round numbers are gas paid by the signers.
 
+
+## Jobs for the video (2026-11-08)
+
+Two more jobs on the v2 contract, one with an assigned agent and a pinned scenario, one without.
+
+| # | Step | Signed by | Transaction | Checked after it |
+|---|---|---|---|---|
+| 1 | Demo posts job 2: reward 1 NEAR, `assigned_agent` alice, `scenario_sha256` `7e7d87ce…` (the escrow upgrade-with-migrate scenario), deposit 1.1 NEAR | `bumm-guard-demo.testnet` | `3LYkQ6MkgehoJAN4m7vdUTwrLwHXmYBnsLv1WNfe6uq8` | returns `2`; job 2 `Open`, `reward_storage_fee` `3930000000000000000000`; 0.09607 NEAR excess refunded to demo |
+| 2 | Demo posts job 3: reward 1 NEAR, no agent, no pin, deposit 1.1 NEAR | `bumm-guard-demo.testnet` | `2iWKp9wjuBNDyUDyLtpJLghbZmfa57oXu4FpBtMoCoEL` | returns `3`; job 3 `Open`, `reward_storage_fee` `2970000000000000000000`; 0.09703 NEAR refunded; `job_count` 4 |
+| 3 | Alice submits escrow v2 to job 2 with the migrate report | `bumm-guard-alice.testnet` | `kQYXVm4ps6ekvMCoxoQvBQEy41vtx9gKkD6uzEobC9S` | job 2 `Submitted`, `wasm_sha256` `13425a04…`, `report_sha256` `f305461f…` |
+| 4 | Alice submits escrow v2 to job 3 with the code-only report | `bumm-guard-alice.testnet` | `GF8iZT4iijMFvPuzY7DtRLSKD6Vgvh1Yvc62CzEEYTTT` | job 3 `Submitted`, `wasm_sha256` `13425a04…`, `report_sha256` `e7cfcfd8…`; alice `jobs_in_review` 2, budget 0.5 NEAR |
+| 5 | `review-job` for job 3 (rehearsal) | (read-only) | — | `scenario_sha256 on the job: null`; `REVIEW BLOCKED: … no passing upgrade scenario proves ecd8a805… -> 13425a04…`, exit 3, both `reject` variants printed |
+| 6 | `review-job` for job 2 (rehearsal) | (read-only) | — | `report scenarios with it: 1 of 1`; `REVIEW PASSED: job 2 may be paid`, exit 0, `approve` for bob printed |
+
+Nothing was approved, rejected or deployed after these steps; the approve of job 2 and the escrow2 upgrade are recorded once, in the video.
