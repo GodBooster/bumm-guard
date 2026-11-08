@@ -22,7 +22,7 @@ WORK="$D/target/upstream"
 OUT="$D/target/wasm32-unknown-unknown/release"
 
 rm -rf "$WORK"
-mkdir -p "$WORK" "$OUT"
+mkdir -p "$WORK" "$OUT" "$D/locks"
 git -C "$WORK" init -q
 git -C "$WORK" fetch -q --depth 1 https://github.com/near/near-sdk-rs "$COMMIT"
 git -C "$WORK" -c advice.detachedHead=false checkout -q FETCH_HEAD
