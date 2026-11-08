@@ -42,7 +42,7 @@ The state written by v1 (two jobs inside an `IterableMap`, one agent, counters) 
 
 | # | Step | Signed by | Transaction | Checked after it |
 |---|---|---|---|---|
-| 1 | `review-job` for job 0 (migrate report) | (read-only, reviewer's run) | — | `REVIEW PASSED`, review report sha256 `a27d07db3b4429afcbff1c523739c73af14704a84fa019bf80f51a9a539bfea6`, five-argument `approve` printed |
+| 1 | `review-job` for job 0 (migrate report) | (read-only, reviewer's run) | — | `REVIEW PASSED`, review report sha256 `a27d07db3b4429afcbff1c523739c73af14704a84fa019bf80f51a9a539bfea6` (the file is committed as [`review-job-0-2026-11-07.json`](review-job-0-2026-11-07.json); its sha256 is the `gate_report_sha256` stored on chain for job 0), five-argument `approve` printed |
 | 2 | `review-job` for job 1 (code-only report) | (read-only) | — | `REVIEW BLOCKED: … no passing upgrade scenario proves ecd8a805… -> 13425a04…`, `reject` printed in both variants (`close: false` / `close: true`) |
 | 3 | `approve` job 0 (agent alice, wasm `13425a04…`, report `f305461f…`, gate report `a27d07db…`) | `bumm-guard-bob.testnet` | `na3HbkkajdpGxbRrCWTu6ecrsEr5PkFn1qpnCFMcmuF` | returns `true`; job 0 `Paid`, `gate_report_sha256` recorded; alice `jobs_paid` 1, `jobs_in_review` 1 → 0 after step 4; alice balance 9.4989 → 10.4989 NEAR (+1 NEAR) |
 | 4 | `reject` job 1 with `close: true` | `bumm-guard-bob.testnet` | `ChUyAwT1qm8tjioA69MN96TU3ecCK2DehthFEKkGexZC` | job 1 `Cancelled` with the gate's reason; demo balance 5.9958 → 6.9958 NEAR (+1 NEAR refund); contract balance 12.4955 → 10.4955 NEAR |

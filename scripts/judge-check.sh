@@ -136,7 +136,8 @@ else
   check B2 "N06 -> N10 upgraded live: code = event_registration_waitlist.wasm, new method answers" 0 "smoke get_waitlist: ok" -- \
     "$PY" -m bumm_guard gate --verify-deployed bumm-guard-demo.testnet --wasm evidence/wasm/event_registration_waitlist.wasm --network testnet --dry-run \
       --smoke get_registered_count --smoke get_waitlist
-  check B3 "jobs contract upgraded live to v2; job 0 was paid after review" 0 '"status": "Paid"' -- \
+  REVIEW0_SHA="$("$PY" -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' evidence/review-job-0-2026-11-07.json)"
+  check B3 "jobs contract upgraded live to v2; job 0 paid, approve bound to the committed review report (sha256 ${REVIEW0_SHA:0:8}…)" 0 "\"status\": \"Paid\".*\"gate_report_sha256\": \"$REVIEW0_SHA\"" -- \
     "$PY" -m bumm_guard gate --verify-deployed bumm-guard-jobs.testnet --wasm evidence/wasm/swarm_jobs_v2.wasm --network testnet --dry-run \
       --smoke 'get_job:{"id":0}'
   # bumm-guard-escrow2.testnet is upgraded on camera for the demo video: before that it runs v1 and the gate

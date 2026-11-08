@@ -18,7 +18,7 @@ Every check is labelled (`A*` offline, `B*` testnet read-only, `C*` near-sandbox
 | the committed wasm files are the ones deployed on testnet | A3 (`evidence/wasm/SHA256SUMS`), B1-B3 | offline / internet |
 | rule-pack: three NEAR defect classes, gate blocks on a high finding | A4, A5 | offline |
 | the gate accepts a passing upgrade scenario as proof of exactly one hash pair and refuses a failing one | A7: the real gate CLI on the committed CI reports and wasm; only the on-chain code hash is replaced, by the value recorded on testnet before each live upgrade (printed as RECORDED) | offline |
-| the live testnet upgrades kept their state | B1-B3 (`gate --verify-deployed` with smoke views) | internet |
+| the live testnet upgrades kept their state; the paid job's approve stored the sha256 of `evidence/review-job-0-2026-11-07.json` | B1-B3 (`gate --verify-deployed` with smoke views) | internet |
 | the live gate on the demo account | B4 | internet |
 | a code-only upgrade breaks, deploy + `migrate` in one batch works, in a real near-sandbox | C (six upgrade scenarios on the committed wasm; your own reports are then fed to the gate, C7) | Linux or macOS arm64 with cargo, or Docker |
 

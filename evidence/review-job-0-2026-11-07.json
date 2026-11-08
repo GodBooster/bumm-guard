@@ -1,0 +1,376 @@
+{
+  "tool": "bumm-guard",
+  "version": "0.5.0",
+  "kind": "review-job",
+  "timestamp_utc": "2026-11-07T16:36:52Z",
+  "network": "testnet",
+  "jobs_contract": "bumm-guard-jobs.testnet",
+  "job_id": 0,
+  "reviewer": "bumm-guard-bob.testnet",
+  "job": {
+    "id": 0,
+    "poster": "bumm-guard-demo.testnet",
+    "description": "upgrade bumm-guard-escrow2.testnet to escrow v2 keeping its deals",
+    "target_account": "bumm-guard-escrow2.testnet",
+    "reward": "1000000000000000000000000",
+    "status": "Submitted",
+    "agent": "bumm-guard-alice.testnet",
+    "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013",
+    "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420",
+    "gate_report_sha256": null,
+    "reject_reason": null,
+    "reward_storage_fee": "0",
+    "scenario_sha256": null,
+    "assigned_agent": null
+  },
+  "target_account": "bumm-guard-escrow2.testnet",
+  "inputs": {
+    "crate_dir": "tests/fixtures/near/escrow_v2",
+    "wasm": "evidence/wasm/escrow_v2.wasm",
+    "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013",
+    "simulate_report": "evidence/escrow-upgrade-with-migrate-report-ci.json",
+    "report_sha256": "f305461fe47aa2d15d2361038b7ed010be51b2c53219fee1352eac59a24eb420"
+  },
+  "checks": {
+    "status_submitted": true,
+    "wasm_sha256_matches": true,
+    "report_sha256_matches": true,
+    "scenario_sha256": null
+  },
+  "evidence_origin": "submission (not re-executed)",
+  "gate": {
+    "exit_code": 0,
+    "passed": true,
+    "messages": [
+      "upgrade of bumm-guard-escrow2.testnet: ecd8a805ea3252f1ffa2a285964d3e035d6e3c6be16e6974c33c479c3e034443 -> 13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013, proved by passing scenario 'Upgrade escrow v1 \u2192 v2 (upgrade with migrate()): deals survive with the right status, refund works, deposits stay locked'; migration migrate({}) in the same transaction",
+      "proved after upgrade (25 step(s)): view deal_count, view get_deal, view get_deal, view get_deal, view get_deal, view get_owner, balance contract, balance contract, call refund, view get_deal, balance alice, balance contract, balance contract, call refund, call refund, call release, call refund, call create_deal, view deal_count, view get_deal, call release, view get_deal, balance carol, balance contract, balance contract",
+      "migration migrate: #[private] (src/lib.rs:118)",
+      "deploy command for the target account's owner (NOT executed; not part of this job):",
+      "  near contract deploy bumm-guard-escrow2.testnet use-file evidence/wasm/escrow_v2.wasm with-init-call migrate json-args '{}' prepaid-gas '100 Tgas' attached-deposit '0 NEAR' network-config testnet sign-with-keychain send"
+    ],
+    "report": {
+      "tool": "bumm-guard",
+      "version": "0.5.0",
+      "timestamp_utc": "2026-11-07T16:36:49Z",
+      "crate_dir": "tests/fixtures/near/escrow_v2",
+      "rule_ids_checked": [
+        "BG-NEAR-001",
+        "BG-NEAR-002",
+        "BG-NEAR-003"
+      ],
+      "findings_count": 0,
+      "findings_by_severity": {},
+      "blocking_findings": 0,
+      "network": "testnet",
+      "account": "bumm-guard-escrow2.testnet",
+      "rs_sha256": {
+        "src/lib.rs": "3e2e8a13f419efa4e879bf0853af9ee83ea7763fb41fff6dd161055b9540a6e3"
+      },
+      "wasm": {
+        "path": "evidence/wasm/escrow_v2.wasm",
+        "sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013",
+        "exists": true
+      },
+      "artifact": {
+        "wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013",
+        "abi_sha256": null
+      },
+      "simulate": {
+        "report": "evidence/escrow-upgrade-with-migrate-report-ci.json",
+        "passed": true,
+        "scenarios": 1
+      },
+      "upgrade": {
+        "onchain_code_sha256": "ecd8a805ea3252f1ffa2a285964d3e035d6e3c6be16e6974c33c479c3e034443",
+        "candidate_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013",
+        "scenario": "Upgrade escrow v1 \u2192 v2 (upgrade with migrate()): deals survive with the right status, refund works, deposits stay locked",
+        "migrate": {
+          "method": "migrate",
+          "args": {},
+          "gas": "100 Tgas"
+        },
+        "passed": true,
+        "post_upgrade_steps": [
+          {
+            "index": 8,
+            "kind": "view",
+            "method": "deal_count"
+          },
+          {
+            "index": 9,
+            "kind": "view",
+            "method": "get_deal"
+          },
+          {
+            "index": 10,
+            "kind": "view",
+            "method": "get_deal"
+          },
+          {
+            "index": 11,
+            "kind": "view",
+            "method": "get_deal"
+          },
+          {
+            "index": 12,
+            "kind": "view",
+            "method": "get_deal"
+          },
+          {
+            "index": 13,
+            "kind": "view",
+            "method": "get_owner"
+          },
+          {
+            "index": 14,
+            "kind": "balance",
+            "method": "contract"
+          },
+          {
+            "index": 15,
+            "kind": "balance",
+            "method": "contract"
+          },
+          {
+            "index": 16,
+            "kind": "call",
+            "method": "refund"
+          },
+          {
+            "index": 17,
+            "kind": "view",
+            "method": "get_deal"
+          },
+          {
+            "index": 18,
+            "kind": "balance",
+            "method": "alice"
+          },
+          {
+            "index": 19,
+            "kind": "balance",
+            "method": "contract"
+          },
+          {
+            "index": 20,
+            "kind": "balance",
+            "method": "contract"
+          },
+          {
+            "index": 21,
+            "kind": "call",
+            "method": "refund"
+          },
+          {
+            "index": 22,
+            "kind": "call",
+            "method": "refund"
+          },
+          {
+            "index": 23,
+            "kind": "call",
+            "method": "release"
+          },
+          {
+            "index": 24,
+            "kind": "call",
+            "method": "refund"
+          },
+          {
+            "index": 25,
+            "kind": "call",
+            "method": "create_deal"
+          },
+          {
+            "index": 26,
+            "kind": "view",
+            "method": "deal_count"
+          },
+          {
+            "index": 27,
+            "kind": "view",
+            "method": "get_deal"
+          },
+          {
+            "index": 28,
+            "kind": "call",
+            "method": "release"
+          },
+          {
+            "index": 29,
+            "kind": "view",
+            "method": "get_deal"
+          },
+          {
+            "index": 30,
+            "kind": "balance",
+            "method": "carol"
+          },
+          {
+            "index": 31,
+            "kind": "balance",
+            "method": "contract"
+          },
+          {
+            "index": 32,
+            "kind": "balance",
+            "method": "contract"
+          }
+        ]
+      },
+      "migration_guard": {
+        "method": "migrate",
+        "status": "private",
+        "file": "src/lib.rs",
+        "line": 118
+      },
+      "storage_estimate": null,
+      "deploy": {
+        "status": "printed",
+        "command": "near contract deploy bumm-guard-escrow2.testnet use-file evidence/wasm/escrow_v2.wasm with-init-call migrate json-args '{}' prepaid-gas '100 Tgas' attached-deposit '0 NEAR' network-config testnet sign-with-keychain send"
+      },
+      "post_deploy": null
+    },
+    "upgrade": {
+      "onchain_code_sha256": "ecd8a805ea3252f1ffa2a285964d3e035d6e3c6be16e6974c33c479c3e034443",
+      "candidate_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013",
+      "scenario": "Upgrade escrow v1 \u2192 v2 (upgrade with migrate()): deals survive with the right status, refund works, deposits stay locked",
+      "migrate": {
+        "method": "migrate",
+        "args": {},
+        "gas": "100 Tgas"
+      },
+      "passed": true,
+      "post_upgrade_steps": [
+        {
+          "index": 8,
+          "kind": "view",
+          "method": "deal_count"
+        },
+        {
+          "index": 9,
+          "kind": "view",
+          "method": "get_deal"
+        },
+        {
+          "index": 10,
+          "kind": "view",
+          "method": "get_deal"
+        },
+        {
+          "index": 11,
+          "kind": "view",
+          "method": "get_deal"
+        },
+        {
+          "index": 12,
+          "kind": "view",
+          "method": "get_deal"
+        },
+        {
+          "index": 13,
+          "kind": "view",
+          "method": "get_owner"
+        },
+        {
+          "index": 14,
+          "kind": "balance",
+          "method": "contract"
+        },
+        {
+          "index": 15,
+          "kind": "balance",
+          "method": "contract"
+        },
+        {
+          "index": 16,
+          "kind": "call",
+          "method": "refund"
+        },
+        {
+          "index": 17,
+          "kind": "view",
+          "method": "get_deal"
+        },
+        {
+          "index": 18,
+          "kind": "balance",
+          "method": "alice"
+        },
+        {
+          "index": 19,
+          "kind": "balance",
+          "method": "contract"
+        },
+        {
+          "index": 20,
+          "kind": "balance",
+          "method": "contract"
+        },
+        {
+          "index": 21,
+          "kind": "call",
+          "method": "refund"
+        },
+        {
+          "index": 22,
+          "kind": "call",
+          "method": "refund"
+        },
+        {
+          "index": 23,
+          "kind": "call",
+          "method": "release"
+        },
+        {
+          "index": 24,
+          "kind": "call",
+          "method": "refund"
+        },
+        {
+          "index": 25,
+          "kind": "call",
+          "method": "create_deal"
+        },
+        {
+          "index": 26,
+          "kind": "view",
+          "method": "deal_count"
+        },
+        {
+          "index": 27,
+          "kind": "view",
+          "method": "get_deal"
+        },
+        {
+          "index": 28,
+          "kind": "call",
+          "method": "release"
+        },
+        {
+          "index": 29,
+          "kind": "view",
+          "method": "get_deal"
+        },
+        {
+          "index": 30,
+          "kind": "balance",
+          "method": "carol"
+        },
+        {
+          "index": 31,
+          "kind": "balance",
+          "method": "contract"
+        },
+        {
+          "index": 32,
+          "kind": "balance",
+          "method": "contract"
+        }
+      ]
+    },
+    "upgrade_check": null
+  },
+  "verdict": "approve",
+  "reason": null
+}

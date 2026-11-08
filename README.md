@@ -22,7 +22,7 @@ Each check prints PASS, FAIL or SKIP with its reason, then a summary; exit `0` m
 | The committed wasm files are byte-identical to the code on the testnet accounts | A3 (`evidence/wasm/SHA256SUMS`), B1-B3 | offline / internet |
 | Rule-pack finds the three NEAR defect classes; the gate blocks a crate with a high finding | A4, A5 | offline |
 | The gate takes a passing upgrade scenario as proof of exactly one pair (on-chain sha256 → candidate sha256), refuses a failing one, and prints the deploy command with `migrate` in the same batch | A7: the gate CLI on the committed CI reports and committed wasm for all three pairs; only the account's code hash is replaced, by the value **recorded** on testnet before each live upgrade (dates printed) | offline |
-| Three live testnet upgrades kept the state made before them; the jobs contract paid an agent after review | B1-B3 (`gate --verify-deployed` with smoke views) | internet |
+| Three live testnet upgrades kept the state made before them; the jobs contract paid an agent after review, and the approve stored the sha256 of the committed review report (`evidence/review-job-0-2026-11-07.json`) | B1-B3 (`gate --verify-deployed` with smoke views) | internet |
 | The gate on the account kept for the demo video prints the proven upgrade command (or `NO CHANGE` after the upgrade) | B4 | internet |
 | In a real near-sandbox a code-only upgrade breaks the state and deploy + `migrate` in one batch keeps it | C: the six upgrade scenarios on the committed wasm, then the gate on the reports this run produced (C7) | Linux or macOS arm64 with cargo, or Docker; otherwise the `judge-replay` and `ci` logs |
 
