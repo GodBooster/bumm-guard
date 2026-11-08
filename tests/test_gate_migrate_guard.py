@@ -1,4 +1,4 @@
-"""K2: an upgrade proof with a migration call also needs the migration method to be protected
+"""An upgrade proof with a migration call also needs the migration method to be protected
 (``#[private]`` or a ``predecessor_account_id()`` check) in the candidate crate's sources.
 
 Same stubs as ``test_gate_upgrade.py``: no test touches the network.
