@@ -2,7 +2,7 @@ name: judge-replay
 
 # Replays what a judge or an AI agent would run from the README, on clean runners with no cache:
 #   ubuntu   the README "Try it" steps literally, then scripts/judge-check.sh --sandbox
-#            (bumm-sim built cold, the six upgrade scenarios run in near-sandbox on the committed wasm)
+#            (bumm-sim built cold, the eight upgrade scenarios run in near-sandbox on the committed wasm)
 #   macos    scripts/judge-check.sh --sandbox natively on macOS arm64 (Apple Silicon)
 #   docker   scripts/judge-check.sh --sandbox --docker (the path for macOS x86_64)
 #   offline  scripts/judge-check.sh with the network removed: testnet checks must skip, not fail

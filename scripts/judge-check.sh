@@ -4,7 +4,7 @@
 #   scripts/judge-check.sh             offline checks, then read-only testnet checks (skipped with a
 #                                      reason when the RPC is unreachable); the sandbox group is skipped
 #   scripts/judge-check.sh --offline   offline checks only
-#   scripts/judge-check.sh --sandbox   also build bumm-sim and run the six upgrade scenarios in a real
+#   scripts/judge-check.sh --sandbox   also build bumm-sim and run the eight upgrade scenarios in a real
 #                                      near-sandbox on the committed wasm (Linux x86_64/aarch64 or
 #                                      macOS arm64; needs cargo; the cold runner build took about 2 min on
 #                                      a macOS arm64 CI runner and 5.5-7 min on ubuntu, and downloads Rust
@@ -105,8 +105,8 @@ check A2 "CLI runs from the repository root without installing" 0 "^bumm-guard [
 check A3 "committed wasm files equal evidence/wasm/SHA256SUMS (recorded as the deployed files; B1-B3 compare them with the chain)" 0 "swarm_jobs_v2.wasm: OK" -- sha_check
 check A4 "rule-pack: the fixtures give exactly one finding per rule, exit 1" 1 "BG-NEAR-003" -- scan_three_rules
 check A5 "deploy gate blocks a crate with a high finding, exit 3" 3 "DEPLOY BLOCKED" -- "$PY" -m bumm_guard gate tests/fixtures/near/d1_vuln --dry-run
-check A6 "all 21 scenario files are valid (format check, nothing executed)" 0 "^21 scenario file\(s\) valid" -- "$PY" -m bumm_guard simulate scenarios/*/*.json --validate-only
-check A7 "gate replayed offline on the committed CI reports and wasm: migrate proofs pass, code-only refused (3 pairs; on-chain hash RECORDED)" 0 "all pairs as expected" -- "$PY" scripts/replay_gate_offline.py
+check A6 "all 23 scenario files are valid (format check, nothing executed)" 0 "^23 scenario file\(s\) valid" -- "$PY" -m bumm_guard simulate scenarios/*/*.json --validate-only
+check A7 "gate replayed offline on the committed CI reports and wasm: migrate proofs pass, code-only refused (3 testnet pairs, on-chain hash RECORDED; plus the official near-sdk-rs versioned example, sandbox only)" 0 "all pairs as expected" -- "$PY" scripts/replay_gate_offline.py
 check A8 "unit tests (with cargo on PATH, two of them also run cargo check --offline on fixture copies)" 0 "^OK" -- "$PY" -m unittest discover -s tests
 if command -v node >/dev/null 2>&1; then
   check A9 "ABI panel tests (node)" 0 "# fail 0" -- node --test ui/test
@@ -192,7 +192,15 @@ PYEOF
   run_pair n06_to_n10 event_registration event_registration_waitlist upgrade-with-migrate-report-ci.json upgrade-code-only-report-ci.json
   run_pair escrow_v1_to_v2 escrow_v1 escrow_v2 escrow-upgrade-with-migrate-report-ci.json escrow-upgrade-code-only-report-ci.json
   run_pair swarm_jobs_v1_to_v2 swarm_jobs swarm_jobs_v2 swarm-jobs-upgrade-with-migrate-report-ci.json swarm-jobs-upgrade-code-only-report-ci.json
-  check C7 "gate on the reports this run produced: migrate proofs pass, code-only refused" 0 "all pairs as expected" -- \
+  # third-party pairs: the official near-sdk-rs example examples/versioned (tests/fixtures/near_official/NOTICE.md)
+  check C7 "sandbox: official near-sdk-rs versioned example, V0 era -> official code, code only, passes without migrate" 0 "1 scenario\(s\): 1 passed, 0 failed" -- \
+    "$PY" -m bumm_guard simulate scenarios/upgrade/official_versioned_v0_to_v1_code_only.json --runner contracts/target/release/bumm-sim \
+      --wasm evidence/wasm/versioned_v0.wasm --upgrade-wasm evidence/wasm/versioned.wasm --out "$OUT/official-versioned-v0-upgrade-report.json"
+  check C8 "sandbox: plain-struct build -> official versioned code, code only, breaks the state after the upgrade step (exit 1 expected)" 1 "^shape: " -- \
+    code_only "$OUT/official-versioned-plain-upgrade-report.json" "$PY" -m bumm_guard simulate scenarios/upgrade/official_versioned_plain_to_v1_code_only.json \
+      --runner contracts/target/release/bumm-sim --wasm evidence/wasm/versioned_plain.wasm --upgrade-wasm evidence/wasm/versioned.wasm \
+      --out "$OUT/official-versioned-plain-upgrade-report.json"
+  check C9 "gate on the reports this run produced: migrate proofs pass, code-only refused, the official V0 proof passes without migrate" 0 "all pairs as expected" -- \
     "$PY" scripts/replay_gate_offline.py --reports-dir "$OUT"
 fi
 

@@ -1,5 +1,5 @@
 // Ours, not upstream. A pre-versioning build of near-sdk-rs examples/versioned/src/lib.rs
-// (commit 8b91e264, tag near-sdk-v5.17.2; MIT OR Apache-2.0, see ../../NOTICE.md): the contract
+// (commit 7476cbe4 = tag near-sdk-v5.17.2; MIT OR Apache-2.0, see ../../NOTICE.md): the contract
 // state is a plain struct with the same field as the official `ContractV0` (no enum, so no tag
 // byte in the stored state). Lines that differ from the official file (its line numbers):
 //   7-45     the `VersionedContract` enum, its helpers and its `Default` are removed

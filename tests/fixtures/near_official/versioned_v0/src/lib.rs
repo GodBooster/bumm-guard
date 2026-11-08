@@ -1,4 +1,4 @@
-// Ours, not upstream. The V0 era of near-sdk-rs examples/versioned/src/lib.rs (commit 8b91e264,
+// Ours, not upstream. The V0 era of near-sdk-rs examples/versioned/src/lib.rs (commit 7476cbe4,
 // tag near-sdk-v5.17.2; MIT OR Apache-2.0, see ../../NOTICE.md): the same contract before V1
 // existed, so deposits are stored in the V0 variant (enum tag 0) exactly as the official code
 // reads them. Lines that differ from the official file (its line numbers):

@@ -1,4 +1,4 @@
-# Ours, not upstream: a copy of near-sdk-rs examples/versioned/Cargo.toml (commit 8b91e264, see ../NOTICE.md)
+# Ours, not upstream: a copy of near-sdk-rs examples/versioned/Cargo.toml (commit 7476cbe4, see ../NOTICE.md)
 # with one line changed: name = "versioned" -> name = "versioned_plain". Built inside the pinned near-sdk-rs checkout
 # as examples/versioned_plain (scripts/build_official_example.sh), so near-sdk is the same path dependency as the official build.
 [package]

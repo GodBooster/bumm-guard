@@ -26,7 +26,8 @@ mkdir -p "$WORK" "$OUT"
 git -C "$WORK" init -q
 git -C "$WORK" fetch -q --depth 1 https://github.com/near/near-sdk-rs "$COMMIT"
 git -C "$WORK" -c advice.detachedHead=false checkout -q FETCH_HEAD
-test "$(git -C "$WORK" rev-parse HEAD)" = "$COMMIT"
+head="$(git -C "$WORK" rev-parse HEAD)"
+[ "$head" = "$COMMIT" ] || { echo "fetched $head, expected commit $COMMIT (a tag object id is not a commit id)" >&2; exit 1; }
 echo "near-sdk-rs at $COMMIT"
 
 diff -r "$D/versioned" "$WORK/examples/versioned"

@@ -12,6 +12,13 @@ refused (exit 3, no command).
     python3 scripts/replay_gate_offline.py                 # committed CI reports
     python3 scripts/replay_gate_offline.py --reports-dir D # your own reports, same file names
 
+A second, sandbox-only group does the same for the third-party pairs built from the official
+near-sdk-rs example `examples/versioned` (tests/fixtures/near_official/NOTICE.md). They were never
+deployed on testnet: the "on-chain" hash given to the gate is the old wasm the sandbox ran, read from
+evidence/wasm/, and the account name is a placeholder. Expected: the passing code-only report from the
+V0 era is accepted without any migrate call (exit 0, `without-init-call`), the failing report from a
+plain-struct build is refused (exit 3), and the V0 proof does not cover the plain-struct hash (exit 3).
+
 Exit 0 when every pair gives the expected verdict, 1 otherwise.
 """
 from __future__ import annotations
@@ -29,6 +36,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from bumm_guard import cli  # noqa: E402
+from bumm_guard.gate import sha256_file  # noqa: E402
 
 # pair: (on-chain code sha256 RECORDED before the live upgrade, date, source, candidate crate,
 #        with-migrate report name, code-only report name)
@@ -48,15 +56,50 @@ PAIRS = {
 }
 
 
-def run_gate(onchain: str, account: str, crate: str, report: Path) -> tuple[int, str]:
+# sandbox-only pairs: (old wasm whose hash stands in for the on-chain code, candidate crate dir, candidate wasm,
+#                      [(report name, expected exit)])
+SANDBOX_ACCOUNT = "sandbox-only-versioned.testnet"   # placeholder, never contacted (network use raises)
+SANDBOX_PAIRS = {
+    "official near-sdk-rs versioned: V0 era -> official code": (
+        "versioned_v0", "tests/fixtures/near_official/versioned", "versioned",
+        [("official-versioned-v0-upgrade-report.json", 0)]),
+    "official near-sdk-rs versioned: plain struct -> official code": (
+        "versioned_plain", "tests/fixtures/near_official/versioned", "versioned",
+        [("official-versioned-plain-upgrade-report.json", 3),
+         ("official-versioned-v0-upgrade-report.json", 3)]),
+}
+
+
+def run_gate(onchain: str, account: str, crate_dir: str, wasm: str, report: Path) -> tuple[int, str]:
     out, err = io.StringIO(), io.StringIO()
-    argv = ["gate", f"tests/fixtures/near/{crate}", "--wasm", f"evidence/wasm/{crate}.wasm",
+    argv = ["gate", crate_dir, "--wasm", wasm,
             "--account", account, "--network", "testnet", "--simulate-report", str(report), "--dry-run"]
     with mock.patch("bumm_guard.gate.onchain_code_sha256", return_value=onchain), \
             mock.patch("urllib.request.urlopen", side_effect=RuntimeError("network use is not allowed here")), \
             contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = cli.main(argv)
     return code, out.getvalue() + err.getvalue()
+
+
+def check_reports(reports_dir: Path, onchain: str, account: str, crate_dir: str, wasm: str,
+                  cases: list[tuple[str, int]]) -> bool:
+    ok = True
+    for name, want in cases:
+        report = reports_dir / name
+        if not report.is_file():
+            print(f"   FAIL {name}: not found in {reports_dir}")
+            ok = False
+            continue
+        code, text = run_gate(onchain, account, crate_dir, wasm, report)
+        keep = [ln for ln in text.splitlines()
+                if ln.startswith(("upgrade of", "proved after", "migration migrate", "DEPLOY BLOCKED",
+                                  "gate passed", "  near contract deploy"))]
+        verdict = "ok" if code == want else "FAIL"
+        ok &= code == want
+        print(f"   {verdict}: {name}: exit {code} (expected {want})")
+        for ln in keep:
+            print(f"      {ln.strip()[:220]}")
+    return ok
 
 
 def main() -> int:
@@ -70,22 +113,14 @@ def main() -> int:
     for pair, (onchain, date, source, crate, good, bad) in PAIRS.items():
         print(f"== {pair}")
         print(f"   on-chain code sha256 (RECORDED on testnet {date} before the live upgrade, {source}): {onchain}")
-        for name, want in ((good, 0), (bad, 3)):
-            report = args.reports_dir / name
-            if not report.is_file():
-                print(f"   FAIL {name}: not found in {args.reports_dir}")
-                ok = False
-                continue
-            account = re.search(r"\((\S+)\)", pair).group(1)
-            code, text = run_gate(onchain, account, crate, report)
-            keep = [ln for ln in text.splitlines()
-                    if ln.startswith(("upgrade of", "proved after", "migration migrate", "DEPLOY BLOCKED",
-                                      "gate passed", "  near contract deploy"))]
-            verdict = "ok" if code == want else "FAIL"
-            ok &= code == want
-            print(f"   {verdict}: {name}: exit {code} (expected {want})")
-            for ln in keep:
-                print(f"      {ln.strip()[:220]}")
+        account = re.search(r"\((\S+)\)", pair).group(1)
+        ok &= check_reports(args.reports_dir, onchain, account, f"tests/fixtures/near/{crate}",
+                            f"evidence/wasm/{crate}.wasm", [(good, 0), (bad, 3)])
+    for pair, (old, crate_dir, new, cases) in SANDBOX_PAIRS.items():
+        onchain = sha256_file(f"evidence/wasm/{old}.wasm")
+        print(f"== {pair} (sandbox only, never deployed on testnet; account {SANDBOX_ACCOUNT} is a placeholder)")
+        print(f"   \"on-chain\" code sha256 = evidence/wasm/{old}.wasm, the old code the sandbox ran: {onchain}")
+        ok &= check_reports(args.reports_dir, onchain, SANDBOX_ACCOUNT, crate_dir, f"evidence/wasm/{new}.wasm", cases)
     print("offline gate replay:", "all pairs as expected" if ok else "MISMATCH")
     return 0 if ok else 1
 
