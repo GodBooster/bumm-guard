@@ -1,0 +1,22 @@
+{
+  "name": "Upgrade the official near-sdk-rs versioned example from its V0 era to the official code (code-only, no migrate): V0 deposits stay readable, the first new deposit moves the state to V1",
+  "accounts": {"alice": "10 NEAR", "bob": "10 NEAR", "carol": "10 NEAR"},
+  "contract": {"wasm": "tests/fixtures/near_official/target/wasm32-unknown-unknown/release/versioned_v0.wasm"},
+  "steps": [
+    {"call": "deposit", "by": "alice", "args": {}, "deposit": "1 NEAR", "expect": "ok"},
+    {"call": "deposit", "by": "bob", "args": {}, "deposit": "2 NEAR", "expect": "ok"},
+    {"view": "get_deposit", "args": {"account_id": "alice"}, "expect": {"equals": "1000000000000000000000000"}},
+    {"view": "get_deposit", "args": {"account_id": "bob"}, "expect": {"equals": "2000000000000000000000000"}},
+    {"upgrade": "tests/fixtures/near_official/target/wasm32-unknown-unknown/release/versioned.wasm", "expect": "ok"},
+    {"view": "get_nonce", "expect": {"equals": 0}},
+    {"view": "get_deposit", "args": {"account_id": "alice"}, "expect": {"equals": "1000000000000000000000000"}},
+    {"view": "get_deposit", "args": {"account_id": "bob"}, "expect": {"equals": "2000000000000000000000000"}},
+    {"call": "deposit", "by": "carol", "args": {}, "deposit": "3 NEAR", "expect": "ok"},
+    {"view": "get_nonce", "expect": {"equals": 1}},
+    {"view": "get_deposit", "args": {"account_id": "carol"}, "expect": {"equals": "3000000000000000000000000"}},
+    {"view": "get_deposit", "args": {"account_id": "alice"}, "expect": {"equals": "1000000000000000000000000"}},
+    {"call": "deposit", "by": "alice", "args": {}, "deposit": "1 NEAR", "expect": "ok"},
+    {"view": "get_deposit", "args": {"account_id": "alice"}, "expect": {"equals": "2000000000000000000000000"}},
+    {"view": "get_nonce", "expect": {"equals": 2}}
+  ]
+}

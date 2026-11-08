@@ -238,11 +238,14 @@ jobs:
       - name: build swarm_jobs_v2 wasm (rustc 1.85.0; third upgrade pair, swarm_jobs v1 -> v2)
         working-directory: tests/fixtures/near
         run: cargo build --release --locked --target wasm32-unknown-unknown -p swarm_jobs_v2
-      - name: hash guard (the proven wasm files built in this job must equal evidence/wasm/SHA256SUMS)
+      - name: hash guard (the six fixture wasm files built in this job must equal evidence/wasm/SHA256SUMS)
         working-directory: tests/fixtures/near/target/wasm32-unknown-unknown/release
         run: |
           sha256sum event_registration.wasm event_registration_waitlist.wasm escrow_v1.wasm escrow_v2.wasm swarm_jobs.wasm swarm_jobs_v2.wasm
-          sha256sum --check --strict "$GITHUB_WORKSPACE/evidence/wasm/SHA256SUMS"
+          grep -E '  (event_registration|event_registration_waitlist|escrow_v1|escrow_v2|swarm_jobs|swarm_jobs_v2)\.wasm$' \
+            "$GITHUB_WORKSPACE/evidence/wasm/SHA256SUMS" > "$RUNNER_TEMP/fixtures.sums"
+          test "$(wc -l < "$RUNNER_TEMP/fixtures.sums")" -eq 6
+          sha256sum --check --strict "$RUNNER_TEMP/fixtures.sums"
       - name: run swarm_jobs scenarios (review pays the agent; guardrails; cancel refunds)
         run: |
           python -m bumm_guard simulate scenarios/swarm_jobs/*.json \
@@ -302,6 +305,67 @@ jobs:
                 f"agent_count 1, get_reviewer, get_agent), {len(after)} step(s) after that failed with "
                 f"'Cannot deserialize element' ({len(views)} view steps, {len(calls)} call steps), as expected")
           EOF
+      - name: build the official near-sdk-rs example examples/versioned (pinned commit, unmodified) and our two old variants (rustc 1.85.0)
+        env:
+          BUMM_OFFICIAL_NEW_LOCK: "1"
+        run: scripts/build_official_example.sh
+      - name: upgrade official example V0 era -> official code, code only (expected PASS without migrate)
+        run: |
+          python -m bumm_guard simulate scenarios/upgrade/official_versioned_v0_to_v1_code_only.json \
+            --runner contracts/target/release/bumm-sim --out simulate-out/official-versioned-v0-upgrade-report.json
+          python - <<'EOF'
+          import json
+          r = json.load(open("simulate-out/official-versioned-v0-upgrade-report.json"))
+          (sc,) = r["scenarios"]
+          up = next(s["index"] for s in sc["steps"] if s["kind"] == "upgrade")
+          assert sc["passed"] and sc.get("error") is None and all(s["passed"] for s in sc["steps"]), sc
+          assert any(s["kind"] == "call" and s["index"] < up for s in sc["steps"]), "no state written before the upgrade"
+          assert sc["steps"][up]["actual"]["code_sha256"] == r["upgrade_wasm_sha256"]
+          nonces = [s["actual"]["value"] for s in sc["steps"] if s.get("method") == "get_nonce"]
+          assert nonces == [0, 1, 2], nonces
+          print(f"official V0 -> official code: {len(sc['steps'])}/{len(sc['steps'])} steps passed, upgrade at step {up}, "
+                f"get_nonce {nonces} (V0 state read lazily, moved to V1 by the first new deposit), no migrate")
+          EOF
+      - name: upgrade a plain-struct build -> official code, code only (expected FAIL after the upgrade step)
+        run: |
+          set +e
+          python -m bumm_guard simulate scenarios/upgrade/official_versioned_plain_to_v1_code_only.json \
+            --runner contracts/target/release/bumm-sim --out simulate-out/official-versioned-plain-upgrade-report.json
+          code=$?
+          set -e
+          test "$code" -eq 1 || { echo "expected exit 1 (scenario failed), got $code"; exit 1; }
+          python - <<'EOF'
+          import json
+          r = json.load(open("simulate-out/official-versioned-plain-upgrade-report.json"))
+          (sc,) = r["scenarios"]
+          up = next(s["index"] for s in sc["steps"] if s["kind"] == "upgrade")
+          before = [s for s in sc["steps"] if s["index"] <= up]
+          after = [s for s in sc["steps"] if s["index"] > up]
+          assert sc.get("error") is None, sc["error"]
+          assert all(s["passed"] for s in before), [s for s in before if not s["passed"]]
+          assert after and all(not s["passed"] and s["actual"]["status"] == "failure" for s in after), after
+          lacking = [s for s in after if "Cannot deserialize" not in s["actual"].get("error", "")]
+          assert not lacking, [(s["index"], s["kind"], s["actual"].get("error")) for s in lacking]
+          assert sc["steps"][up]["actual"]["code_sha256"] == r["upgrade_wasm_sha256"]
+          print(f"plain struct -> official code: steps 0..{up} passed, all {len(after)} step(s) after it failed with "
+                f"'Cannot deserialize', as expected; first error: {after[0]['actual'].get('error_detail') or after[0]['actual']['error']}")
+          EOF
+      - name: hash guard (the official-example wasm files built in this job must equal evidence/wasm/SHA256SUMS)
+        working-directory: tests/fixtures/near_official/target/wasm32-unknown-unknown/release
+        run: |
+          sha256sum versioned.wasm versioned_v0.wasm versioned_plain.wasm
+          grep -E '  versioned(_v0|_plain)?\.wasm$' "$GITHUB_WORKSPACE/evidence/wasm/SHA256SUMS" > "$RUNNER_TEMP/official.sums"
+          test "$(wc -l < "$RUNNER_TEMP/official.sums")" -eq 3
+          sha256sum --check --strict "$RUNNER_TEMP/official.sums"
+      - if: always()
+        name: upload the official-example wasm files and locks (the exact files the two pairs ran against)
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-versioned-wasm
+          path: |
+            tests/fixtures/near_official/target/wasm32-unknown-unknown/release/*.wasm
+            tests/fixtures/near_official/locks/
+          if-no-files-found: warn
       - if: always()
         uses: actions/upload-artifact@v4
         with:
