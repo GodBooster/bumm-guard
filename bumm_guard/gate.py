@@ -754,16 +754,20 @@ def run_verify_deployed(account: str, wasm: str, network: str = "testnet", smoke
     out = GateOutcome(0 if ok else 5)
     local = sha256_file(wasm)
     out.lines.append(f"post-deploy {account} ({network}): on-chain code sha256 {block['code_hash_on_chain']}")
-    out.lines.append(f"post-deploy: local wasm sha256 {local}: "
-                     + ("MATCH" if block["matches_artifact"] else "MISMATCH (deployed code is not this artifact)"))
-    if "error" in block:
+    if "error" in block:  # nothing was compared: say so, do not call it a mismatch
+        out.lines.append(f"post-deploy: local wasm sha256 {local}: NOT COMPARED (the deployed code could not be read)")
         out.errors.append(f"bumm-guard: could not fetch deployed code: {block['error']}")
+    else:
+        out.lines.append(f"post-deploy: local wasm sha256 {local}: "
+                         + ("MATCH" if block["matches_artifact"] else "MISMATCH (deployed code is not this artifact)"))
     for sm in block["smoke"]:
         detail = json.dumps(sm["result"]) if sm["ok"] else sm.get("error", "failed")
         if sm["ok"] and "expected" in sm:
             detail += " (as expected)"
         out.lines.append(f"smoke {sm['view']}: {'ok' if sm['ok'] else 'FAILED'}: {detail}")
-    out.lines.append("post-deploy verification " + ("passed" if ok else "FAILED"))
+    out.lines.append("post-deploy verification " + ("passed" if ok else
+                                                    "FAILED (not verified: the RPC did not answer)" if "error" in block
+                                                    else "FAILED"))
     report = base / REPORT_DIR / REPORT_NAME
     if dry_run:
         out.lines.append("dry-run: gate-report.json not written")

@@ -416,6 +416,18 @@ class VerifyDeployedTests(Base):
         self.assertEqual(code, 5)
         self.assertIn("FAILED", out)
 
+    def test_cli_rpc_down_is_not_compared_not_a_mismatch(self):
+        d = self.root / "work"
+        d.mkdir()
+        with mock.patch("urllib.request.urlopen", side_effect=OSError("[Errno 1] Operation not permitted")):
+            code, out, err = run_cli("gate", str(d), "--verify-deployed", "demo.testnet", "--wasm", str(self.wasm),
+                                     "--smoke", "get_n", "--dry-run")
+        self.assertEqual(code, 5)
+        self.assertNotIn("MISMATCH", out)
+        self.assertIn("NOT COMPARED (the deployed code could not be read)", out)
+        self.assertIn("FAILED (not verified: the RPC did not answer)", out)
+        self.assertIn("could not fetch deployed code", err)
+
     def test_cli_merges_into_existing_gate_report(self):
         crate = self.crate()
         with mock.patch("urllib.request.urlopen", FakeRpc()):

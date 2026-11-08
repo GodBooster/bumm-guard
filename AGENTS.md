@@ -7,7 +7,7 @@ BUMM Guard checks in a sandbox that a NEAR contract upgrade works on state the o
 ```sh
 scripts/judge-check.sh             # offline checks, then read-only testnet checks; about 1-2 minutes
 scripts/judge-check.sh --offline   # offline checks only
-scripts/judge-check.sh --sandbox   # also the real near-sandbox run (Linux, or macOS arm64); cold build about 10 minutes
+scripts/judge-check.sh --sandbox   # also the real near-sandbox run (Linux, or macOS arm64); cold runner build 2-6 minutes on CI machines
 scripts/judge-check.sh --sandbox --docker   # the same in a Linux container (macOS x86_64)
 ```
 

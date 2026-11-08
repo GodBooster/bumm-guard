@@ -6,8 +6,9 @@
 #   scripts/judge-check.sh --offline   offline checks only
 #   scripts/judge-check.sh --sandbox   also build bumm-sim and run the six upgrade scenarios in a real
 #                                      near-sandbox on the committed wasm (Linux x86_64/aarch64 or
-#                                      macOS arm64; needs cargo; a cold build takes about 10 minutes
-#                                      and downloads Rust crates and the near-sandbox binary)
+#                                      macOS arm64; needs cargo; the cold runner build took 1m47s on a
+#                                      macOS arm64 and 5m32s on an ubuntu CI runner, and downloads Rust
+#                                      crates and the near-sandbox binary)
 #   scripts/judge-check.sh --sandbox --docker
 #                                      the same inside a Linux container (for macOS x86_64, where
 #                                      near-sandbox has no native binary); needs Docker
@@ -150,20 +151,41 @@ echo; echo "== C. real near-sandbox run of the upgrade scenarios"
 CI_NOTE="evidence instead: the judge-replay and ci workflows (README, 'For judges and AI agents') and the committed reports evidence/*-report-ci.json, checked offline by A7"
 os="$(uname -s)-$(uname -m)"
 if [ "$SANDBOX" = 0 ]; then
-  skip C "near-sandbox run" "not requested (pass --sandbox; cold build about 10 min). $CI_NOTE"
+  skip C "near-sandbox run" "not requested (pass --sandbox; cold runner build 2-6 min on CI machines). $CI_NOTE"
 elif ! command -v cargo >/dev/null 2>&1; then
   skip C "near-sandbox run" "cargo not found (install rustup; contracts/rust-toolchain.toml pins 1.99.1). $CI_NOTE"
 elif [ "$os" = "Darwin-x86_64" ]; then
   skip C "near-sandbox run" "near-sandbox has no macOS x86_64 binary; run scripts/judge-check.sh --sandbox --docker. $CI_NOTE"
 else
   check C0 "build bumm-sim (near-workspaces 0.24 runner)" 0 "" -- sh -c 'cd contracts && cargo build --release --locked -p bumm-sim'
+  # a code-only run must fail the right way: every step up to and including the upgrade passed (the deploy
+  # itself succeeds), and the steps after it that fail do so because the new code cannot read the old state
+  code_only() { # report.json, then the simulate command
+    local rep="$1"; shift
+    "$@"; local code=$?
+    "$PY" - "$rep" <<'PYEOF' || return 9
+import json, sys
+(sc,) = json.load(open(sys.argv[1]))["scenarios"]
+assert sc.get("error") is None, sc["error"]
+up = next(s["index"] for s in sc["steps"] if s["kind"] == "upgrade")
+before = [s for s in sc["steps"] if s["index"] <= up]
+after = [s for s in sc["steps"] if s["index"] > up]
+assert all(s["passed"] for s in before), "a step up to the upgrade failed"
+bad = [s for s in after if not s["passed"]]
+assert bad and all("Cannot deserialize" in s["actual"].get("error", "") for s in bad), "unexpected failure"
+print(f"shape: steps 0..{up} passed (upgrade included); {len(bad)} of {len(after)} later steps "
+      "failed with 'Cannot deserialize'")
+PYEOF
+    return $code
+  }
+  n=0
   run_pair() { # scenario-base old-wasm new-wasm migrate-report-name code-only-report-name
     local base="$1" old="$2" new="$3"
-    check "C" "sandbox: $base with migrate() passes on the committed wasm" 0 "1 scenario\(s\): 1 passed, 0 failed" -- \
+    n=$((n + 1)); check "C$n" "sandbox: $base with migrate() passes on the committed wasm" 0 "1 scenario\(s\): 1 passed, 0 failed" -- \
       "$PY" -m bumm_guard simulate "scenarios/upgrade/${base}_with_migrate.json" --runner contracts/target/release/bumm-sim \
         --wasm "evidence/wasm/$old.wasm" --upgrade-wasm "evidence/wasm/$new.wasm" --out "$OUT/$4"
-    check "C" "sandbox: $base code only fails after the upgrade step (exit 1 expected)" 1 "1 scenario\(s\): 0 passed, 1 failed" -- \
-      "$PY" -m bumm_guard simulate "scenarios/upgrade/${base}_code_only.json" --runner contracts/target/release/bumm-sim \
+    n=$((n + 1)); check "C$n" "sandbox: $base code only breaks the state after the upgrade step (exit 1 expected)" 1 "^shape: " -- \
+      code_only "$OUT/$5" "$PY" -m bumm_guard simulate "scenarios/upgrade/${base}_code_only.json" --runner contracts/target/release/bumm-sim \
         --wasm "evidence/wasm/$old.wasm" --upgrade-wasm "evidence/wasm/$new.wasm" --out "$OUT/$5"
   }
   run_pair n06_to_n10 event_registration event_registration_waitlist upgrade-with-migrate-report-ci.json upgrade-code-only-report-ci.json

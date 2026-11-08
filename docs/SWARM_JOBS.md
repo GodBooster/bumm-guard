@@ -276,10 +276,11 @@ reviewer approved.
   the same honest submission is rejected.
 - **An RPC failure is not a verdict.** If the job or the target account cannot be read, `review-job` exits 2 and
   prints no command; nothing is approved or rejected because a node was down.
-- Shown in the sandbox (CI), with unit tests, and on testnet up to the review: v1 was deployed through the gate to
-  `bumm-guard-jobs.testnet`, an agent joined, two jobs were posted and submitted, and the review was rehearsed
-  read-only (one blocked, one passed); see [evidence/SWARM_JOBS_TESTNET.md](../evidence/SWARM_JOBS_TESTNET.md).
-  The upgrade to v2, the approve and the payment are not done yet (plan below).
+- Shown in the sandbox (CI), with unit tests, and on testnet: v1 was deployed through the gate to
+  `bumm-guard-jobs.testnet`, an agent joined, two jobs were posted and submitted, the review was rehearsed
+  read-only (one blocked, one passed), the contract was upgraded live to v2 with both jobs in its state, and on
+  2026-11-07 one job was approved and paid and the other rejected, closed and refunded; see
+  [evidence/SWARM_JOBS_TESTNET.md](../evidence/SWARM_JOBS_TESTNET.md).
 
 ## Testnet run plan, v1 (the owner signs every transaction; nothing here is run by BUMM Guard)
 
