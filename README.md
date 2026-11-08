@@ -337,11 +337,21 @@ cd .. && python3 -m bumm_guard simulate scenarios/n06/*.json --runner contracts/
 
 **Prior work (not included here).** [BUMM](https://github.com/bumm-ai/bumm) is an AI smart-contract builder for Solana/Anchor by the same author, developed 2025-2026, before this hackathon. It is a separate project on another chain and is **not part of this repository**; no BUMM source code was copied in.
 
-**Built during the hackathon window** (announcement 2026-10-19 to 2026-11-14). This repository was created on 2026-10-30, and everything in it was written in that window: the NEAR rule-pack (`bumm_guard/rulepack/near/`), the three detectors, the fixers (`bumm_guard/fix/`), the deploy gate (`bumm_guard/gate.py`) with its upgrade proof, the storage estimate and post-deploy check (`bumm_guard/storage.py`, `bumm_guard/verify.py`), the CLI, the MCP server (`bumm_guard/mcp_server.py`), the Claude Code plugin and skill (`clients/claude-plugin/`), the fixtures (including `tests/fixtures/near/event_registration` and its N10 variant, the escrow v1 and v2 pair, and the `swarm_jobs` contract) and tests (`tests/`), the Linux runner script and CI, the scenario runner (`contracts/sim-runner`, `bumm_guard/simulate.py`, `scenarios/`), the `upgrade` step with its six scenarios (three pairs, 2026-11-03 to 2026-11-07), the `evaluate` workflow and the A/B pilot (`evidence/`, `ab/`), the guarded jobs for agent swarms (`swarm_jobs`, `bumm-guard review-job`, the MCP `review_job` tool, 2026-11-06), and the ABI interaction panel (`ui/`). `git log --format='%h %ad %s' --date=iso` lists every commit; the first one is dated 2026-10-30. Nothing in the history predates the window.
+**Built during the hackathon window** (announcement 2026-10-19 to 2026-11-14). This repository was created on 2026-10-30, and everything in it was written in that window: the NEAR rule-pack (`bumm_guard/rulepack/near/`), the three detectors, the fixers (`bumm_guard/fix/`), the deploy gate (`bumm_guard/gate.py`) with its upgrade proof, the storage estimate and post-deploy check (`bumm_guard/storage.py`, `bumm_guard/verify.py`), the CLI, the MCP server (`bumm_guard/mcp_server.py`), the Claude Code plugin and skill (`clients/claude-plugin/`), the fixtures (including `tests/fixtures/near/event_registration` and its N10 variant, the escrow v1 and v2 pair, and the `swarm_jobs` contract) and tests (`tests/`), the Linux runner script and CI, the scenario runner (`contracts/sim-runner`, `bumm_guard/simulate.py`, `scenarios/`), the `upgrade` step with its six scenarios (three pairs, 2026-11-03 to 2026-11-07), the `evaluate` workflow and the A/B pilot (`evidence/`, `ab/`), the guarded jobs for agent swarms (`swarm_jobs`, `bumm-guard review-job`, the MCP `review_job` tool, 2026-11-06), and the ABI interaction panel (`ui/`). `git log --format='%h %ad %s' --date=iso` lists every commit; the first one is dated 2026-10-30. Nothing in the history predates the window. So there is no pre-hackathon baseline to separate (Q-001, Q-003): the whole repository is hackathon work.
 
 **Ideas reused from BUMM** (ideas only, no code): the find, fix, gate pipeline shape and the style of MCP tool naming.
 
-**Libraries and tools.** Runtime: Python standard library only. Optional: the `mcp` Python SDK for the MCP server. Fixtures depend on `near-sdk` 5.17.2; the runner and the sandbox tests use `near-workspaces` 0.24.0 / `near-sandbox` 0.4.0; the panel loads `near-api-js` 4.0.4 from a CDN only for the unverified wallet path. Parts of the code were written with AI assistance (Claude Code).
+**Libraries, tools and AI-written code** (one list):
+
+- CLI and gate: Python 3.12+ standard library only (`pyproject.toml` has no runtime dependencies).
+- MCP server: the `mcp` Python SDK (optional extra `[mcp]`, tested with 1.30.0 and 2.3.0).
+- Fixture contracts: `near-sdk` 5.17.2 (Rust, built to wasm with rustc 1.85.0).
+- Scenario runner and sandbox tests: `near-workspaces` 0.24.0 and `near-sandbox` 0.4.0 (Rust, rustc 1.99.1).
+- ABI panel: `near-api-js` 4.0.4 from a CDN, only for the unverified wallet path.
+- Deploy commands the gate prints: near-cli-rs 0.30 syntax (the CLI itself is not a dependency).
+- CI: GitHub Actions (`actions/checkout`, `actions/setup-python`, `actions/setup-node`, `actions/upload-artifact`, `dtolnay/rust-toolchain`, `Swatinem/rust-cache`).
+- AI-written code: most of the code, tests and documentation were written by Claude Code (Anthropic) sessions working from the author's instructions; the author chose what to build and approved every merge. The A/B pilot's two agent arms used Sonnet (`evidence/AB_PILOT_N10.md`).
+- No code from the author's earlier projects (see "Prior work" above).
 
 ## License, track, links
 
