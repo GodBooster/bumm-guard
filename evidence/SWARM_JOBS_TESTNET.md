@@ -64,3 +64,11 @@ Two more jobs on the v2 contract, one with an assigned agent and a pinned scenar
 | 6 | `review-job` for job 2 (rehearsal) | (read-only) | — | `report scenarios with it: 1 of 1`; `REVIEW PASSED: job 2 may be paid`, exit 0, `approve` for bob printed |
 
 Nothing was approved, rejected or deployed after these steps; the approve of job 2 and the escrow2 upgrade are recorded once, in the video.
+
+## Reviewer function-call key (2026-11-08)
+
+| # | Step | Signed by | Transaction | Checked after it |
+|---|---|---|---|---|
+| 1 | Add a function-call access key to the reviewer: receiver `bumm-guard-jobs.testnet`, methods `approve`, `reject`, allowance 0.25 NEAR | `bumm-guard-bob.testnet` (full-access key) | `uVNWrSJSy9MDiP7oPdpkT6Zxbt5PKeCYePHdK4jzMZG` | `view_access_key_list`: `ed25519:BhBsPnJeC1KP1FuCJogm5gRnrN6nfGH5NgpBx1b4v3bP` with `FunctionCall {allowance: 250000000000000000000000, receiver_id: bumm-guard-jobs.testnet, method_names: [approve, reject]}`, next to the existing full-access key |
+
+The approve of job 0 (2026-11-07) was signed with the full-access key; later approvals and rejections are signed with this key (`--signer-public-key`).
