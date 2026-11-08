@@ -49,16 +49,16 @@ Thread, reply 1 (278 characters), where the upgrade check came from:
 Where the upgrade check came from: a pilot, same task and model, one run per arm, not statistics. The plain agent wrote migrate() and was faster. The agent with our earlier tool passed every fresh-deploy check and shipped no migration. So we built this. evidence/AB_PILOT_N10.md
 <!-- x2-end -->
 
-Thread, reply 2 (275 characters):
+Thread, reply 2 (270 characters; the hashtag is in the main post):
 
 <!-- x3-start -->
-Live on testnet, two contract pairs: the gate refused without proof, passed with the migrate() proof, the owner ran the printed tx, a registration and a 1-NEAR escrow deal survived (evidence/UPGRADE_TESTNET.md). Limits: scenario-made state, regex-level checks. #NEARHackathon
+Live on testnet, three contract pairs: the gate refused without proof, passed with the migrate() proof, the owner ran the printed tx; a registration, a 1-NEAR escrow deal and two swarm jobs survived. Limits: scenario-made state, regex checks. evidence/UPGRADE_TESTNET.md
 <!-- x3-end -->
 
-Thread, reply 3 (271 characters; after the testnet run, replace "Sandbox: 81/81 steps" with the testnet result if it fits):
+Thread, reply 3 (274 characters):
 
 <!-- x4-start -->
-Also new: guarded jobs for agent swarms. A NEAR contract holds the reward; the agent is paid only after a reviewer approves exactly the wasm hash BUMM Guard checked. review-job prints approve or reject, never signs. Sandbox: 81/81 steps. docs/SWARM_JOBS.md #NEARHackathon
+Also new: guarded jobs for agent swarms. A NEAR contract holds the reward and pays the agent only after a reviewer approves the exact wasm hash BUMM Guard checked; review-job never signs. On testnet: one job paid, one rejected and refunded. docs/SWARM_JOBS.md #NEARHackathon
 <!-- x4-end -->
 
 ## 3. Video script v4 (about 2 min 55 s, screen recording, voice-over in plain statements)

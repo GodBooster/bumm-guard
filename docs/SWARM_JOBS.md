@@ -210,6 +210,28 @@ v1 contract is a tool error.
 Keep the review report: `gate_report_sha256` on chain is its hash, and the file is what lets anyone check what the
 reviewer approved.
 
+## Reviewer key (function-call access)
+
+`approve` and `reject` are plain calls: no `#[payable]`, no `assert_one_yocto`, so they need no attached deposit and
+a NEAR function-call access key can sign them. The owner adds such a key to the reviewer account (near-cli-rs 0.31;
+the new key pair goes to the macOS keychain; 0.25 NEAR is the gas allowance the key may spend, enough for about 25
+calls at 100 Tgas):
+
+```
+near account add-key bumm-guard-bob.testnet grant-function-call-access --allowance '0.25 NEAR' --contract-account-id bumm-guard-jobs.testnet --function-names 'approve, reject' autogenerate-new-keypair save-to-keychain network-config testnet sign-with-keychain send
+```
+
+Read-only check that the key exists with exactly that permission:
+
+```
+near account list-keys bumm-guard-bob.testnet network-config testnet now
+```
+
+The listing must show a `function call` key with receiver `bumm-guard-jobs.testnet`, methods `approve, reject` and
+the allowance, next to the existing full-access key. To sign the printed `approve` / `reject` with it, add
+`--signer-public-key <the new ed25519 public key>` right after `sign-with-keychain` (otherwise near-cli may pick the
+full-access key). What it protects and what it does not: README, "Honest limits", "Reviewer key".
+
 ## Honest limits
 
 - **The review runs off-chain, and the approve is signed by a trusted reviewer account.** The contract checks only
@@ -217,6 +239,7 @@ reviewer approved.
   cannot verify a sandbox proof by itself: a dishonest or compromised reviewer can approve anything.
   `gate_report_sha256` makes the reviewer's decision auditable, not trustless. The poster's `scenario_sha256` is
   enforced by `review-job`, not by the contract, for the same reason.
+- **What the gate trusts (and so `review-job`).** A scenario report is unsigned JSON. The gate re-reads it rather than taking its verdict on trust: a scenario counts as an upgrade proof only if the init call and every step say `passed`, each passed step agrees with what the chain answered (an `ok` or value expectation with `status: success`, a `fail_contains` expectation with a failure whose error contains the text), the report's `summary.failed` and `summary.steps_failed` add up to its scenarios, and a state-changing `call` succeeded before the upgrade step. So an edited verdict (a code-only report with `passed` flipped to `true`) is refused. A report fabricated end to end, with every field consistent, still passes: the gate does not re-run the sandbox and the report carries no signature. Take reports from a CI run you control (as this repository does) or re-run the scenario yourself; `scripts/judge-check.sh --sandbox` does that for the shipped pairs.
 - **The report and the crate are supplied by the agent, and the review does not re-run them.** `review-job` checks
   that the two files have the submitted hashes and runs the gate on them. It does not execute the scenarios and
   does not build the wasm. A fabricated report (a JSON file that claims a passing upgrade scenario for the right

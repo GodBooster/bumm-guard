@@ -1,4 +1,4 @@
-# BUMM Guard — architecture and what was built (state on 2026-11-06)
+# BUMM Guard — architecture and what was built (state on 2026-11-08)
 
 This is the review document for the project: what the thing is, how the parts fit, what each part verifiably does, what evidence exists, and what is deliberately not claimed. It is written for a reader who has not seen the repository. Every number here is either in a committed file (named) or in a CI run (numbered). Facts and hypotheses are kept apart: a hypothesis is marked *(hypothesis)*.
 
@@ -38,11 +38,11 @@ Everything in the repository exists to make this failure visible before deploy a
                  contracts/sim-runner  (bumm-sim, Rust 1.99, near-workspaces 0.24)
                  contracts/sandbox     (near-workspaces test for BG-NEAR-001)
                  tests/fixtures/near   (13 crates, rustc 1.85.0 pinned)
-                 scenarios/            (15 JSON scenarios, 4 of them upgrades, 3 for swarm_jobs)
+                 scenarios/            (21 JSON scenarios: 6 upgrades, 3 for swarm_jobs v1, 4 for swarm_jobs v2)
                  ui/                   (static ABI panel, about 840 lines JS/HTML/CSS)
                  clients/claude-plugin (Claude Code plugin + skill)
                  .github/workflows     (ci.yml 5 jobs, evaluate.yml dispatch)
-                 evidence/             (9 JSON reports, 5 markdown records, 5 wasm files with SHA256SUMS)
+                 evidence/             (13 JSON reports, 5 markdown records, 6 wasm files with SHA256SUMS, the review report of the paid job)
 ```
 
 ### 2.1 Static rule-pack (`bumm_guard/scanner.py`, `rulepack/`, `fix/`)
@@ -119,7 +119,7 @@ A static page (no backend) that loads a contract ABI and calls view methods thro
 
 ### 2.7 Guarded jobs for agent swarms (`tests/fixtures/near/swarm_jobs`, `bumm_guard/review.py`)
 
-The second use of the gate, added on 2026-11-06: a minimal onchain job escrow in which an agent's reward is paid only after the gate's review of its work passed. A poster locks a reward in a job; a registered agent submits two hashes (the wasm it built, the scenario report that proves it); `bumm-guard review-job` (and the MCP tool `review_job`) reads the job with view calls, checks that the local files are exactly the submitted ones, runs the gate in dry-run mode on them for the job's target account, writes `.bumm-guard/review-<job>.json` (`FORMATS.md` §7) and prints one command for the reviewer to sign: `approve` (bound to the wasm hash and to the hash of the review report) or `reject` with the gate's reason. The gate's `NO CHANGE` (the target already runs the submitted wasm) is a reject here, and an RPC failure gives no command at all (exit 2). The review says in one line, and in the report (`evidence_origin`), that the report and the crate came with the submission and were not re-executed. The contract (near-sdk 5.17.2, 28 unit tests, 3 sandbox scenarios with 81 steps on every push) is deployed on testnet through the gate, with an agent joined and two jobs submitted; the approve and the payment are not done yet (`evidence/SWARM_JOBS_TESTNET.md`). What it is and what it is not — one trusted reviewer, no inference, no agent runtime, agent-supplied evidence, storage paid by the contract — is in `docs/SWARM_JOBS.md`, section "Honest limits".
+The second use of the gate, added on 2026-11-06: a minimal onchain job escrow in which an agent's reward is paid only after the gate's review of its work passed. A poster locks a reward in a job; a registered agent submits two hashes (the wasm it built, the scenario report that proves it); `bumm-guard review-job` (and the MCP tool `review_job`) reads the job with view calls, checks that the local files are exactly the submitted ones, runs the gate in dry-run mode on them for the job's target account, writes `.bumm-guard/review-<job>.json` (`FORMATS.md` §7) and prints one command for the reviewer to sign: `approve` (bound to the wasm hash and to the hash of the review report) or `reject` with the gate's reason. The gate's `NO CHANGE` (the target already runs the submitted wasm) is a reject here, and an RPC failure gives no command at all (exit 2). The review says in one line, and in the report (`evidence_origin`), that the report and the crate came with the submission and were not re-executed. The contract (near-sdk 5.17.2, 28 unit tests, 3 sandbox scenarios with 81 steps on every push) is deployed on testnet through the gate, with an agent joined and two jobs submitted; on 2026-11-07 the contract was upgraded live to v2 through the gate with both jobs in its state, then one job was approved and paid and the other rejected, closed and refunded (`evidence/SWARM_JOBS_TESTNET.md`). What it is and what it is not — one trusted reviewer, no inference, no agent runtime, agent-supplied evidence, storage paid by the contract — is in `docs/SWARM_JOBS.md`, section "Honest limits".
 
 ## 3. Evidence on a live network (testnet, all signed by the owner)
 
@@ -132,7 +132,7 @@ Nothing in the repository holds or uses a key. In every case below the gate prin
 | 2026-11-04 | `bumm-guard-escrow.testnet` | fresh v1 through the gate; `new`; one deal of 1 NEAR from `bumm-guard-demo`; gate for v2: BLOCKED / BLOCKED "did not pass" / passed with `migration migrate: #[private] (src/lib.rs:118)`; owner ran it (tx `DPgBviLp…`) | MATCH on `13425a04…`; `get_deal(0)` returns the v1 deal in v2 shape (`status: "Funded"`, `created_at_ms: 0`) |
 | 2026-11-04 | `bumm-guard-demo.testnet` + `alice`, `bob` | waitlist on the migrated N10: alice takes the last seat, bob lands on the waitlist, alice cancels → bob promoted | each state read from the archival RPC at that receipt's block (276189585/596/606) |
 | 2026-11-04 | `bumm-guard-escrow2.testnet` | prepared on v1 with one deal for the video recording; the three gate calls dry-run to the scripted outputs | not upgraded yet, on purpose |
-| 2026-11-06 | `bumm-guard-jobs.testnet` | `swarm_jobs` deployed through the gate (fresh deploy, CI report bound by hash), `new` with reviewer `bumm-guard-bob`; `bumm-guard-alice` joined with 0.5 NEAR; `bumm-guard-demo` posted two jobs of 1 NEAR targeting `escrow2`; alice submitted the migrate report hash to job 0 and the code-only report hash to job 1; both reviews rehearsed read-only (job 1 BLOCKED, job 0 PASSED) | `--verify-deployed` MATCH on `bcace583…`; nothing approved, rejected or paid yet |
+| 2026-11-06 | `bumm-guard-jobs.testnet` | `swarm_jobs` deployed through the gate (fresh deploy, CI report bound by hash), `new` with reviewer `bumm-guard-bob`; `bumm-guard-alice` joined with 0.5 NEAR; `bumm-guard-demo` posted two jobs of 1 NEAR targeting `escrow2`; alice submitted the migrate report hash to job 0 and the code-only report hash to job 1; both reviews rehearsed read-only (job 1 BLOCKED, job 0 PASSED) | `--verify-deployed` MATCH on `bcace583…`; nothing approved, rejected or paid on that day (approve, payment and reject-close followed on 2026-11-07 on v2) |
 
 ## 4. The pilot (one run per arm, not statistics)
 
@@ -148,8 +148,8 @@ Nothing in the repository holds or uses a key. In every case below the gate prin
 - The sandbox state is the scenario's own transactions, not a copy of live state; the proof covers the listed post-upgrade steps on that scenario-made state (printed and recorded as `post_upgrade_steps`), and a scenario with only views after the upgrade is accepted with a warning.
 - The `upgrade` step models a full-access-key batch by the contract account; not DAO-controlled upgrades; a cross-contract call inside `migrate` is not rolled back with a failing batch.
 - The gate does not build the wasm and does not check that the wasm matches the crate it scans; it records both hashes. CI builds are byte-identical across the runs cited, a local build on another machine is not; the committed `evidence/wasm/` files are the ones the proofs are bound to.
-- Linux-only real runs; the author's own contracts only (two upgrade pairs and `swarm_jobs`); no third-party contract through the runner; wallet path of the panel unverified; no mainnet.
-- Guarded jobs: the review runs off-chain and one trusted reviewer signs; the report and the crate are the agent's files, checked by hash and not re-executed, so the reviewer must take the report from a run they control; `approve` binds the wasm hash only; nothing binds a submission to its author; storage is paid by the contract and never freed. Shown on testnet up to the review, not through payment.
+- Real runs on Linux or macOS arm64 only (Docker elsewhere); the author's own contracts only (three upgrade pairs); no third-party contract through the runner; wallet path of the panel unverified; no mainnet.
+- Guarded jobs: the review runs off-chain and one trusted reviewer signs; the report and the crate are the agent's files, checked by hash and not re-executed, so the reviewer must take the report from a run they control; `approve` (v2) binds the agent, the wasm hash, the report hash and the hash of the review report; a submission is bound to one agent only when the poster names `assigned_agent`; in v2 the poster pays the storage of each job record and an agent's first deposit pays its own. Shown on testnet through payment (job 0 paid) and a reject that closed and refunded job 1 (2026-11-07).
 - The gate is not an on-chain guarantee: anyone with shell access can run `near contract deploy` by hand. It is the step a coding agent's workflow goes through.
 
 ## 7. Repository map
