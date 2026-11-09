@@ -36,7 +36,8 @@ jobs:
           expect 0 python3 -m bumm_guard scan /tmp/d1_fix
           expect 3 python3 -m bumm_guard gate tests/fixtures/near/d1_vuln
           cp -R tests/fixtures/near/d1_safe /tmp/d1_safe
-          expect 0 python3 -m bumm_guard gate /tmp/d1_safe --wasm contract.wasm --account demo.testnet
+          expect 0 python3 -m bumm_guard gate /tmp/d1_safe --wasm contract.wasm
+          expect 2 python3 -m bumm_guard gate /tmp/d1_safe --wasm contract.wasm --account demo.testnet
           expect 0 python3 -m bumm_guard simulate scenarios/upgrade/n06_*.json --validate-only
           test -z "$(git status --porcelain --untracked-files=no)" || { git status; exit 1; }   # the repo fixtures stay untouched
       - name: scripts/judge-check.sh --sandbox (offline + testnet + real near-sandbox, cold build)

@@ -217,18 +217,17 @@ python3 -m bumm_guard gate tests/fixtures/near/d1_vuln
 DEPLOY BLOCKED: 1 high/critical finding(s) in tests/fixtures/near/d1_vuln. Fix them (see `bumm-guard fix`) and run the gate again.
 ```
 
-**6. Gate a clean crate: report plus the deploy command.** Use a copy, because a pass writes `<crate>/.bumm-guard/gate-report.json` into the crate. `contract.wasm` is a placeholder that does not exist, so the gate says so twice: it cannot record a sha256, and it cannot compare the file with the code on `demo.testnet` (an upgrade check needs an existing `--wasm`; no network call is made). With a real build, pass its path. Exit `0`; nothing is executed.
+**6. Gate a clean crate: report plus the deploy command.** Use a copy, because a pass writes `<crate>/.bumm-guard/gate-report.json` into the crate. `contract.wasm` is a placeholder that does not exist, so the gate cannot record a sha256 and prints the command with an `<account-id>` placeholder. Exit `0`; nothing is executed. With `--account`, a wasm that does not exist is refused (exit `2`, no command): the gate must hash the candidate to compare it with the code on the account. With a real build, pass its path and the account.
 ```sh
 cp -R tests/fixtures/near/d1_safe /tmp/d1_safe
-python3 -m bumm_guard gate /tmp/d1_safe --wasm contract.wasm --account demo.testnet
+python3 -m bumm_guard gate /tmp/d1_safe --wasm contract.wasm
 ```
 ```
 bumm-guard: warning: wasm not found: contract.wasm (sha256 not recorded)
-warning: no --wasm: the code on demo.testnet was not checked; an upgrade of a live contract needs --wasm and a --simulate-report with a passing upgrade scenario
 warning: no scenario report: behaviour not verified
 gate passed: report written to /tmp/d1_safe/.bumm-guard/gate-report.json
 deploy command (NOT executed; pass --execute with --network testnet to run it):
-  near contract deploy demo.testnet use-file contract.wasm without-init-call network-config testnet sign-with-keychain send
+  near contract deploy '<account-id>' use-file contract.wasm without-init-call network-config testnet sign-with-keychain send
 ```
 The report (`/tmp/d1_safe/.bumm-guard/gate-report.json`) holds: tool version, `rule_ids_checked`, findings counts, sha256 of every scanned `*.rs`, the wasm path and sha256, network, account, UTC timestamp. With an existing `--wasm` the gate also queries the account's code over read-only RPC; see "Deploy gate on testnet".
 
