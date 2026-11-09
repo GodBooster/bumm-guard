@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import shlex
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -42,7 +43,7 @@ from pathlib import Path
 
 from . import __version__
 from .gate import NETWORKS, REPORT_DIR, run_gate, sha256_file, valid_account
-from .sanitize import clean, strip_control
+from .sanitize import clean, clean_deep, strip_control
 from .storage import RpcError, resolve_rpc_url, rpc_call
 
 REASON_MAX = 500          # the contract's MAX_REASON (bytes)
@@ -54,6 +55,10 @@ EVIDENCE_NOTE = ("note: the scenario report and the crate were supplied with the
                  "they are the submitted files and ran the gate on them, it did not re-execute the scenarios or "
                  "rebuild the wasm")
 NO_CHANGE_REASON = "the target account already runs this exact wasm: nothing was changed by this submission"
+# The longest text field of a job is its description (1000 bytes in swarm_jobs); job text read from the
+# chain is stripped of control characters but not shortened below that.
+JOB_TEXT_MAX = 1000
+
 V1_CONTRACT_NOTE = ("runs swarm_jobs v1 (get_job has no scenario_sha256). This review prints the v2 approve (agent, "
                     "wasm_sha256, report_sha256, gate_report_sha256), which a v1 contract refuses; upgrade the contract "
                     "to v2 first (docs/SWARM_JOBS.md, upgrade v1 -> v2). Nothing was reviewed.")
@@ -225,8 +230,13 @@ def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, s
         res.errors.append(f"bumm-guard: job {job_id} has an invalid target_account {clean(repr(target))}")
         return res
 
+    # When the report carries the poster's pinned scenario, the gate gets the same pin: the upgrade proof
+    # must be that scenario file, and the gate output says so instead of "no scenario pin". On a mismatch
+    # the gate runs unpinned, as before: its own verdict is recorded and the pin decides (reject).
+    gate_pin = (pinned if pin is not None and pin["matches"] and isinstance(pinned, str)
+                and re.fullmatch(r"[0-9a-f]{64}", pinned) else None)
     g = run_gate(crate_dir, wasm=wasm, network=network, account=target, dry_run=True,
-                 simulate_report=simulate_report, rpc_url=rpc_url)
+                 simulate_report=simulate_report, rpc_url=rpc_url, scenario_sha256=gate_pin)
     # The gate cleans report text where it reads it; stripping again here keeps every line that reaches
     # the reviewer's terminal, the reason and the review report on one line whatever its source.
     g.lines, g.errors = [strip_control(l) for l in g.lines], [strip_control(l) for l in g.errors]
@@ -259,7 +269,7 @@ def run_review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, s
         "tool": "bumm-guard", "version": __version__, "kind": "review-job",
         "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "network": network, "jobs_contract": jobs_contract, "job_id": job_id, "reviewer": signer,
-        "job": job, "target_account": target,
+        "job": clean_deep(job, JOB_TEXT_MAX), "target_account": target,
         "inputs": {"crate_dir": crate_dir, "wasm": wasm, "wasm_sha256": wasm_sha,
                    "simulate_report": simulate_report, "report_sha256": report_sha},
         "checks": {"status_submitted": True, "wasm_sha256_matches": True, "report_sha256_matches": True,

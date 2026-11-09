@@ -172,7 +172,8 @@ network-config <net> sign-with-keychain send` (`without-init-call` when `migrate
 In upgrade mode `simulate.passed` is true only if every scenario in the report passed (a
 deliberately failing code-only scenario is allowed next to the proof and noted).
 Added 2026-11-03: `migration_guard` (`{method, status, file, line}`, `null` without a migration call); `status` is
-`private`, `owner-check`, `not-found` (warning) or, when the gate blocked, `unprotected` / `ambiguous`.
+`private`, `owner-check` or, when the gate blocked, `not-found` / `unprotected` / `ambiguous`
+(`not-found`: the method is not in the crate sources, so its access control cannot be checked).
 
 **Gate hardening (v0.3, 2026-11-04).** New fields in the gate report and in the MCP `gate_deploy` /
 `verify_deployed` results, and stricter proof acceptance:
@@ -189,9 +190,19 @@ Added 2026-11-03: `migration_guard` (`{method, status, file, line}`, `null` with
   transaction did not succeed (status <s>[, expected <e>]); a rolled-back upgrade proves nothing`.
 - `upgrade.post_upgrade_steps`: every step after the upgrade step, in order, as `[{index, kind, method}]`
   (`kind` is `view`, `call` or `balance`; `method` is the account for a `balance` step). Printed as
-  `proved after upgrade (<n> step(s)): view deal_count, call refund, …`. Acceptance is unchanged (≥1 step);
-  when none of them is a `call` the gate prints `warning: only view calls were made on the migrated state; no
-  state change was exercised` and still passes.
+  `proved after upgrade (<n> step(s)): view deal_count, call refund, …`. A proof also needs a
+  successful `call` step after the upgrade (the old warning for views only no longer exists, such a scenario is
+  refused), exactly one `upgrade` step, and no step after the upgrade whose chain answer is a stored-state read
+  failure (`Cannot deserialize` in `actual`, even when the step expected it; a repeated call of the migration
+  method itself is exempt).
+- `--scenario-sha256 HEX` (64 lowercase hex, else exit 2; upgrade only): only a scenario whose own
+  `scenario_sha256` equals HEX is accepted as the proof. On an accepted proof the gate prints
+  `scenario pin: <hash> (matches)`, or without the flag `note: no scenario pin (--scenario-sha256): the proof is
+  whatever scenario the report's author chose to run`. MCP `gate_deploy` takes the same value as `scenario_sha256`.
+- A failing upgrade scenario for the same hash pair and the same migration method as the accepted proof blocks
+  (`DEPLOY BLOCKED: … does not outvote them`); a failing scenario with another migration (the code-only negative
+  check next to a with-migrate proof) stays a note. With `--rpc-url` the gate prints `note: the code on <account>
+  is read from a non-default RPC endpoint: <url>`. With `--account`, a `--wasm` path that does not exist is exit 2.
 - Migrate args must be literal: if any string value in the proof's `migrate.args` (recursively) equals a
   scenario alias, the gate blocks (exit 3, `DEPLOY BLOCKED: migrate args of scenario '<name>' reference
   sandbox-only alias(es) 'alice': …`). Aliases are the keys of the scenario's `accounts` as bumm-sim records them

@@ -38,3 +38,15 @@ def clean(value, limit: int = TEXT_MAX) -> str:
 def clean_str(value, limit: int = TEXT_MAX):
     """``clean`` for strings; any other value (``None``, a number) is returned unchanged."""
     return clean(value, limit) if isinstance(value, str) else value
+
+
+def clean_deep(value, limit: int = TEXT_MAX):
+    """``clean_str`` over every string of a JSON-like value (dict keys too, lists, nested); other
+    scalars are returned unchanged. For on-chain data that is returned or written as JSON."""
+    if isinstance(value, str):
+        return clean(value, limit)
+    if isinstance(value, dict):
+        return {clean(k, limit): clean_deep(v, limit) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [clean_deep(v, limit) for v in value]
+    return value

@@ -18,13 +18,21 @@ read-only ``view_account``), which blocks: its upgrades are not supported. Other
 allowed only if ``--simulate-report`` holds a passing scenario with an ``upgrade`` step
 (docs/FORMATS.md §2a) from exactly that on-chain code to exactly this wasm, that records the deployed
 code hash, whose upgrade transaction itself succeeded (a rolled-back upgrade proves nothing) and
-that has at least one step after the upgrade; the steps after the upgrade are listed in the output and
-in the report (``upgrade.post_upgrade_steps``), with a warning when none of them is a ``call``. The
-printed command then repeats that scenario's migration call (``with-init-call``) or has none
+that has exactly one ``upgrade`` step. After it there must be a successful ``call`` step, and no step
+may have failed with a stored-state read error (``"Cannot deserialize"`` in the chain's answer), even
+one the scenario expected; a repeated call of the migration method itself is exempt. Views alone
+are not a proof. With ``--scenario-sha256`` only a scenario whose own ``scenario_sha256`` equals the pin is accepted
+(``scenario pin: <hash> (matches)``); without it the gate prints a note that the proof is whatever scenario the
+report's author chose to run. A failing upgrade scenario for the same hash pair and the same migration
+method blocks (it is not outvoted by a passing one); a failing one with another migration (the code-only
+negative check) is a note. The steps after the upgrade are listed in the output and in the report
+(``upgrade.post_upgrade_steps``). With ``--account``, a ``--wasm`` that does not exist is exit 2 (no
+candidate hash, no command). ``--rpc-url`` prints a note that the on-chain code was read from a non-default
+endpoint. The printed command then repeats that scenario's migration call (``with-init-call``) or has none
 (``without-init-call``); migrate args that name a scenario alias (``"alice"``, resolved only inside the
 sandbox) block. When the proof has a migration call, ``migration_guard`` also checks in the crate's
 Rust sources that the migration method is not callable by anyone (``#[private]`` or a recognised
-``predecessor_account_id()`` guard in its body); an unprotected one, or one whose predecessor
+``predecessor_account_id()`` guard in its body); a method not found in the sources blocks, and an unprotected one, or one whose predecessor
 comparison has no recognised rejection branch (``owner-check-unknown``), blocks, because after the
 upgrade any account could call it and rewrite the state. The same code as the candidate on the
 account: ``NO CHANGE``, exit 0, no command (``deploy.status: "no-change"`` in the report).
@@ -269,7 +277,41 @@ def _state_written_before(sc: dict, up_idx) -> bool:
                for st in sc.get("steps") or [])
 
 
-def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | None, list[str]]:
+# near-sdk's panic text when stored Borsh bytes do not fit the type the code reads them as: the root
+# struct ("Cannot deserialize the contract state."), a collection record ("Cannot deserialize element",
+# "Cannot deserialize value with Borsh"). A JSON-argument error ("Failed to deserialize input") is not one.
+_STATE_READ_FAILURE = re.compile(r"cannot deserialize", re.IGNORECASE)
+
+
+def _steps_after(sc: dict, up_idx) -> list[dict]:
+    return [st for st in sc.get("steps") or [] if isinstance(st, dict) and _is_int(st.get("index"))
+            and _is_int(up_idx) and st["index"] > up_idx]
+
+
+def _state_read_failures_after(sc: dict, up_idx, migrate_method: str | None) -> list[str]:
+    """Steps after the upgrade whose chain answer is a stored-state read failure, whatever the step
+    expected: ``"<index> (<kind> <method>)"``. A scenario may expect such a failure and still pass;
+    it then documents the break instead of proving the upgrade. A repeated call of the migration
+    method itself is left out (a second ``migrate`` failing on the new layout is the wanted outcome)."""
+    out = []
+    for st in _steps_after(sc, up_idx):
+        actual = st.get("actual") if isinstance(st.get("actual"), dict) else {}
+        if migrate_method and st.get("kind") == "call" and st.get("method") == migrate_method:
+            continue
+        if actual.get("status") != "success" and _STATE_READ_FAILURE.search(json.dumps(actual)):
+            out.append(f"{st['index']} ({clean(st.get('kind'))} {clean(st.get('method'))})")
+    return out
+
+
+def _successful_call_after(sc: dict, up_idx) -> bool:
+    """Did a ``call`` step succeed after the upgrade? A view can pass on a broken upgrade (a counter in
+    the root struct reads fine while every stored record fails), and an expected failure proves nothing."""
+    return any(st.get("kind") == "call" and st.get("passed") is True
+               and (st.get("actual") or {}).get("status") == "success" for st in _steps_after(sc, up_idx))
+
+
+def find_upgrade_proof(rep: dict, onchain: str, candidate: str,
+                       scenario_sha256: str | None = None) -> tuple[dict | None, list[str]]:
     """The first passing scenario of a §3 report whose upgrade step goes from ``onchain`` (the
     scenario's ``wasm_sha256``) to ``candidate`` (``upgrade_wasm_sha256`` and the step's
     ``code_sha256``, which must be recorded), whose upgrade transaction succeeded (expectation
@@ -288,6 +330,15 @@ def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | 
         frm, to = sc.get("wasm_sha256"), sc.get("upgrade_wasm_sha256")
         if (frm, to) != (onchain, candidate):
             notes.append(f"upgrade scenario {name!r} proves {clean(frm)} -> {clean(to)}, not {onchain} -> {candidate}")
+            continue
+        if scenario_sha256 is not None and sc.get("scenario_sha256") != scenario_sha256:
+            notes.append(f"upgrade scenario {name!r} has scenario_sha256 {clean(sc.get('scenario_sha256'))}, not the "
+                         f"pinned {scenario_sha256}: only the pinned scenario file is accepted as a proof")
+            continue
+        if len(_upgrade_steps(sc)) != 1:
+            notes.append(f"upgrade scenario {name!r} has {len(_upgrade_steps(sc))} upgrade steps: the printed command "
+                         "is one deploy, so a proof must contain exactly one upgrade step (a later upgrade step "
+                         "could repair what the first one broke)")
             continue
         step = _upgrade_steps(sc)[0]
         ok, why = _upgrade_succeeded(step)
@@ -323,6 +374,19 @@ def find_upgrade_proof(rep: dict, onchain: str, candidate: str) -> tuple[dict | 
             notes.append(f"upgrade scenario {name!r} makes no successful call before the upgrade: the old code "
                          "wrote no state beyond its init, so the upgrade was not tested on stored data; add a "
                          "state-changing call before the upgrade step")
+            continue
+        mig = step.get("migrate") if isinstance(step.get("migrate"), dict) else {}
+        broken = _state_read_failures_after(sc, step.get("index"), mig.get("method") or step.get("method"))
+        if broken:
+            notes.append(f"upgrade scenario {name!r}: after the upgrade, step {broken[0]}"
+                         + (f" and {len(broken) - 1} more" if len(broken) > 1 else "")
+                         + " could not read stored state (\"Cannot deserialize\" in the chain's answer). A scenario "
+                         "that expects this failure documents the break; it is not accepted as a proof")
+            continue
+        if not _successful_call_after(sc, step.get("index")):
+            notes.append(f"upgrade scenario {name!r} makes no successful call after the upgrade: a view can pass "
+                         "while every stored record fails to load, so views alone are not accepted as a proof; add "
+                         "a state-changing call on data written before the upgrade")
             continue
         if step.get("method") and not isinstance(step.get("migrate"), dict):
             notes.append(f"upgrade scenario {name!r} has a migration call but the report does not record its "
@@ -589,7 +653,7 @@ def _refused(res: ScanResult, report: Path, dry_run: bool, errors: list[str]) ->
 def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", account: str | None = None,
              dry_run: bool = False, execute: bool = False, abi: str | None = None,
              simulate_report: str | None = None, estimate_storage_flag: bool = False,
-             rpc_url: str | None = None) -> GateOutcome:
+             rpc_url: str | None = None, scenario_sha256: str | None = None) -> GateOutcome:
     """Scan, decide, optionally write the report and (testnet only) run the deploy.
 
     ``simulate_report`` binds a §3 report to ``wasm``; ``estimate_storage_flag`` adds the read-only
@@ -615,6 +679,14 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
 
     if abi is not None and not Path(abi).is_file():
         return GateOutcome(2, errors=[f"bumm-guard: abi file not found: {abi}"])
+    if account and wasm and not Path(wasm).is_file():
+        # Without the file there is no candidate hash: the code on the account cannot be compared with it,
+        # so no command may be printed for that account.
+        return GateOutcome(2, errors=[f"bumm-guard: wasm file not found: {wasm}; with --account the gate must hash "
+                                      "the candidate to compare it with the code on the account (build it first)"])
+    if scenario_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", scenario_sha256):
+        return GateOutcome(2, errors=["bumm-guard: --scenario-sha256 must be 64 lowercase hex characters "
+                                      "(sha256 of the scenario file)"])
     if (simulate_report or estimate_storage_flag) and not (wasm and Path(wasm).is_file()):
         return GateOutcome(2, errors=["bumm-guard: --simulate-report and --estimate-storage need an existing --wasm "
                                       "(the report is bound to the wasm hash / its size is measured)"])
@@ -644,6 +716,8 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
                      if isinstance(sc, dict) and _upgrade_steps(sc)] if isinstance(rep, dict) else []
     if account and wasm and Path(wasm).is_file():
         candidate = data["artifact"]["wasm_sha256"]
+        if rpc_url:
+            out.lines.append(f"note: the code on {account} is read from a non-default RPC endpoint: {clean(rpc_url)}")
         try:
             onchain = onchain_code_sha256(account, network, rpc_url)
         except RpcError as e:
@@ -673,7 +747,24 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
             out.lines.append(f"NO CHANGE: account {account} ({network}) already runs this exact wasm ({onchain}); "
                              "nothing to deploy")
         else:
-            upgrade, notes = find_upgrade_proof(rep, onchain, candidate) if isinstance(rep, dict) else (None, [])
+            upgrade, notes = (find_upgrade_proof(rep, onchain, candidate, scenario_sha256)
+                              if isinstance(rep, dict) else (None, []))
+            # A failing upgrade scenario for the same pair and the same migration contradicts the proof: one
+            # small passing scenario must not outvote it. A failing scenario with another migration (the
+            # code-only negative check next to the with-migrate proof) is a different deploy and stays a note.
+            same = [clean(sc.get("name", "?")) for sc in (rep.get("scenarios") or [] if isinstance(rep, dict) else [])
+                    if isinstance(sc, dict) and not sc.get("passed") and len(_upgrade_steps(sc)) == 1
+                    and (sc.get("wasm_sha256"), sc.get("upgrade_wasm_sha256")) == (onchain, candidate)
+                    and upgrade is not None
+                    and ((_upgrade_steps(sc)[0].get("migrate") or {}).get("method") if isinstance(
+                        _upgrade_steps(sc)[0].get("migrate"), dict) else _upgrade_steps(sc)[0].get("method"))
+                    == ((upgrade["migrate"] or {}).get("method"))]
+            if upgrade is not None and same:
+                out.upgrade_check = upgrade_check(rep, account, onchain, candidate, simulate_report)
+                return _blocked(out, report, dry_run, [
+                    f"DEPLOY BLOCKED: the simulate report has failing upgrade scenario(s) for this same pair and "
+                    f"migration: {', '.join(same)}. The passing scenario {upgrade['scenario']!r} does not outvote "
+                    "them; make them pass"] + [f"  {n}" for n in notes])
             if upgrade is None:
                 out.upgrade_check = upgrade_check(rep, account, onchain, candidate, simulate_report)
                 how = ("pass --simulate-report with a passing upgrade scenario (docs/FORMATS.md §2a): contract.wasm = "
@@ -694,9 +785,9 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
             steps = upgrade["post_upgrade_steps"]
             out.lines.append(f"proved after upgrade ({len(steps)} step(s)): "
                              + ", ".join(f"{st['kind']} {st['method']}" for st in steps))
-            if not any(st["kind"] == "call" for st in steps):
-                out.lines.append("warning: only view calls were made on the migrated state; no state change "
-                                 "was exercised")
+            out.lines.append(f"scenario pin: {scenario_sha256} (matches)" if scenario_sha256 else
+                             "note: no scenario pin (--scenario-sha256): the proof is whatever scenario the report's "
+                             "author chose to run")
             aliases = migrate_alias_args(rep, upgrade["scenario"], m)
             if aliases:
                 return _blocked(out, report, dry_run, [
@@ -723,8 +814,10 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
                         "`require!(env::predecessor_account_id() == self.owner, \"only owner\")` as the first "
                         "line of the body"])
                 elif status == "not-found":
-                    out.lines.append(f"warning: migration method {m['method']} not found in {crate_dir} sources; "
-                                     "its access control was not checked")
+                    return _blocked(out, report, dry_run, [
+                        f"DEPLOY BLOCKED: migration method {m['method']} not found in {crate_dir} sources: its access "
+                        "control cannot be checked, and the scanned directory may not be the source of this wasm; "
+                        "point the gate at the crate the wasm was built from"])
                 else:
                     fix = ("  fix: add `#[private]` above `#[init(ignore_state)]`, or "
                            "`require!(env::predecessor_account_id() == self.owner, \"only owner\")` as the first "

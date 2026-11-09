@@ -94,9 +94,18 @@ class GateTests(unittest.TestCase):
         self.assertIn("near contract deploy demo.testnet", out)
         self.assertFalse((crate / REPORT_DIR).exists())
 
-    def test_missing_wasm_is_warned_not_hashed(self):
+    def test_missing_wasm_with_account_is_refused(self):
         crate = self.crate("d1_safe")
         code, out, err = run_cli("gate", str(crate), "--wasm", "/nonexistent/x.wasm", "--account", "demo.testnet")
+        self.assertEqual(code, 2)
+        self.assertIn("wasm file not found", err)
+        self.assertIn("with --account", err)
+        self.assertNotIn("near contract deploy", out)
+        self.assertFalse((crate / REPORT_DIR).exists())
+
+    def test_missing_wasm_without_account_is_warned_not_hashed(self):
+        crate = self.crate("d1_safe")
+        code, out, err = run_cli("gate", str(crate), "--wasm", "/nonexistent/x.wasm")
         self.assertEqual(code, 0)
         self.assertIn("warning", err)
         self.assertIsNone(json.loads((crate / REPORT_DIR / REPORT_NAME).read_text())["wasm"]["sha256"])

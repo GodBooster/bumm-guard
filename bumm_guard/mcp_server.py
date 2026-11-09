@@ -34,8 +34,9 @@ from . import __version__
 from .cli import fix_to_dict, scan_to_dict
 from .fix import run_fix
 from .gate import BLOCKING, NETWORKS, run_gate, valid_account
-from .review import EVIDENCE_ORIGIN, NO_CHANGE_REASON, run_review_job
+from .review import EVIDENCE_ORIGIN, JOB_TEXT_MAX, NO_CHANGE_REASON, run_review_job
 from .rulepack.near import RULES
+from .sanitize import clean_deep
 from .scanner import DEFAULT_EXCLUDES, scan
 from .storage import estimate_storage as _estimate_storage
 from .verify import SmokeSpecError, parse_smoke, post_deploy_ok
@@ -96,7 +97,8 @@ def fix_contract(path: str, apply: bool = False, exclude: list[str] | None = Non
 
 
 def gate_deploy(crate_dir: str, wasm: str | None = None, account: str | None = None,
-                network: str = "testnet", simulate_report: str | None = None) -> dict:
+                network: str = "testnet", simulate_report: str | None = None,
+                scenario_sha256: str | None = None) -> dict:
     _check_path(crate_dir, "crate_dir")
     if wasm is not None:
         _check_path(wasm, "wasm")
@@ -105,7 +107,7 @@ def gate_deploy(crate_dir: str, wasm: str | None = None, account: str | None = N
     if network not in NETWORKS:
         raise ToolInputError(f"network must be one of {list(NETWORKS)}")
     out = run_gate(crate_dir, wasm=wasm, network=network, account=account, dry_run=False, execute=False,
-                   simulate_report=simulate_report)
+                   simulate_report=simulate_report, scenario_sha256=scenario_sha256)
     if out.exit_code == 2 or out.scan is None:
         raise ToolInputError("; ".join(out.errors) or "gate refused the input")
     findings = [f.to_dict() for f in out.scan.findings]
@@ -186,7 +188,7 @@ def review_job(jobs_contract: str, job_id: int, crate_dir: str, wasm: str, simul
         raise ToolInputError("; ".join(out.errors) or "review refused the input")
     return {
         "tool": "bumm-guard", "version": __version__, "network": network,
-        "jobs_contract": jobs_contract, "job_id": job_id, "job": out.job,
+        "jobs_contract": jobs_contract, "job_id": job_id, "job": clean_deep(out.job, JOB_TEXT_MAX),
         "verdict": out.verdict, "passed": out.verdict == "approve", "reason": out.reason,
         "review_report_path": os.path.abspath(out.report_path) if out.report_path else None,
         "gate_report_sha256": out.report_sha256 if out.verdict == "approve" else None,
@@ -269,12 +271,16 @@ def build_server():
         "already runs other code this is an UPGRADE of a live contract with state, and the gate blocks unless "
         "`simulate_report` has a passing upgrade scenario from exactly that on-chain code to exactly `wasm`; "
         "then `deploy_command` repeats that scenario's migration call and `upgrade` describes the proof (incl. "
-        "`post_upgrade_steps`). If the account already runs exactly `wasm`: passed, `deploy.status` is 'no-change' "
+        "`post_upgrade_steps`). A proof needs exactly one upgrade step, a successful call after it and no "
+        "stored-state read failure after it. `scenario_sha256` (optional, 64 lowercase hex, upgrade only) pins "
+        "the scenario file: only a scenario with that sha256 is accepted; without it the proof is whatever "
+        "scenario the report's author chose to run. If the account already runs exactly `wasm`: passed, `deploy.status` is 'no-change' "
         "and `deploy_command` is null (nothing to deploy)."))
     @readable_errors
     def gate_deploy_tool(crate_dir: str, wasm: str | None = None, account: str | None = None,
-                         network: str = "testnet", simulate_report: str | None = None) -> dict:
-        return gate_deploy(crate_dir, wasm, account, network, simulate_report)
+                         network: str = "testnet", simulate_report: str | None = None,
+                         scenario_sha256: str | None = None) -> dict:
+        return gate_deploy(crate_dir, wasm, account, network, simulate_report, scenario_sha256)
 
     @server.tool(name="estimate_storage", description=(
         "Estimate the storage-staking balance that deploying `wasm` locks on its account: code_bytes (file size), "

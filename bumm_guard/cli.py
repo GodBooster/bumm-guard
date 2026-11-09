@@ -159,7 +159,7 @@ def _cmd_gate(args: argparse.Namespace) -> int:
         out = run_gate(args.crate_dir, wasm=args.wasm, network=args.network, account=args.account,
                        dry_run=args.dry_run, execute=args.execute, abi=args.abi,
                        simulate_report=args.simulate_report, estimate_storage_flag=args.estimate_storage,
-                       rpc_url=args.rpc_url)
+                       rpc_url=args.rpc_url, scenario_sha256=args.scenario_sha256)
     if out.blocked and out.scan is not None:
         print(render_text(out.scan))
     for line in out.lines:
@@ -225,6 +225,9 @@ def build_parser() -> argparse.ArgumentParser:
     gp.add_argument("--abi", metavar="PATH", help="cargo near abi output; its sha256 goes into the report")
     gp.add_argument("--simulate-report", metavar="PATH",
                     help="simulate-report.json (docs/FORMATS.md §3); must match --wasm and have 0 failed scenarios, else exit 3")
+    gp.add_argument("--scenario-sha256", metavar="HEX",
+                    help="upgrade only: accept as a proof only a scenario whose file has this sha256 (pin the "
+                         "scenario the owner approved, so the party that wrote the code cannot weaken the proof)")
     gp.add_argument("--estimate-storage", action="store_true",
                     help="add the storage-staking estimate (read-only RPC call to --network; needs --wasm)")
     gp.add_argument("--rpc-url", metavar="URL", help="override the public RPC endpoint for --network")

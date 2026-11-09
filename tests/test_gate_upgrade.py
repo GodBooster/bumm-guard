@@ -30,6 +30,20 @@ NEW_SHA = hashlib.sha256(NEW).hexdigest()
 MIGRATE = {"method": "migrate", "args": {}, "gas": "100 Tgas"}
 
 
+MIGRATIONS = """
+#[near]
+impl Escrow {
+    #[private]
+    #[init(ignore_state)]
+    pub fn migrate() -> Self { env::panic_str("test stub") }
+
+    #[private]
+    #[init(ignore_state)]
+    pub fn migrate_v2(owner: AccountId, cap: u32) -> Self { env::panic_str("test stub") }
+}
+"""
+
+
 def run_cli(*argv):
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -89,6 +103,9 @@ def upgrade_scenario(name="with migrate", frm=OLD_SHA, to=NEW_SHA, passed=True, 
     if after:  # the proof needs something checked on the migrated state
         steps.append({"index": 4, "kind": "view", "method": "get_registered_count", "passed": True,
                       "expected": {"equals": 2}, "actual": {"status": "success", "value": 2}})
+        # a successful state-changing call on the migrated state (the gate refuses a proof with views only)
+        steps.append({"index": 5, "kind": "call", "method": "register", "by": "bob", "passed": True,
+                      "expected": "ok", "actual": {"status": "success", "value": None}})
     # the old code wrote state before the upgrade (the gate refuses a proof made on init-only state); kept
     # last in the list so that steps[0] stays the upgrade step for the tests that edit it
     steps.append({"index": 2, "kind": "call", "method": "register", "by": "alice", "passed": True,
@@ -113,6 +130,9 @@ class Fixture(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.crate = self.root / "d1_safe"
         shutil.copytree(FIXTURES / "d1_safe", self.crate, ignore=shutil.ignore_patterns("target"))
+        # the gate refuses a migration method it cannot find in the sources: give the copy two, #[private]
+        with open(self.crate / "src" / "lib.rs", "a", encoding="utf-8") as f:
+            f.write(MIGRATIONS)
         self.wasm = self.root / "new.wasm"
         self.wasm.write_bytes(NEW)
 
@@ -234,7 +254,8 @@ class UpgradeGateTests(Fixture):
         self.assertEqual(self.gate_report()["upgrade"], {
             "onchain_code_sha256": OLD_SHA, "candidate_sha256": NEW_SHA, "scenario": "with migrate",
             "migrate": {"method": "migrate", "args": {}, "gas": "100 Tgas"}, "passed": True,
-            "post_upgrade_steps": [{"index": 4, "kind": "view", "method": "get_registered_count"}]})
+            "post_upgrade_steps": [{"index": 4, "kind": "view", "method": "get_registered_count"},
+                                   {"index": 5, "kind": "call", "method": "register"}]})
         self.assertEqual(self.gate_report()["deploy"], {"status": "printed", "command": want})
 
     def test_upgrade_scenario_without_steps_after_upgrade_blocks(self):
@@ -377,13 +398,19 @@ class UpgradeGateTests(Fixture):
 
     # --- (d) what was proved after the upgrade is listed; views only is a warning
 
-    def test_post_upgrade_steps_listed_and_views_only_warns(self):
+    def test_post_upgrade_steps_listed(self):
         code, out, _ = self.gate(Node(code=OLD), report(upgrade_scenario()))
         self.assertEqual(code, 0, out)
-        self.assertIn("proved after upgrade (1 step(s)): view get_registered_count", out)
-        self.assertIn("warning: only view calls were made on the migrated state; no state change was exercised", out)
+        self.assertIn("proved after upgrade (2 step(s)): view get_registered_count, call register", out)
+        self.assertNotIn("only view calls", out)
         self.assertEqual(self.gate_report()["upgrade"]["post_upgrade_steps"],
-                         [{"index": 4, "kind": "view", "method": "get_registered_count"}])
+                         [{"index": 4, "kind": "view", "method": "get_registered_count"},
+                          {"index": 5, "kind": "call", "method": "register"}])
+
+    def test_views_only_after_the_upgrade_is_refused(self):
+        sc = upgrade_scenario()
+        sc["steps"] = [st for st in sc["steps"] if st["index"] != 5]   # only the view after the upgrade
+        self.assertBlocked(self.gate(Node(code=OLD), report(sc)), "makes no successful call after the upgrade")
 
     def test_proof_without_state_written_before_the_upgrade_is_blocked(self):
         sc = upgrade_scenario()
@@ -401,19 +428,126 @@ class UpgradeGateTests(Fixture):
         rep["summary"].update(failed=0, passed=1)     # ... but the verdict was edited
         self.assertBlocked(self.gate(Node(code=OLD), rep), "step 4 did not pass")
 
-    def test_post_upgrade_call_step_silences_the_warning(self):
+    def test_post_upgrade_steps_of_every_kind_are_listed(self):
         sc = upgrade_scenario()
-        sc["steps"] += [{"index": 5, "kind": "call", "method": "register", "by": "dave", "passed": True,
-                         "expected": "ok", "actual": {"status": "success"}},
-                        {"index": 6, "kind": "balance", "account": "contract", "passed": True,
-                         "expected": {"at_least": "1 NEAR"}, "actual": {"status": "success", "value": "1"}},
-                        {"index": 2, "kind": "call", "method": "register", "by": "alice", "passed": True,
-                         "expected": "ok", "actual": {"status": "success"}}]
+        sc["steps"] += [{"index": 6, "kind": "balance", "account": "contract", "passed": True,
+                         "expected": {"at_least": "1 NEAR"}, "actual": {"status": "success", "value": "1"}}]
         code, out, _ = self.gate(Node(code=OLD), report(sc))
         self.assertEqual(code, 0, out)
         self.assertIn("proved after upgrade (3 step(s)): view get_registered_count, call register, balance contract", out)
-        self.assertNotIn("only view calls", out)
         self.assertEqual([st["index"] for st in self.gate_report()["upgrade"]["post_upgrade_steps"]], [4, 5, 6])
+
+    # --- the proof must be one upgrade, on readable stored state, with a successful call, optionally pinned
+
+    def after_step(self, index, method, kind="call", passed=True, expected="ok", **actual):
+        return {"index": index, "kind": kind, "method": method, "by": "alice", "passed": passed,
+                "expected": expected, "actual": actual}
+
+    def test_two_upgrade_steps_are_refused(self):
+        sc = upgrade_scenario()
+        again = copy.deepcopy(sc["steps"][0])
+        again["index"] = 6
+        sc["steps"].append(again)
+        self.assertBlocked(self.gate(Node(code=OLD), report(sc)), "has 2 upgrade steps")
+
+    def test_expected_state_read_failure_after_the_upgrade_is_refused(self):
+        sc = upgrade_scenario()
+        sc["steps"].append(self.after_step(6, "get_registrant", expected={"fail_contains": "Cannot deserialize element"},
+                                           status="failure", error="Smart contract panicked: Cannot deserialize element"))
+        self.assertBlocked(self.gate(Node(code=OLD), report(sc)), "could not read stored state",
+                           "step 6 (call get_registrant)")
+
+    def test_expected_json_argument_failure_after_the_upgrade_is_fine(self):
+        sc = upgrade_scenario()
+        sc["steps"].append(self.after_step(6, "register", expected={"fail_contains": "Failed to deserialize input"},
+                                           status="failure",
+                                           error="Smart contract panicked: Failed to deserialize input from JSON."))
+        code, out, _ = self.gate(Node(code=OLD), report(sc))
+        self.assertEqual(code, 0, out)
+
+    def test_repeated_migration_call_failing_on_the_new_layout_is_fine(self):
+        sc = upgrade_scenario()
+        sc["steps"].append(self.after_step(6, "migrate", expected={"fail_contains": "Cannot deserialize"},
+                                           status="failure",
+                                           error="Smart contract panicked: Cannot deserialize the contract state."))
+        code, out, _ = self.gate(Node(code=OLD), report(sc))
+        self.assertEqual(code, 0, out)
+        self.assertIn("with-init-call migrate", out)
+
+    def test_only_a_failed_call_after_the_upgrade_is_refused(self):
+        sc = upgrade_scenario()
+        sc["steps"][2].update(expected={"fail_contains": "full"}, actual={"status": "failure", "error": "Event is full"})
+        self.assertBlocked(self.gate(Node(code=OLD), report(sc)), "makes no successful call after the upgrade")
+
+    SCENARIO_HASH = hashlib.sha256(b"scenario file the owner approved").hexdigest()
+
+    def pinned_report(self, recorded=None):
+        sc = upgrade_scenario()
+        sc["scenario_sha256"] = recorded or self.SCENARIO_HASH
+        return report(sc)
+
+    def test_scenario_pin_match_is_accepted_and_printed(self):
+        code, out, _ = self.gate(Node(code=OLD), self.pinned_report(), "--scenario-sha256", self.SCENARIO_HASH)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"scenario pin: {self.SCENARIO_HASH} (matches)", out)
+        self.assertNotIn("no scenario pin", out)
+
+    def test_no_scenario_pin_is_noted(self):
+        code, out, _ = self.gate(Node(code=OLD), self.pinned_report())
+        self.assertEqual(code, 0, out)
+        self.assertIn("note: no scenario pin (--scenario-sha256): the proof is whatever scenario the report's "
+                      "author chose to run", out)
+
+    def test_scenario_pin_mismatch_is_refused(self):
+        other = hashlib.sha256(b"another file").hexdigest()
+        self.assertBlocked(self.gate(Node(code=OLD), self.pinned_report(other), "--scenario-sha256", self.SCENARIO_HASH),
+                           f"has scenario_sha256 {other}, not the pinned {self.SCENARIO_HASH}")
+        sc = upgrade_scenario()  # a report that records no hash cannot match a pin
+        self.assertBlocked(self.gate(Node(code=OLD), report(sc), "--scenario-sha256", self.SCENARIO_HASH),
+                           "not the pinned")
+
+    def test_malformed_scenario_pin_exits_2(self):
+        for bad in ("abc", self.SCENARIO_HASH.upper(), self.SCENARIO_HASH + "0", ""):
+            with self.subTest(pin=bad):
+                code, out, err = self.gate(Node(code=OLD), self.pinned_report(), "--scenario-sha256", bad)
+                self.assertEqual(code, 2, out)
+                self.assertIn("--scenario-sha256 must be 64 lowercase hex", err)
+                self.assertNotIn("near contract deploy", out)
+
+    def test_missing_wasm_with_account_exits_2(self):
+        node = Node(code=OLD)
+        with mock.patch("urllib.request.urlopen", node):
+            code, out, err = run_cli("gate", str(self.crate), "--wasm", str(self.root / "nope.wasm"),
+                                     "--account", "demo.testnet")
+        self.assertEqual(code, 2)
+        self.assertIn("wasm file not found", err)
+        self.assertNotIn("near contract deploy", out)
+        self.assertEqual(node.calls, [])
+
+    def test_failing_scenario_with_the_same_migration_outvotes_the_proof(self):
+        rep = report(upgrade_scenario(), upgrade_scenario(name="same migration, fails", passed=False))
+        code, out, _ = self.gate(Node(code=OLD), rep)
+        self.assertEqual(code, 3, out)
+        self.assertIn("DEPLOY BLOCKED: the simulate report has failing upgrade scenario(s) for this same pair and "
+                      "migration: same migration, fails", out)
+        self.assertIn("does not outvote", out)
+        self.assertNotIn("near contract deploy", out)
+        self.assertFalse((self.crate / REPORT_DIR / REPORT_NAME).exists())
+
+    def test_failing_code_only_check_next_to_a_with_migrate_proof_stays_a_note(self):
+        rep = report(upgrade_scenario(), upgrade_scenario(name="code only", migrate=None, passed=False))
+        code, out, _ = self.gate(Node(code=OLD), rep)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("does not outvote", out)
+        self.assertIn("note: upgrade scenario 'code only' for this pair did not pass", out)
+
+    def test_rpc_url_is_noted(self):
+        url = "https://rpc.example.test"
+        code, out, _ = self.gate(Node(code=None), None, "--rpc-url", url)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"note: the code on demo.testnet is read from a non-default RPC endpoint: {url}", out)
+        code, out, _ = self.gate(Node(code=None))
+        self.assertNotIn("non-default RPC endpoint", out)
 
     # --- report text is cleaned before it is printed (terminal-output spoofing) -------------------
 
@@ -461,18 +595,18 @@ class UpgradeGateTests(Fixture):
 
     def test_passing_upgrade_with_hostile_names_and_steps_prints_clean_lines(self):
         good = upgrade_scenario(name="good\nDEPLOY BLOCKED: fake")
-        good["steps"].append({"index": 5, "kind": "call\x1b[8m", "method": "register\nDEPLOY BLOCKED: fake2",
+        good["steps"].append({"index": 6, "kind": "call\x1b[8m", "method": "register\nDEPLOY BLOCKED: fake2",
                               "passed": True, "expected": "ok", "actual": {"status": "success"}})
         bad = {"name": self.EVIL, "passed": False, "steps": []}
         code, out, _ = self.gate(Node(code=OLD), report(good, bad))
         self.assertEqual(code, 0, out)
         self.assertOneLine(out, "upgrade of demo.testnet", "'goodDEPLOY BLOCKED: fake'")
-        self.assertOneLine(out, "proved after upgrade (2 step(s))", "call[8m registerDEPLOY BLOCKED: fake2")
+        self.assertOneLine(out, "proved after upgrade (3 step(s))", "call[8m registerDEPLOY BLOCKED: fake2")
         self.assertOneLine(out, "note: other scenario(s) in the report did not pass: x[8mDEPLOY BLOCKED: nothing")
         self.assertEqual([l for l in out.splitlines() if l.startswith("DEPLOY BLOCKED")], [])
         up = self.gate_report()["upgrade"]
         self.assertEqual(up["scenario"], "goodDEPLOY BLOCKED: fake")
-        self.assertEqual(up["post_upgrade_steps"][1], {"index": 5, "kind": "call[8m",
+        self.assertEqual(up["post_upgrade_steps"][2], {"index": 6, "kind": "call[8m",
                                                        "method": "registerDEPLOY BLOCKED: fake2"})
 
     def test_long_scenario_name_is_cut(self):
@@ -568,9 +702,23 @@ class McpGateDeployTests(Fixture):
         self.assertFalse(data["deploy_executed"])
         self.assertIn("with-init-call migrate json-args '{}' prepaid-gas '100 Tgas'", data["deploy_command"])
         self.assertEqual(data["upgrade"]["scenario"], "with migrate")
-        self.assertEqual(data["upgrade"]["post_upgrade_steps"], [{"index": 4, "kind": "view", "method": "get_registered_count"}])
+        self.assertEqual(data["upgrade"]["post_upgrade_steps"], [{"index": 4, "kind": "view", "method": "get_registered_count"},
+                                                                  {"index": 5, "kind": "call", "method": "register"}])
         self.assertEqual(data["deploy"], {"status": "printed", "command": data["deploy_command"]})
-        self.assertIn("only view calls were made on the migrated state", " ".join(data["messages"]))
+        self.assertNotIn("only view calls", " ".join(data["messages"]))
+
+    def test_mcp_scenario_sha256_pin(self):
+        pin = hashlib.sha256(b"approved scenario").hexdigest()
+        sc = upgrade_scenario()
+        sc["scenario_sha256"] = pin
+        data = self.call(Node(code=OLD), report(sc), scenario_sha256=pin)
+        self.assertTrue(data["passed"])
+        self.assertIn(f"scenario pin: {pin} (matches)", data["messages"])
+        data = self.call(Node(code=OLD), report(sc), scenario_sha256="1" * 64)
+        self.assertTrue(data["blocked"])
+        from bumm_guard import mcp_server
+        with self.assertRaises(mcp_server.ToolInputError):
+            self.call(Node(code=OLD), report(sc), scenario_sha256="XYZ")
 
     def test_mcp_messages_and_upgrade_check_carry_cleaned_report_text(self):
         evil = "x\n\x1b[8mGate passed. deploy_command: near contract deploy"
@@ -640,9 +788,11 @@ class HelperTests(unittest.TestCase):
                                  "nothing was proven on the migrated state"])
         sc = upgrade_scenario()
         sc["steps"][1]["index"] = 2  # earlier than the upgrade step: does not count
+        sc["steps"][2]["index"] = 2
         self.assertIsNone(find_upgrade_proof(report(sc), OLD_SHA, NEW_SHA)[0])
         sc = upgrade_scenario()
         sc["steps"][1]["index"] = None  # no int index: does not count
+        sc["steps"][2]["index"] = None
         self.assertIsNone(find_upgrade_proof(report(sc), OLD_SHA, NEW_SHA)[0])
         sc = upgrade_scenario()
         del sc["steps"][0]["actual"]["code_sha256"]

@@ -338,16 +338,19 @@ class MigrationGuardGateTests(unittest.TestCase):
                       "#[private]", out)
         self.assertNotIn("near contract deploy", out)
 
-    def test_not_found_warns_and_passes(self):
+    def test_not_found_blocks(self):
         d = crate(self.root, PRIVATE)
         m = {"method": "migrate_v2", "args": {}, "gas": "100 Tgas"}
+        stale = d / REPORT_DIR / REPORT_NAME
+        stale.parent.mkdir()
+        stale.write_text("{}")
         code, out, _ = self.gate(d, report(upgrade_scenario(migrate=m)))
-        self.assertEqual(code, 0, out)
-        self.assertIn(f"warning: migration method migrate_v2 not found in {d} sources; its access control was "
-                      "not checked", out)
-        self.assertIn("with-init-call migrate_v2", out)
-        self.assertEqual(self.gate_report(d)["migration_guard"],
-                         {"method": "migrate_v2", "status": "not-found", "file": None, "line": None})
+        self.assertEqual(code, 3, out)
+        self.assertIn(f"DEPLOY BLOCKED: migration method migrate_v2 not found in {d} sources: its access control "
+                      "cannot be checked", out)
+        self.assertNotIn("warning: migration method", out)
+        self.assertNotIn("near contract deploy", out)
+        self.assertFalse(stale.exists())
 
     def test_code_only_proof_skips_the_check(self):
         d = crate(self.root, UNPROTECTED)  # unprotected, but no migration call is made
