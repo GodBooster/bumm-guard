@@ -310,6 +310,30 @@ def _successful_call_after(sc: dict, up_idx) -> bool:
                and (st.get("actual") or {}).get("status") == "success" for st in _steps_after(sc, up_idx))
 
 
+# near-sdk's refusal of a call that does not come from the contract itself: `#[private]` panics with
+# "Method <name> is private", `near_sdk::assert_self()` with "Method is private".
+_PRIVATE_REFUSAL = re.compile(r"\bis private\b")
+
+
+def _state_digest(value) -> dict | None:
+    """A ``{keys, bytes, sha256}`` state digest of a §3 report, or ``None`` if it is absent or malformed."""
+    if (isinstance(value, dict) and _is_int(value.get("keys")) and _is_int(value.get("bytes"))
+            and isinstance(value.get("sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", value["sha256"])):
+        return value
+    return None
+
+
+def _access_probe(step: dict) -> dict | None:
+    """The upgrade step's access probe (the migration call repeated by an account that is not the
+    contract) as ``{method, by, status, error}`` with cleaned text; ``None`` when the report has none
+    (bumm-sim older than the probe) or the probe did not run."""
+    p = step.get("access_probe")
+    if not isinstance(p, dict) or p.get("status") not in ("success", "failure"):
+        return None
+    return {"method": clean_str(p.get("method")), "by": clean_str(p.get("by")), "status": p["status"],
+            "error": clean_str(p.get("error"))}
+
+
 def find_upgrade_proof(rep: dict, onchain: str, candidate: str,
                        scenario_sha256: str | None = None) -> tuple[dict | None, list[str]]:
     """The first passing scenario of a §3 report whose upgrade step goes from ``onchain`` (the
@@ -375,6 +399,18 @@ def find_upgrade_proof(rep: dict, onchain: str, candidate: str,
                          "wrote no state beyond its init, so the upgrade was not tested on stored data; add a "
                          "state-changing call before the upgrade step")
             continue
+        after_init, before = _state_digest(sc.get("state_after_init")), _state_digest(step.get("state_before"))
+        if after_init and before and after_init["sha256"] == before["sha256"]:
+            notes.append(f"upgrade scenario {name!r}: the contract state right before the upgrade ({before['keys']} "
+                         f"key(s), {before['bytes']} byte(s)) is identical to the state right after init: the calls "
+                         "before the upgrade wrote nothing, so the upgrade was not tested on stored data")
+            continue
+        probe = _access_probe(step)
+        if probe and probe["status"] == "success":
+            notes.append(f"upgrade scenario {name!r}: after the upgrade the migration method {probe['method']} "
+                         f"accepted a call from another account ({probe['by']}, access probe): anyone could call it "
+                         "and rewrite the state; make it #[private]")
+            continue
         mig = step.get("migrate") if isinstance(step.get("migrate"), dict) else {}
         broken = _state_read_failures_after(sc, step.get("index"), mig.get("method") or step.get("method"))
         if broken:
@@ -399,10 +435,16 @@ def find_upgrade_proof(rep: dict, onchain: str, candidate: str,
                          "(control characters, or too long); it would be repeated in the deploy command, so "
                          "this scenario is not accepted as a proof")
             continue
+        # Recorded only by a bumm-sim that has them; an older report keeps the older proof shape.
+        extra = {}
+        if after_init and before:
+            extra["state_at_upgrade"] = {"keys": before["keys"], "bytes": before["bytes"], "changed_since_init": True}
+        if probe:
+            extra["access_probe"] = probe
         proofs.append({"onchain_code_sha256": onchain, "candidate_sha256": candidate, "scenario": name,
                        "migrate": {"method": m["method"], "args": m.get("args") or {}, "gas": m.get("gas")}
                        if m else None,
-                       "passed": True, "post_upgrade_steps": later})
+                       "passed": True, "post_upgrade_steps": later, **extra})
     if len({json.dumps(p["migrate"], sort_keys=True) for p in proofs}) > 1:
         notes.append(f"several passing upgrade scenarios with different migrations; using {proofs[0]['scenario']!r}")
     return (proofs[0] if proofs else None), notes
@@ -785,6 +827,10 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
             steps = upgrade["post_upgrade_steps"]
             out.lines.append(f"proved after upgrade ({len(steps)} step(s)): "
                              + ", ".join(f"{st['kind']} {st['method']}" for st in steps))
+            st_up = upgrade.get("state_at_upgrade")
+            if st_up:
+                out.lines.append(f"state at the upgrade: {st_up['keys']} key(s), {st_up['bytes']} byte(s), changed "
+                                 "since init")
             out.lines.append(f"scenario pin: {scenario_sha256} (matches)" if scenario_sha256 else
                              "note: no scenario pin (--scenario-sha256): the proof is whatever scenario the report's "
                              "author chose to run")
@@ -797,13 +843,26 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
                     "the scenario's migrate args and re-run `bumm-guard simulate`"])
             if m:
                 status, detail = migration_guard(crate, m["method"])
+                probe = upgrade.get("access_probe")
+                # The probe ran on the wasm itself: a call of the migration method by another account, refused
+                # by near-sdk's own check. It outranks a source check that did not recognise the guard.
+                refused = bool(probe and probe["status"] == "failure"
+                               and _PRIVATE_REFUSAL.search(probe.get("error") or ""))
                 data["migration_guard"] = {"method": m["method"], "status": status,
                                            "file": (detail or {}).get("file"), "line": (detail or {}).get("line")}
+                if probe:
+                    data["migration_guard"]["access_probe"] = probe
                 where = f"{detail['file']}:{detail['line']}" if detail and "file" in detail else None
+                if refused:
+                    out.lines.append(f"access probe: {m['method']} called by another account after the upgrade was "
+                                     "refused in the sandbox (the method is private)")
                 if status == "private":
                     out.lines.append(f"migration {m['method']}: #[private] ({where})")
                 elif status == "owner-check":
                     out.lines.append(f"migration {m['method']}: owner check at {where}")
+                elif status in ("owner-check-unknown", "unprotected", "ambiguous") and refused:
+                    out.lines.append(f"migration {m['method']}: the source check did not recognise its guard "
+                                     f"({status}" + (f" at {where}" if where else "") + "); accepted on the access probe")
                 elif status == "owner-check-unknown":
                     return _blocked(out, report, dry_run, [
                         f"DEPLOY BLOCKED: migration method {m['method']} in {where} compares predecessor_account_id() "

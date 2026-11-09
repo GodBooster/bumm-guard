@@ -199,6 +199,27 @@ jobs:
         run: |
           python -m bumm_guard simulate scenarios/upgrade/escrow_v1_to_v2_with_migrate.json \
             --runner contracts/target/release/bumm-sim --out simulate-out/escrow-upgrade-with-migrate.json
+      - name: the escrow with-migrate report records the state digest and the access probe; the gate reads both
+        run: |
+          python - <<'EOF'
+          import json
+          from bumm_guard.gate import find_upgrade_proof
+          r = json.load(open("simulate-out/escrow-upgrade-with-migrate.json"))
+          (sc,) = r["scenarios"]
+          up = next(s for s in sc["steps"] if s["kind"] == "upgrade")
+          init, before, probe = sc["state_after_init"], up["state_before"], up["access_probe"]
+          assert before["keys"] > init["keys"] and before["sha256"] != init["sha256"], (init, before)
+          # The same migrate call, sent by an account that is neither the contract nor a scenario account.
+          assert probe["method"] == "migrate" and probe["status"] == "failure", probe
+          assert "is private" in probe["error"], probe
+          assert probe["by"] not in sc["accounts"].values(), probe
+          assert up["passed"] and sc["passed"], up
+          proof, notes = find_upgrade_proof(r, sc["wasm_sha256"], sc["upgrade_wasm_sha256"])
+          assert proof and proof["state_at_upgrade"]["changed_since_init"], notes
+          assert proof["access_probe"]["status"] == "failure", proof
+          print(f"escrow with migrate: state {init['keys']} -> {before['keys']} key(s) before the upgrade; "
+                f"migrate by {probe['by']} refused: {probe['error']}")
+          EOF
       - name: upgrade escrow v1 -> v2 code only (expected FAIL after the first view; the smoke view lies)
         run: |
           set +e
@@ -323,6 +344,70 @@ jobs:
           assert nonces == [0, 1, 2], nonces
           print(f"official V0 -> official code: {len(sc['steps'])}/{len(sc['steps'])} steps passed, upgrade at step {up}, "
                 f"get_nonce {nonces} (V0 state read lazily, moved to V1 by the first new deposit), no migrate")
+          EOF
+      - name: access probe, negative - a migration method that anyone can call fails the upgrade step
+        run: |
+          python - <<'EOF'
+          import json
+          s = json.load(open("scenarios/upgrade/official_versioned_v0_to_v1_code_only.json"))
+          up = next(i for i, st in enumerate(s["steps"]) if "upgrade" in st)
+          # get_nonce stands in for a migration method with no access control: the contract can call it
+          # in the upgrade batch, and so can anyone else afterwards.
+          s["steps"][up]["migrate"] = {"method": "get_nonce"}
+          s["steps"] = s["steps"][:up + 2]
+          s["name"] = "access probe negative: a migration method anyone can call"
+          json.dump(s, open("simulate-out/probe-open-scenario.json", "w"))
+          EOF
+          set +e
+          python -m bumm_guard simulate simulate-out/probe-open-scenario.json \
+            --runner contracts/target/release/bumm-sim --out simulate-out/probe-open-report.json
+          code=$?
+          set -e
+          test "$code" -eq 1 || { echo "expected exit 1 (the access probe fails the upgrade step), got $code"; exit 1; }
+          python - <<'EOF'
+          import json
+          from bumm_guard.gate import find_upgrade_proof
+          r = json.load(open("simulate-out/probe-open-report.json"))
+          (sc,) = r["scenarios"]
+          up = next(s for s in sc["steps"] if s["kind"] == "upgrade")
+          assert sc.get("error") is None, sc["error"]
+          assert up["actual"]["status"] == "success", up     # the upgrade itself went through
+          assert up["access_probe"]["status"] == "success", up
+          assert not up["passed"] and "access probe" in up["reason"], up
+          assert not sc["passed"]
+          proof, notes = find_upgrade_proof(r, sc["wasm_sha256"], sc["upgrade_wasm_sha256"])
+          assert proof is None, proof
+          print(f"access probe negative: {up['access_probe']['by']} called get_nonce after the upgrade and it "
+                "succeeded; the upgrade step is failed and the gate has no proof")
+          EOF
+      - name: state digest, negative - a view method sent as a transaction before the upgrade writes nothing
+        run: |
+          python - <<'EOF'
+          import json
+          s = json.load(open("scenarios/upgrade/official_versioned_v0_to_v1_code_only.json"))
+          up = next(i for i, st in enumerate(s["steps"]) if "upgrade" in st)
+          # The only step before the upgrade is a transaction that calls a read-only method.
+          before = [{"call": "get_deposit", "by": "alice", "args": {"account_id": "alice"}, "expect": "ok"}]
+          after = [{"call": "deposit", "by": "carol", "args": {}, "deposit": "3 NEAR", "expect": "ok"},
+                   {"view": "get_nonce"}]
+          s["steps"] = before + [s["steps"][up]] + after
+          s["name"] = "state digest negative: nothing written before the upgrade"
+          json.dump(s, open("simulate-out/nothing-written-scenario.json", "w"))
+          EOF
+          python -m bumm_guard simulate simulate-out/nothing-written-scenario.json \
+            --runner contracts/target/release/bumm-sim --out simulate-out/nothing-written-report.json
+          python - <<'EOF'
+          import json
+          from bumm_guard.gate import find_upgrade_proof
+          r = json.load(open("simulate-out/nothing-written-report.json"))
+          (sc,) = r["scenarios"]
+          up = next(s for s in sc["steps"] if s["kind"] == "upgrade")
+          assert sc["passed"], sc      # every step passes: the scenario is honest, only empty
+          assert sc["state_after_init"]["sha256"] == up["state_before"]["sha256"], (sc["state_after_init"], up["state_before"])
+          proof, notes = find_upgrade_proof(r, sc["wasm_sha256"], sc["upgrade_wasm_sha256"])
+          assert proof is None and any("identical to the state right after init" in n for n in notes), (proof, notes)
+          print("state digest negative: the scenario passes, the state before the upgrade equals the state after "
+                "init, and the gate refuses it as a proof")
           EOF
       - name: upgrade a plain-struct build -> official code, code only (expected FAIL after the upgrade step)
         run: |

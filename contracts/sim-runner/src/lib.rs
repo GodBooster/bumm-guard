@@ -28,6 +28,10 @@ pub const CONTRACT_ALIAS: &str = "contract";
 /// Initial balance of the contract account. Covers storage staking for a ~200 KB wasm
 /// (about 2 NEAR at 10^19 yocto/byte) with a wide margin. Not part of the scenario format.
 pub const CONTRACT_INITIAL_BALANCE: u128 = 50 * YOCTO_PER_NEAR;
+/// Sub-account that repeats the migration call after an upgrade step (the access probe). Longer
+/// than an alias may be (32 characters), so it cannot collide with a scenario account.
+pub const PROBE_ACCOUNT: &str = "bumm-sim-access-probe-not-an-alias";
+pub const PROBE_INITIAL_BALANCE: u128 = 5 * YOCTO_PER_NEAR;
 
 // ---------------------------------------------------------------------------------------
 // Amounts
@@ -666,9 +670,68 @@ pub struct StepResult {
     pub actual: Actual,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Upgrade steps: the contract's key-value state right before the upgrade transaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_before: Option<StateDigest>,
+    /// Upgrade steps with a migration that succeeded: the same migration call repeated by an
+    /// account that is not the contract.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_probe: Option<AccessProbe>,
+}
+
+/// Size and fingerprint of a contract's key-value state at one moment. `sha256` covers every
+/// key and value (sorted by key, each prefixed with its length as 8 little-endian bytes), so two
+/// digests are equal only for the same state.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StateDigest {
+    pub keys: usize,
+    pub bytes: usize,
+    pub sha256: String,
+}
+
+pub fn state_digest<'a>(pairs: impl Iterator<Item = (&'a [u8], &'a [u8])>) -> StateDigest {
+    let mut sorted: Vec<(&[u8], &[u8])> = pairs.collect();
+    sorted.sort();
+    let mut hasher = Sha256::new();
+    let mut bytes = 0usize;
+    for (k, v) in &sorted {
+        hasher.update((k.len() as u64).to_le_bytes());
+        hasher.update(k);
+        hasher.update((v.len() as u64).to_le_bytes());
+        hasher.update(v);
+        bytes += k.len() + v.len();
+    }
+    let sha256 = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    StateDigest { keys: sorted.len(), bytes, sha256 }
+}
+
+/// The migration call of an upgrade step, sent again after the upgrade by `by` (an account that
+/// is neither the contract nor a scenario account). `status` is `success` or `failure` as the
+/// chain answered, or `not-run` when the probe account could not be created; `error` is the
+/// chain's text. A `success` means anyone can call the migration method on the upgraded contract.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AccessProbe {
+    pub method: String,
+    pub by: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 impl StepResult {
+    /// Record the access probe of an upgrade step. A probe that succeeded fails the step: the
+    /// upgrade went through, but the migration method accepts a call from another account.
+    pub fn apply_access_probe(&mut self, probe: AccessProbe) {
+        if probe.status == "success" {
+            self.passed = false;
+            self.reason = Some(format!(
+                "access probe: {} called {} after the upgrade and the call succeeded; the migration method must refuse other callers (#[private] or an owner check)",
+                probe.by, probe.method
+            ));
+        }
+        self.access_probe = Some(probe);
+    }
+
     pub fn new(step: &Step, actual: Actual, aliases: &BTreeMap<String, String>) -> Self {
         let (passed, reason) = evaluate(&step.expect, &actual, aliases);
         let (method, by, account, wasm) = match &step.kind {
@@ -702,6 +765,8 @@ impl StepResult {
             expected: step.expect_raw.clone(),
             actual,
             reason,
+            state_before: None,
+            access_probe: None,
         }
     }
 }
@@ -734,6 +799,10 @@ pub struct ScenarioResult {
     pub accounts: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub init: Option<InitResult>,
+    /// The contract's key-value state after `init` (after the deploy when there is no `init`),
+    /// before the first step. Absent when it could not be read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_after_init: Option<StateDigest>,
     pub steps: Vec<StepResult>,
 }
 
@@ -1155,6 +1224,7 @@ mod tests {
             error: None,
             accounts: a.clone(),
             init: Some(InitResult { method: "new".into(), passed: true, actual: Actual::success(Some(Value::Null)) }),
+            state_after_init: None,
             steps: vec![],
         };
         r.steps.push(StepResult::new(&sc.steps[0], Actual::success(Some(Value::Null)), &a));
@@ -1295,6 +1365,7 @@ mod tests {
             error: None,
             accounts: BTreeMap::new(),
             init: None,
+            state_after_init: None,
             steps: vec![],
         };
         let r = build_report(vec![result("a", Some("bb")), result("b", None), result("c", Some("bb"))]);
@@ -1361,5 +1432,61 @@ mod tests {
         assert_eq!(resolve_wasm("c.wasm", &scen, Some(Path::new("o.wasm"))), PathBuf::from("o.wasm"));
         assert_eq!(resolve_wasm("missing.wasm", &scen, None), PathBuf::from("missing.wasm"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn state_digest_is_order_independent_and_length_prefixed() {
+        let a: Vec<(&[u8], &[u8])> = vec![(&b"k1"[..], &b"v1"[..]), (&b"k2"[..], &b"value2"[..])];
+        let b: Vec<(&[u8], &[u8])> = vec![(&b"k2"[..], &b"value2"[..]), (&b"k1"[..], &b"v1"[..])];
+        let da = state_digest(a.into_iter());
+        let db = state_digest(b.into_iter());
+        assert_eq!(da, db, "the order the node returns the pairs in does not matter");
+        assert_eq!((da.keys, da.bytes), (2, 2 + 2 + 2 + 6));
+        assert_eq!(da.sha256.len(), 64);
+        // Moving a byte from a value to the next key changes the digest (lengths are hashed).
+        let c: Vec<(&[u8], &[u8])> = vec![(&b"k1"[..], &b"v"[..]), (&b"1k2"[..], &b"value2"[..])];
+        assert_ne!(state_digest(c.into_iter()).sha256, da.sha256);
+        let empty = state_digest(std::iter::empty::<(&[u8], &[u8])>());
+        assert_eq!((empty.keys, empty.bytes), (0, 0));
+        assert_eq!(empty.sha256, sha256_hex(b""));
+        let v = serde_json::to_value(&da).unwrap();
+        assert_eq!(v["keys"], 2);
+        assert!(v["sha256"].is_string());
+    }
+
+    #[test]
+    fn access_probe_success_fails_the_upgrade_step() {
+        let sc = parse_scenario(&with_step(r#"{"upgrade": "new.wasm", "migrate": {"method": "migrate"}}"#)).unwrap();
+        let al = aliases();
+        let probe = |status: &str, error: Option<&str>| AccessProbe {
+            method: "migrate".into(),
+            by: "probe.test.near".into(),
+            status: status.into(),
+            error: error.map(str::to_string),
+        };
+
+        let mut refused = StepResult::new(&sc.steps[0], Actual::success(Some(Value::Null)), &al);
+        assert!(refused.passed);
+        refused.apply_access_probe(probe("failure", Some("Smart contract panicked: Method migrate is private")));
+        assert!(refused.passed, "a refused probe leaves the step as it was");
+        assert!(refused.reason.is_none());
+        let v = serde_json::to_value(&refused).unwrap();
+        assert_eq!(v["access_probe"]["status"], "failure");
+        assert!(v["access_probe"]["error"].as_str().unwrap().contains("is private"));
+        assert!(v.get("state_before").is_none(), "absent fields are not serialized");
+
+        let mut open = StepResult::new(&sc.steps[0], Actual::success(Some(Value::Null)), &al);
+        open.apply_access_probe(probe("success", None));
+        assert!(!open.passed, "a migration method anyone can call fails the upgrade step");
+        assert!(open.reason.as_deref().unwrap().contains("access probe"));
+        assert!(serde_json::to_value(&open).unwrap()["access_probe"].get("error").is_none());
+
+        let mut not_run = StepResult::new(&sc.steps[0], Actual::success(Some(Value::Null)), &al);
+        not_run.apply_access_probe(probe("not-run", Some("create account failed")));
+        assert!(not_run.passed);
+
+        // Without a probe nothing is added to the report.
+        let plain = StepResult::new(&sc.steps[0], Actual::success(Some(Value::Null)), &al);
+        assert!(serde_json::to_value(&plain).unwrap().get("access_probe").is_none());
     }
 }
