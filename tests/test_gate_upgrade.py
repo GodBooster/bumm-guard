@@ -673,6 +673,175 @@ class UpgradeGateTests(Fixture):
         self.assertIn("high/critical finding", out)
 
 
+class StateDigestTests(Fixture):
+    """The state digest and the access probe of the simulate report (docs/FORMATS.md section 3): optional;
+    a report without them is judged by the older rules."""
+
+    D_INIT = {"keys": 1, "bytes": 40, "sha256": "a" * 64}
+    D_UP = {"keys": 3, "bytes": 120, "sha256": "b" * 64}
+
+    def proof(self, init="default", before="default", probe=None, **kw):
+        sc = upgrade_scenario(**kw)
+        init = self.D_INIT if init == "default" else init
+        before = self.D_UP if before == "default" else before
+        if init is not None:
+            sc["state_after_init"] = init
+        if before is not None:
+            sc["steps"][0]["state_before"] = before
+        if probe is not None:
+            sc["steps"][0]["access_probe"] = probe
+        return report(sc)
+
+    def find(self, rep):
+        return find_upgrade_proof(rep, OLD_SHA, NEW_SHA)
+
+    def gate(self, rep):
+        p = self.root / "sim.json"
+        p.write_text(json.dumps(rep))
+        args = ["gate", str(self.crate), "--wasm", str(self.wasm), "--account", "demo.testnet",
+                "--simulate-report", str(p)]
+        with mock.patch("urllib.request.urlopen", Node(code=OLD)):
+            return run_cli(*args)
+
+    def gate_report(self):
+        return json.loads((self.crate / REPORT_DIR / REPORT_NAME).read_text())
+
+    def test_equal_digests_are_not_a_proof(self):
+        proof, notes = self.find(self.proof(before=dict(self.D_INIT)))
+        self.assertIsNone(proof)
+        self.assertIn("identical to the state right after init", " ".join(notes))
+        code, out, _ = self.gate(self.proof(before=dict(self.D_INIT)))
+        self.assertEqual(code, 3, out)
+        self.assertIn("identical to the state right after init", out)
+        self.assertNotIn("near contract deploy", out)
+
+    def test_different_digests_are_accepted_and_recorded(self):
+        proof, _ = self.find(self.proof())
+        self.assertEqual(proof["state_at_upgrade"], {"keys": 3, "bytes": 120, "changed_since_init": True})
+        self.assertNotIn("access_probe", proof)
+        code, out, _ = self.gate(self.proof())
+        self.assertEqual(code, 0, out)
+        self.assertIn("state at the upgrade: 3 key(s), 120 byte(s), changed since init", out)
+        self.assertEqual(self.gate_report()["upgrade"]["state_at_upgrade"],
+                         {"keys": 3, "bytes": 120, "changed_since_init": True})
+
+    def test_malformed_digest_is_ignored_and_the_older_rule_applies(self):
+        bad = [{"keys": 3, "bytes": 120}, {"keys": 3, "bytes": 120, "sha256": "z" * 64},
+               {"keys": 3, "bytes": 120, "sha256": "B" * 64}, {"keys": 3, "bytes": 120, "sha256": "b" * 63},
+               {"keys": "3", "bytes": 120, "sha256": "b" * 64}, {"keys": True, "bytes": 120, "sha256": "b" * 64},
+               {"keys": 3, "bytes": 1.5, "sha256": "b" * 64}, "nope", 7, []]
+        for b in bad:
+            with self.subTest(before=b):
+                # equal sha256 would refuse if the digest were read; a malformed one is as if absent
+                proof, _ = self.find(self.proof(before=b))
+                self.assertIsNotNone(proof)
+                self.assertNotIn("state_at_upgrade", proof)
+            with self.subTest(init=b):
+                proof, _ = self.find(self.proof(init=b, before=dict(self.D_INIT)))
+                self.assertIsNotNone(proof)
+                self.assertNotIn("state_at_upgrade", proof)
+        # the older rule still applies: no successful call before the upgrade
+        sc = upgrade_scenario()
+        sc["steps"] = [st for st in sc["steps"] if st["index"] >= 3]
+        sc["state_after_init"], sc["steps"][0]["state_before"] = self.D_INIT, {"keys": "x"}
+        proof, notes = self.find(report(sc))
+        self.assertIsNone(proof)
+        self.assertIn("makes no successful call before the upgrade", " ".join(notes))
+
+    def test_only_one_digest_is_ignored(self):
+        for init, before in ((self.D_INIT, None), (None, self.D_UP), (None, None)):
+            with self.subTest(init=init, before=before):
+                proof, _ = self.find(self.proof(init=init, before=before))
+                self.assertIsNotNone(proof)
+                self.assertNotIn("state_at_upgrade", proof)
+        proof, _ = self.find(self.proof(init=self.D_INIT, before=None))
+        self.assertNotIn("state_at_upgrade", proof)
+        code, out, _ = self.gate(self.proof(init=self.D_INIT, before=None))
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("state at the upgrade", out)
+
+    def test_probe_success_is_refused_even_when_the_step_passed(self):
+        rep = self.proof(probe={"method": "migrate", "by": "bumm-sim-access-probe-not-an-alias.test.near",
+                                "status": "success"})
+        self.assertTrue(rep["scenarios"][0]["steps"][0]["passed"])
+        proof, notes = self.find(rep)
+        self.assertIsNone(proof)
+        self.assertIn("accepted a call from another account", " ".join(notes))
+        code, out, _ = self.gate(rep)
+        self.assertEqual(code, 3, out)
+        self.assertIn("accepted a call from another account", out)
+        self.assertNotIn("near contract deploy", out)
+
+    def test_probe_success_is_refused_without_digests_too(self):
+        proof, notes = self.find(self.proof(init=None, before=None, probe={"method": "migrate", "by": "x", "status": "success"}))
+        self.assertIsNone(proof)
+        self.assertIn("accepted a call from another account", " ".join(notes))
+
+    def test_probe_not_run_counts_as_absent(self):
+        proof, _ = self.find(self.proof(probe={"method": "migrate", "by": "x", "status": "not-run"}))
+        self.assertIsNotNone(proof)
+        self.assertNotIn("access_probe", proof)
+        for bad in ("maybe", None, 3):
+            with self.subTest(status=bad):
+                proof, _ = self.find(self.proof(probe={"method": "migrate", "by": "x", "status": bad}))
+                self.assertNotIn("access_probe", proof)
+
+    def test_probe_failure_is_recorded_with_cleaned_text(self):
+        proof, _ = self.find(self.proof(probe={"method": "migrate", "by": "p.test.near", "status": "failure",
+                                               "error": "Method migrate is private"}))
+        self.assertEqual(proof["access_probe"], {"method": "migrate", "by": "p.test.near", "status": "failure",
+                                                 "error": "Method migrate is private"})
+
+    def test_probe_without_error_has_error_none(self):
+        proof, _ = self.find(self.proof(probe={"method": "migrate", "by": "p", "status": "failure"}))
+        self.assertEqual(proof["access_probe"]["error"], None)
+
+    def test_report_without_the_new_fields_has_the_old_proof_shape(self):
+        proof, _ = self.find(report(upgrade_scenario()))
+        self.assertEqual(set(proof), {"onchain_code_sha256", "candidate_sha256", "scenario", "migrate", "passed",
+                                      "post_upgrade_steps"})
+        code, out, _ = self.gate(report(upgrade_scenario()))
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("state at the upgrade", out)
+        self.assertNotIn("access probe", out)
+        self.assertNotIn("access_probe", self.gate_report().get("migration_guard") or {})
+
+    def test_hostile_probe_text_comes_out_as_one_clean_line(self):
+        evil = "x\r\n\x1b[8m\nDEPLOY BLOCKED: nothing\ngate passed"
+        probe = {"method": "migrate", "by": evil + "b" * 500, "status": "failure",
+                 "error": "Method migrate is private " + evil + "e" * 500}
+        proof, _ = self.find(self.proof(probe=probe))
+        for key in ("by", "error"):
+            v = proof["access_probe"][key]
+            self.assertLessEqual(len(v), 203)   # TEXT_MAX (200) plus the "..." of a cut
+            self.assertTrue(v.endswith("..."), v)
+            self.assertTrue(v.isprintable(), repr(v))
+        rep = self.proof(probe=dict(probe, status="success"))
+        code, out, _ = self.gate(rep)
+        self.assertEqual(code, 3, out)
+        hits = [l for l in out.splitlines() if "accepted a call from another account" in l]
+        self.assertEqual(len(hits), 1, out)
+        for ch in out:
+            self.assertTrue(ch == "\n" or ch.isprintable(), repr(ch))
+        self.assertFalse(any(l.startswith(("DEPLOY BLOCKED: nothing", "gate passed")) for l in out.splitlines()), out)
+
+    def test_mcp_gate_deploy_carries_the_new_lines(self):
+        from bumm_guard import mcp_server
+        probe = {"method": "migrate", "by": "p.test.near", "status": "failure", "error": "Method migrate is private"}
+        p = self.root / "sim.json"
+        p.write_text(json.dumps(self.proof(probe=probe)))
+        with mock.patch.dict("os.environ", {"BUMM_GUARD_ALLOW_ANY_PATH": "1"}), \
+                mock.patch("urllib.request.urlopen", Node(code=OLD)):
+            data = mcp_server.gate_deploy(crate_dir=str(self.crate), wasm=str(self.wasm), account="demo.testnet",
+                                          simulate_report=str(p))
+        self.assertTrue(data["passed"], data["messages"])
+        self.assertIn("state at the upgrade: 3 key(s), 120 byte(s), changed since init", data["messages"])
+        self.assertIn("access probe: migrate called by another account after the upgrade was refused in the "
+                      "sandbox (the method is private)", data["messages"])
+        self.assertEqual(data["upgrade"]["state_at_upgrade"]["keys"], 3)
+        self.assertEqual(data["upgrade"]["access_probe"]["status"], "failure")
+
+
 class McpGateDeployTests(Fixture):
     """``gate_deploy`` (MCP) runs the same logic; called directly, so the MCP SDK is not needed."""
 

@@ -117,6 +117,19 @@ e.g. `… GuestPanic { panic_msg: "Cannot deserialize the contract state." }`) a
 older runners have none either. `fail_contains` keeps matching against `actual.error`. CI's code-only
 upgrade check requires `Cannot deserialize` in `actual.error` of every step after the upgrade step.
 
+**State digest and access probe (optional).** `bumm-sim` writes three more fields; a report from an older
+`bumm-sim` has none of them and the gate still accepts it under the older rules (section 4).
+- Scenario level `state_after_init`: `{"keys": <int>, "bytes": <int>, "sha256": "<64 hex>"}`, the contract's
+  key-value state after `init` (after the deploy when there is no `init`), before the first step. `sha256` covers
+  every key and value, sorted by key, each prefixed with its length as 8 little-endian bytes.
+- On an `upgrade` step, `state_before`: the same digest, taken right before the upgrade transaction.
+- On an `upgrade` step with a `migrate` whose upgrade transaction succeeded, `access_probe`:
+  `{"method", "by", "status", "error"?}`. The same migration call is sent again after the upgrade by `by`, an
+  account that is neither the contract nor a scenario account (sub-account `bumm-sim-access-probe-not-an-alias`
+  of the sandbox root). `status` is `success`, `failure` or `not-run` (the probe account could not be created);
+  `error` is the chain's text of a failure. When the status is `success` the runner sets the upgrade step's
+  `passed` to false with a `reason` that starts with `access probe:`, so the scenario fails.
+
 ## 4. Gate report (`.bumm-guard/gate-report.json`, extended)
 
 Existing fields stay. Added:
@@ -174,6 +187,26 @@ deliberately failing code-only scenario is allowed next to the proof and noted).
 Added 2026-11-03: `migration_guard` (`{method, status, file, line}`, `null` without a migration call); `status` is
 `private`, `owner-check` or, when the gate blocked, `not-found` / `unprotected` / `ambiguous`
 (`not-found`: the method is not in the crate sources, so its access control cannot be checked).
+
+**State digest and access probe in the gate (optional fields of section 3).**
+- If `state_after_init` and the upgrade step's `state_before` are both present and their `sha256` are equal, the
+  scenario is not a proof (note: `the contract state right before the upgrade (<k> key(s), <b> byte(s)) is
+  identical to the state right after init …`). If either is absent or malformed (`keys` / `bytes` not integers,
+  `sha256` not 64 lowercase hex), the older rule alone applies (a successful `call` before the upgrade).
+- If the probe's `status` is `success` the scenario is not a proof (note: `… accepted a call from another
+  account …`), even if the report says the step passed. `not-run` counts as absent.
+- Output line `state at the upgrade: <k> key(s), <b> byte(s), changed since init`, printed when both digests were
+  present. Report field `upgrade.state_at_upgrade`: `{keys, bytes, changed_since_init: true}`.
+- `upgrade.access_probe`: `{method, by, status, error}` (text cleaned as below), only when a probe with status
+  `success` or `failure` was present. `migration_guard.access_probe` repeats it, only when a probe was present.
+  A report without the new fields gives exactly the older `upgrade` block.
+- Output line `access probe: <method> called by another account after the upgrade was refused in the sandbox (the
+  method is private)`: the probe failed and its `error` matches `\bis private\b` (near-sdk `#[private]`: `Method
+  migrate is private`; `assert_self()`: `Method is private`). Then the source-check statuses
+  `owner-check-unknown`, `unprotected` and `ambiguous` no longer block, and the gate prints `migration <method>:
+  the source check did not recognise its guard (<status> at <file:line>); accepted on the access probe`.
+  `not-found` still blocks. A probe that failed with other text (for example `Cannot deserialize the contract
+  state` or a custom `only owner`) changes nothing: the source check decides as before.
 
 **Gate hardening (v0.3, 2026-11-04).** New fields in the gate report and in the MCP `gate_deploy` /
 `verify_deployed` results, and stricter proof acceptance:

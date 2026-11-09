@@ -385,5 +385,122 @@ class MigrationGuardGateTests(unittest.TestCase):
         self.assertEqual(data["upgrade"]["migrate"]["method"], "migrate")
 
 
+class AccessProbeGateTests(unittest.TestCase):
+    """The access probe (docs/FORMATS.md section 3) next to the source check of the migration method."""
+
+    PRIVATE_ERR = "Method migrate is private"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.wasm = self.root / "new.wasm"
+        self.wasm.write_bytes(NEW)
+        self.n = 0
+
+    gate = MigrationGuardGateTests.gate
+    gate_report = MigrationGuardGateTests.gate_report
+
+    def probe_report(self, status="failure", error=PRIVATE_ERR, method="migrate"):
+        sc = upgrade_scenario()
+        sc["state_after_init"] = {"keys": 1, "bytes": 40, "sha256": "a" * 64}
+        sc["steps"][0]["state_before"] = {"keys": 3, "bytes": 120, "sha256": "b" * 64}
+        if status is not None:
+            sc["steps"][0]["access_probe"] = {"method": method, "by": "p.test.near", "status": status}
+            if error is not None:
+                sc["steps"][0]["access_probe"]["error"] = error
+        return report(sc)
+
+    def crates(self):
+        self.n += 1
+        amb = crate(self.root, PRIVATE, name=f"amb{self.n}")
+        (amb / "src" / "other.rs").write_text(HEAD + UNPROTECTED + TAIL)
+        return {"unprotected": crate(self.root, UNPROTECTED, name=f"unp{self.n}"),
+                "owner-check-unknown": crate(self.root, IF_NO_REJECT, name=f"unk{self.n}"), "ambiguous": amb}
+
+    def test_refused_probe_accepts_what_the_source_check_could_not_recognise(self):
+        for status, d in self.crates().items():
+            with self.subTest(status=status):
+                code, out, _ = self.gate(d, self.probe_report())
+                self.assertEqual(code, 0, out)
+                self.assertIn("access probe: migrate called by another account after the upgrade was refused in "
+                              "the sandbox (the method is private)", out)
+                lines = [l for l in out.splitlines() if l.startswith("migration migrate: the source check")]
+                self.assertEqual(len(lines), 1, out)
+                self.assertTrue(lines[0].startswith(f"migration migrate: the source check did not recognise its "
+                                                    f"guard ({status}"), lines[0])
+                self.assertTrue(lines[0].endswith("; accepted on the access probe"), lines[0])
+                self.assertIn("with-init-call migrate", out)
+                mg = self.gate_report(d)["migration_guard"]
+                self.assertEqual(mg["status"], status)
+                self.assertEqual(mg["access_probe"], {"method": "migrate", "by": "p.test.near", "status": "failure",
+                                                      "error": self.PRIVATE_ERR})
+
+    def test_assert_self_wording_counts_too(self):
+        code, out, _ = self.gate(crate(self.root, UNPROTECTED), self.probe_report(error="Method is private"))
+        self.assertEqual(code, 0, out)
+        self.assertIn("refused in the sandbox (the method is private)", out)
+
+    def test_other_probe_failures_change_nothing(self):
+        for err in ("Cannot deserialize the contract state", "only owner", None, "this is privately held"):
+            for status, d in self.crates().items():
+                with self.subTest(error=err, status=status):
+                    code, out, _ = self.gate(d, self.probe_report(error=err))
+                    self.assertEqual(code, 3, out)
+                    self.assertNotIn("refused in the sandbox", out)
+                    self.assertNotIn("accepted on the access probe", out)
+                    self.assertNotIn("near contract deploy", out)
+
+    def test_no_probe_changes_nothing(self):
+        for status, d in self.crates().items():
+            with self.subTest(status=status):
+                for rep in (self.probe_report(status=None), self.probe_report(status="not-run")):
+                    code, out, _ = self.gate(d, rep)
+                    self.assertEqual(code, 3, out)
+                    self.assertNotIn("access probe", out)
+        d = crate(self.root, UNPROTECTED, name="unp2")
+        self.gate(d, self.probe_report(status=None))
+        self.assertFalse((d / REPORT_DIR / REPORT_NAME).exists())
+
+    def test_not_found_still_blocks_with_a_refused_probe(self):
+        d = crate(self.root, PRIVATE, name="nf")
+        m = {"method": "migrate_v2", "args": {}, "gas": "100 Tgas"}
+        sc = upgrade_scenario(migrate=m)
+        sc["state_after_init"] = {"keys": 1, "bytes": 40, "sha256": "a" * 64}
+        sc["steps"][0]["state_before"] = {"keys": 3, "bytes": 120, "sha256": "b" * 64}
+        sc["steps"][0]["access_probe"] = {"method": "migrate_v2", "by": "p", "status": "failure",
+                                          "error": "Method migrate_v2 is private"}
+        code, out, _ = self.gate(d, report(sc))
+        self.assertEqual(code, 3, out)
+        self.assertIn("migration method migrate_v2 not found", out)
+        self.assertNotIn("near contract deploy", out)
+
+    def test_recognised_guards_still_print_their_own_line_with_a_probe(self):
+        d = crate(self.root, PRIVATE, name="priv")
+        code, out, _ = self.gate(d, self.probe_report())
+        self.assertEqual(code, 0, out)
+        self.assertIn("migration migrate: #[private] (src/lib.rs:13)", out)
+        self.assertNotIn("accepted on the access probe", out)
+        self.assertIn("access probe: migrate called by another account", out)
+
+    def test_probe_success_blocks_even_a_private_method(self):
+        d = crate(self.root, PRIVATE, name="priv2")
+        code, out, _ = self.gate(d, self.probe_report(status="success", error=None))
+        self.assertEqual(code, 3, out)
+        self.assertIn("accepted a call from another account", out)
+
+    def test_mcp_gate_deploy_accepts_unprotected_with_a_refused_probe(self):
+        from bumm_guard import mcp_server
+        d = crate(self.root, UNPROTECTED, name="mcp")
+        p = self.root / "sim.json"
+        p.write_text(json.dumps(self.probe_report()))
+        with mock.patch.dict("os.environ", {"BUMM_GUARD_ALLOW_ANY_PATH": "1"}), \
+                mock.patch("urllib.request.urlopen", Node(code=OLD)):
+            data = mcp_server.gate_deploy(crate_dir=str(d), wasm=str(self.wasm), account="demo.testnet",
+                                          simulate_report=str(p))
+        self.assertTrue(data["passed"], data["messages"])
+        self.assertTrue(any(m.endswith("; accepted on the access probe") for m in data["messages"]))
+
+
 if __name__ == "__main__":
     unittest.main()
