@@ -28,8 +28,8 @@ pub const CONTRACT_ALIAS: &str = "contract";
 /// Initial balance of the contract account. Covers storage staking for a ~200 KB wasm
 /// (about 2 NEAR at 10^19 yocto/byte) with a wide margin. Not part of the scenario format.
 pub const CONTRACT_INITIAL_BALANCE: u128 = 50 * YOCTO_PER_NEAR;
-/// Sub-account that repeats the migration call after an upgrade step (the access probe). Longer
-/// than an alias may be (32 characters), so it cannot collide with a scenario account.
+/// Sub-account that sends the migration call in the access probe of an upgrade step. Longer than
+/// an alias may be (32 characters), so it cannot collide with a scenario account.
 pub const PROBE_ACCOUNT: &str = "bumm-sim-access-probe-not-an-alias";
 pub const PROBE_INITIAL_BALANCE: u128 = 5 * YOCTO_PER_NEAR;
 
@@ -705,10 +705,14 @@ pub fn state_digest<'a>(pairs: impl Iterator<Item = (&'a [u8], &'a [u8])>) -> St
     StateDigest { keys: sorted.len(), bytes, sha256 }
 }
 
-/// The migration call of an upgrade step, sent again after the upgrade by `by` (an account that
-/// is neither the contract nor a scenario account). `status` is `success` or `failure` as the
-/// chain answered, or `not-run` when the probe account could not be created; `error` is the
-/// chain's text. A `success` means anyone can call the migration method on the upgraded contract.
+/// The access probe of an upgrade step with a migration: in a second sandbox the scenario is
+/// replayed up to the upgrade, the new code is deployed without the migration call, and `by` (an
+/// account that is neither the contract nor a scenario account) sends the migration call. Same
+/// code, state and arguments as the real upgrade, another caller. `status` is `success` (anyone
+/// can run the migration), `failure` (the method refused this caller; `error` is the chain's
+/// text) or `not-run` (`error` says why). `state_sha256` is the digest of the probe sandbox's
+/// state right before the new code was deployed; it equals the step's `state_before.sha256`
+/// unless the contract stores something that differs between two runs (a timestamp).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AccessProbe {
     pub method: String,
@@ -716,22 +720,11 @@ pub struct AccessProbe {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_sha256: Option<String>,
 }
 
 impl StepResult {
-    /// Record the access probe of an upgrade step. A probe that succeeded fails the step: the
-    /// upgrade went through, but the migration method accepts a call from another account.
-    pub fn apply_access_probe(&mut self, probe: AccessProbe) {
-        if probe.status == "success" {
-            self.passed = false;
-            self.reason = Some(format!(
-                "access probe: {} called {} after the upgrade and the call succeeded; the migration method must refuse other callers (#[private] or an owner check)",
-                probe.by, probe.method
-            ));
-        }
-        self.access_probe = Some(probe);
-    }
-
     pub fn new(step: &Step, actual: Actual, aliases: &BTreeMap<String, String>) -> Self {
         let (passed, reason) = evaluate(&step.expect, &actual, aliases);
         let (method, by, account, wasm) = match &step.kind {
@@ -1455,38 +1448,36 @@ mod tests {
     }
 
     #[test]
-    fn access_probe_success_fails_the_upgrade_step() {
+    fn access_probe_is_recorded_on_the_upgrade_step_only_when_present() {
         let sc = parse_scenario(&with_step(r#"{"upgrade": "new.wasm", "migrate": {"method": "migrate"}}"#)).unwrap();
         let al = aliases();
-        let probe = |status: &str, error: Option<&str>| AccessProbe {
+        let mut step = StepResult::new(&sc.steps[0], Actual::success(Some(Value::Null)), &al);
+        let v = serde_json::to_value(&step).unwrap();
+        assert!(v.get("access_probe").is_none() && v.get("state_before").is_none(), "absent fields are not serialized");
+
+        step.access_probe = Some(AccessProbe {
             method: "migrate".into(),
             by: "probe.test.near".into(),
-            status: status.into(),
-            error: error.map(str::to_string),
-        };
-
-        let mut refused = StepResult::new(&sc.steps[0], Actual::success(Some(Value::Null)), &al);
-        assert!(refused.passed);
-        refused.apply_access_probe(probe("failure", Some("Smart contract panicked: Method migrate is private")));
-        assert!(refused.passed, "a refused probe leaves the step as it was");
-        assert!(refused.reason.is_none());
-        let v = serde_json::to_value(&refused).unwrap();
+            status: "failure".into(),
+            error: Some("Smart contract panicked: only the contract itself may migrate".into()),
+            state_sha256: Some("ab".repeat(32)),
+        });
+        assert!(step.passed, "the probe is a record; the deploy gate judges it");
+        let v = serde_json::to_value(&step).unwrap();
         assert_eq!(v["access_probe"]["status"], "failure");
-        assert!(v["access_probe"]["error"].as_str().unwrap().contains("is private"));
-        assert!(v.get("state_before").is_none(), "absent fields are not serialized");
+        assert_eq!(v["access_probe"]["by"], "probe.test.near");
+        assert_eq!(v["access_probe"]["state_sha256"].as_str().unwrap().len(), 64);
 
-        let mut open = StepResult::new(&sc.steps[0], Actual::success(Some(Value::Null)), &al);
-        open.apply_access_probe(probe("success", None));
-        assert!(!open.passed, "a migration method anyone can call fails the upgrade step");
-        assert!(open.reason.as_deref().unwrap().contains("access probe"));
-        assert!(serde_json::to_value(&open).unwrap()["access_probe"].get("error").is_none());
-
-        let mut not_run = StepResult::new(&sc.steps[0], Actual::success(Some(Value::Null)), &al);
-        not_run.apply_access_probe(probe("not-run", Some("create account failed")));
-        assert!(not_run.passed);
-
-        // Without a probe nothing is added to the report.
-        let plain = StepResult::new(&sc.steps[0], Actual::success(Some(Value::Null)), &al);
-        assert!(serde_json::to_value(&plain).unwrap().get("access_probe").is_none());
+        step.access_probe = Some(AccessProbe {
+            method: "migrate".into(),
+            by: "probe.test.near".into(),
+            status: "success".into(),
+            error: None,
+            state_sha256: None,
+        });
+        let v = serde_json::to_value(&step).unwrap();
+        assert_eq!(v["access_probe"]["status"], "success");
+        assert!(v["access_probe"].get("error").is_none() && v["access_probe"].get("state_sha256").is_none());
+        assert!(valid_alias("alice") && !valid_alias(PROBE_ACCOUNT), "the probe account can never be a scenario alias");
     }
 }

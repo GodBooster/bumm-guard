@@ -11,9 +11,9 @@
 use anyhow::{Context, Result};
 use bumm_sim::{
     build_report, format_near, gas_to_tgas, parse_args, parse_scenario, resolve_aliases, resolve_wasm, sha256_hex,
-    shared_hash, state_digest, AccessProbe, Actual, Command, InitResult, Migrate, Scenario, ScenarioResult, StateDigest,
-    StepKind, StepResult, CONTRACT_ALIAS, CONTRACT_INITIAL_BALANCE, DEFAULT_GAS, PROBE_ACCOUNT, PROBE_INITIAL_BALANCE,
-    RUNNER_VERSION, USAGE,
+    shared_hash, state_digest, AccessProbe, Actual, Command, Init, InitResult, Migrate, Scenario, ScenarioResult,
+    StateDigest, StepKind, StepResult, CONTRACT_ALIAS, CONTRACT_INITIAL_BALANCE, DEFAULT_GAS, PROBE_ACCOUNT,
+    PROBE_INITIAL_BALANCE, RUNNER_VERSION, USAGE,
 };
 use near_workspaces::network::Sandbox;
 use near_workspaces::operations::Function;
@@ -179,11 +179,22 @@ async fn run_scenario(l: &Loaded, wasm_override: Option<&Path>, upgrade_override
     res
 }
 
-async fn execute(sc: &Scenario, wasm: &[u8], upgrade_code: &UpgradeCode, res: &mut ScenarioResult) -> Result<()> {
+/// One sandbox with the scenario's accounts and the contract deployed (not initialised).
+struct Env {
+    worker: Worker<Sandbox>,
+    root: Account,
+    accounts: BTreeMap<String, Account>,
+    contract: Contract,
+    /// alias -> sandbox account id, the contract included
+    aliases: BTreeMap<String, String>,
+}
+
+async fn setup(sc: &Scenario, wasm: &[u8]) -> Result<Env> {
     let worker: Worker<Sandbox> = near_workspaces::sandbox().await.context("start near-sandbox")?;
     let root = worker.root_account().context("sandbox root account")?;
 
     let mut accounts: BTreeMap<String, Account> = BTreeMap::new();
+    let mut aliases: BTreeMap<String, String> = BTreeMap::new();
     for (alias, balance) in &sc.accounts {
         let acc = root
             .create_subaccount(alias)
@@ -193,7 +204,7 @@ async fn execute(sc: &Scenario, wasm: &[u8], upgrade_code: &UpgradeCode, res: &m
             .with_context(|| format!("create account {alias}"))?
             .into_result()
             .map_err(|f| anyhow::anyhow!("create account {alias}: {f}"))?;
-        res.accounts.insert(alias.clone(), acc.id().to_string());
+        aliases.insert(alias.clone(), acc.id().to_string());
         accounts.insert(alias.clone(), acc);
     }
     let contract_account = root
@@ -210,49 +221,73 @@ async fn execute(sc: &Scenario, wasm: &[u8], upgrade_code: &UpgradeCode, res: &m
         .context("deploy wasm")?
         .into_result()
         .map_err(|f| anyhow::anyhow!("deploy wasm: {f}"))?;
-    res.accounts.insert(CONTRACT_ALIAS.to_string(), contract.id().to_string());
-    let aliases = res.accounts.clone();
+    aliases.insert(CONTRACT_ALIAS.to_string(), contract.id().to_string());
+    Ok(Env { worker, root, accounts, contract, aliases })
+}
+
+async fn run_init(env: &Env, init: &Init) -> Actual {
+    let outcome = env
+        .contract
+        .call(&init.method)
+        .args_json(resolve_aliases(&init.args, &env.aliases))
+        .gas(Gas::from_gas(DEFAULT_GAS))
+        .transact()
+        .await;
+    call_actual(outcome)
+}
+
+async fn run_call(env: &Env, method: &str, by: &str, args: &serde_json::Value, deposit: u128, gas: u64) -> Actual {
+    let signer: &Account = if by == CONTRACT_ALIAS { env.contract.as_account() } else { &env.accounts[by] };
+    let outcome = signer
+        .call(env.contract.id(), method)
+        .args_json(resolve_aliases(args, &env.aliases))
+        .deposit(NearToken::from_yoctonear(deposit))
+        .gas(Gas::from_gas(gas))
+        .transact()
+        .await;
+    call_actual(outcome)
+}
+
+/// The upgrade transaction: one batch signed by the contract account, so a failed migration call
+/// rolls the deploy back with it.
+async fn run_upgrade(env: &Env, code: &[u8], migrate: &Option<Migrate>) -> Actual {
+    let mut tx = env.contract.batch().deploy(code);
+    if let Some(m) = migrate {
+        tx = tx.call(
+            Function::new(&m.method)
+                .args_json(resolve_aliases(&m.args, &env.aliases))
+                .gas(Gas::from_gas(m.gas)),
+        );
+    }
+    Actual { code_sha256: Some(sha256_hex(code)), ..call_actual(tx.transact().await) }
+}
+
+async fn execute(sc: &Scenario, wasm: &[u8], upgrade_code: &UpgradeCode, res: &mut ScenarioResult) -> Result<()> {
+    let env = setup(sc, wasm).await?;
+    res.accounts = env.aliases.clone();
+    let aliases = &env.aliases;
 
     if let Some(init) = &sc.init {
-        let outcome = contract
-            .call(&init.method)
-            .args_json(resolve_aliases(&init.args, &aliases))
-            .gas(Gas::from_gas(DEFAULT_GAS))
-            .transact()
-            .await;
-        let actual = call_actual(outcome);
+        let actual = run_init(&env, init).await;
         let passed = actual.is_success();
         res.init = Some(InitResult { method: init.method.clone(), passed, actual });
         if !passed {
             return Ok(()); // steps are recorded as skipped by ScenarioResult::finish
         }
     }
-    res.state_after_init = state_of(&contract).await;
+    res.state_after_init = state_of(&env.contract).await;
 
-    // Created on the first upgrade step that needs it; `Err` keeps the reason for the report.
-    let mut probe_account: Option<std::result::Result<Account, String>> = None;
     for step in &sc.steps {
         let mut state_before: Option<StateDigest> = None;
-        let mut probe: Option<AccessProbe> = None;
         let actual = match &step.kind {
-            StepKind::Call { method, by, args, deposit, gas } => {
-                let signer: &Account = if by == CONTRACT_ALIAS { contract.as_account() } else { &accounts[by] };
-                let outcome = signer
-                    .call(contract.id(), method)
-                    .args_json(resolve_aliases(args, &aliases))
-                    .deposit(NearToken::from_yoctonear(*deposit))
-                    .gas(Gas::from_gas(*gas))
-                    .transact()
-                    .await;
-                call_actual(outcome)
-            }
+            StepKind::Call { method, by, args, deposit, gas } => run_call(&env, method, by, args, *deposit, *gas).await,
             StepKind::View { method, args } => {
-                let outcome = contract.view(method).args_json(resolve_aliases(args, &aliases)).await;
+                let outcome = env.contract.view(method).args_json(resolve_aliases(args, aliases)).await;
                 view_actual(outcome)
             }
             StepKind::Balance { account } => {
                 let id: near_workspaces::AccountId = aliases[account].parse().context("account id")?;
-                match worker.view_account(&id).await {
+                match env.worker.view_account(&id).await {
                     Ok(details) => {
                         let yocto = details.balance.as_yoctonear();
                         Actual { near: Some(format_near(yocto)), ..Actual::success(Some(yocto.to_string().into())) }
@@ -261,42 +296,25 @@ async fn execute(sc: &Scenario, wasm: &[u8], upgrade_code: &UpgradeCode, res: &m
                 }
             }
             StepKind::Upgrade { migrate, .. } => {
-                let code = &upgrade_code[&step.index];
-                state_before = state_of(&contract).await;
-                // One batch: if the migration call fails, the deploy is rolled back with it.
-                let mut tx = contract.batch().deploy(code);
-                if let Some(m) = migrate {
-                    tx = tx.call(
-                        Function::new(&m.method)
-                            .args_json(resolve_aliases(&m.args, &aliases))
-                            .gas(Gas::from_gas(m.gas)),
-                    );
-                }
-                let actual = Actual { code_sha256: Some(sha256_hex(code)), ..call_actual(tx.transact().await) };
-                if let (Some(m), true) = (migrate, actual.is_success()) {
-                    if probe_account.is_none() {
-                        probe_account = Some(create_probe_account(&root).await);
-                    }
-                    probe = Some(match probe_account.as_ref() {
-                        Some(Ok(acc)) => access_probe(acc, &contract, m, &aliases).await,
-                        Some(Err(e)) => AccessProbe {
-                            method: m.method.clone(),
-                            by: PROBE_ACCOUNT.to_string(),
-                            status: "not-run".into(),
-                            error: Some(e.clone()),
-                        },
-                        None => unreachable!("probe_account was set above"),
-                    });
-                }
-                actual
+                state_before = state_of(&env.contract).await;
+                run_upgrade(&env, &upgrade_code[&step.index], migrate).await
             }
         };
-        let mut result = StepResult::new(step, actual, &aliases);
+        let mut result = StepResult::new(step, actual, aliases);
         result.state_before = state_before;
-        if let Some(p) = probe {
-            result.apply_access_probe(p);
-        }
         res.steps.push(result);
+    }
+
+    // Access probes run last, each in a sandbox of its own, so they cannot disturb the steps above.
+    for step in &sc.steps {
+        if let StepKind::Upgrade { migrate: Some(m), .. } = &step.kind {
+            let Some(pos) = res.steps.iter().position(|r| r.index == step.index) else { continue };
+            if !res.steps[pos].actual.is_success() {
+                continue; // the upgrade itself failed: there is nothing to probe
+            }
+            let probe = access_probe(sc, wasm, upgrade_code, step.index, m).await;
+            res.steps[pos].access_probe = Some(probe);
+        }
     }
     Ok(())
 }
@@ -308,34 +326,85 @@ async fn state_of(contract: &Contract) -> Option<StateDigest> {
     Some(state_digest(state.iter().map(|(k, v)| (k.as_slice(), v.as_slice()))))
 }
 
-/// The account that repeats the migration call: a fresh sub-account of the sandbox root, with no
-/// tie to the contract or to the scenario's accounts.
-async fn create_probe_account(root: &Account) -> std::result::Result<Account, String> {
-    root.create_subaccount(PROBE_ACCOUNT)
+/// The access probe of the upgrade step `up_index` (FORMATS section 3): in a fresh sandbox the
+/// scenario is replayed up to that step, the new code is deployed WITHOUT the migration call, and
+/// an account that is neither the contract nor a scenario account sends the migration call. Code,
+/// state and arguments are the ones of the real upgrade; only the caller differs. So `failure`
+/// means the method refuses other callers, and `success` means anyone could have run the
+/// migration. `not-run` (with the reason) when the replay itself could not be done.
+async fn access_probe(
+    sc: &Scenario,
+    wasm: &[u8],
+    upgrade_code: &UpgradeCode,
+    up_index: usize,
+    m: &Migrate,
+) -> AccessProbe {
+    match access_probe_run(sc, wasm, upgrade_code, up_index, m).await {
+        Ok(probe) => probe,
+        Err(e) => AccessProbe {
+            method: m.method.clone(),
+            by: PROBE_ACCOUNT.to_string(),
+            status: "not-run".into(),
+            error: Some(format!("{e:#}")),
+            state_sha256: None,
+        },
+    }
+}
+
+async fn access_probe_run(
+    sc: &Scenario,
+    wasm: &[u8],
+    upgrade_code: &UpgradeCode,
+    up_index: usize,
+    m: &Migrate,
+) -> Result<AccessProbe> {
+    let env = setup(sc, wasm).await?;
+    if let Some(init) = &sc.init {
+        let actual = run_init(&env, init).await;
+        anyhow::ensure!(actual.is_success(), "init failed in the probe run: {}", actual.error.unwrap_or_default());
+    }
+    // Only the steps that can change state are replayed.
+    for step in sc.steps.iter().filter(|s| s.index < up_index) {
+        match &step.kind {
+            StepKind::Call { method, by, args, deposit, gas } => {
+                run_call(&env, method, by, args, *deposit, *gas).await;
+            }
+            StepKind::Upgrade { migrate, .. } => {
+                run_upgrade(&env, &upgrade_code[&step.index], migrate).await;
+            }
+            StepKind::View { .. } | StepKind::Balance { .. } => {}
+        }
+    }
+    let state = state_of(&env.contract).await;
+    let deployed = run_upgrade(&env, &upgrade_code[&up_index], &None).await;
+    anyhow::ensure!(
+        deployed.is_success(),
+        "deploying the new code without the migration call failed in the probe run: {}",
+        deployed.error.unwrap_or_default()
+    );
+    let caller = env
+        .root
+        .create_subaccount(PROBE_ACCOUNT)
         .initial_balance(NearToken::from_yoctonear(PROBE_INITIAL_BALANCE))
         .transact()
         .await
-        .map_err(|e| format!("create probe account: {e}"))?
+        .context("create the probe account")?
         .into_result()
-        .map_err(|f| format!("create probe account: {f}"))
-}
-
-/// Send the migration call again, signed by the probe account. On a safe contract the chain
-/// refuses it (`Method migrate is private`, or the contract's own owner check).
-async fn access_probe(
-    account: &Account,
-    contract: &Contract,
-    m: &Migrate,
-    aliases: &BTreeMap<String, String>,
-) -> AccessProbe {
-    let outcome = account
-        .call(contract.id(), &m.method)
-        .args_json(resolve_aliases(&m.args, aliases))
+        .map_err(|f| anyhow::anyhow!("create the probe account: {f}"))?;
+    let outcome = caller
+        .call(env.contract.id(), &m.method)
+        .args_json(resolve_aliases(&m.args, &env.aliases))
         .gas(Gas::from_gas(m.gas))
         .transact()
         .await;
     let actual = call_actual(outcome);
-    AccessProbe { method: m.method.clone(), by: account.id().to_string(), status: actual.status, error: actual.error }
+    Ok(AccessProbe {
+        method: m.method.clone(),
+        by: caller.id().to_string(),
+        status: actual.status,
+        error: actual.error,
+        state_sha256: state.map(|d| d.sha256),
+    })
 }
 
 /// Status, error text, return value, gas and logs of a change call.
