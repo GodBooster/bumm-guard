@@ -35,11 +35,11 @@ MIGRATIONS = """
 impl Escrow {
     #[private]
     #[init(ignore_state)]
-    pub fn migrate() -> Self { env::panic_str("test stub") }
+    pub fn migrate() -> Self { require!(env::predecessor_account_id() == env::current_account_id(), "only the contract itself may migrate"); env::panic_str("test stub") }
 
     #[private]
     #[init(ignore_state)]
-    pub fn migrate_v2(owner: AccountId, cap: u32) -> Self { env::panic_str("test stub") }
+    pub fn migrate_v2(owner: AccountId, cap: u32) -> Self { require!(env::predecessor_account_id() == env::current_account_id(), "only the contract itself may migrate"); env::panic_str("test stub") }
 }
 """
 
@@ -130,7 +130,7 @@ class Fixture(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.crate = self.root / "d1_safe"
         shutil.copytree(FIXTURES / "d1_safe", self.crate, ignore=shutil.ignore_patterns("target"))
-        # the gate refuses a migration method it cannot find in the sources: give the copy two, #[private]
+        # the gate refuses a migration method it cannot find in the sources: give the copy two, with an explicit caller check (the crate builds with near-sdk 5.17.2, where #[private] on #[init] is not enforced)
         with open(self.crate / "src" / "lib.rs", "a", encoding="utf-8") as f:
             f.write(MIGRATIONS)
         self.wasm = self.root / "new.wasm"
@@ -790,7 +790,42 @@ class StateDigestTests(Fixture):
         proof, _ = self.find(self.proof(probe={"method": "migrate", "by": "p.test.near", "status": "failure",
                                                "error": "Method migrate is private"}))
         self.assertEqual(proof["access_probe"], {"method": "migrate", "by": "p.test.near", "status": "failure",
-                                                 "error": "Method migrate is private"})
+                                                 "error": "Method migrate is private", "same_state": None})
+
+    def test_probe_failure_with_any_text_is_recorded(self):
+        for err in ("only owner", "Smart contract panicked: no", None):
+            with self.subTest(error=err):
+                probe = {"method": "migrate", "by": "p", "status": "failure"}
+                if err is not None:
+                    probe["error"] = err
+                proof, _ = self.find(self.proof(probe=probe))
+                self.assertEqual(proof["access_probe"]["status"], "failure")
+                self.assertEqual(proof["access_probe"]["error"], err)
+
+    def test_same_state_is_true_false_or_none(self):
+        base = {"method": "migrate", "by": "p", "status": "failure", "error": "e"}
+        cases = ((dict(base, state_sha256=self.D_UP["sha256"]), "default", True),
+                 (dict(base, state_sha256="c" * 64), "default", False),
+                 (dict(base), "default", None),                    # the probe has no digest
+                 (dict(base, state_sha256=7), "default", None),    # not a string
+                 (dict(base, state_sha256="c" * 64), None, None))  # the step has no state_before
+        for i, (probe, before, want) in enumerate(cases):
+            with self.subTest(i=i):
+                proof, _ = self.find(self.proof(probe=probe, before=before))
+                self.assertIs(proof["access_probe"]["same_state"], want)
+
+    def test_same_state_is_none_when_the_step_digest_is_malformed(self):
+        probe = {"method": "migrate", "by": "p", "status": "failure", "state_sha256": "b" * 64}
+        proof, _ = self.find(self.proof(probe=probe, before={"keys": 3, "bytes": 120}))
+        self.assertIsNone(proof["access_probe"]["same_state"])
+
+    def test_probe_success_note_names_the_cause(self):
+        rep = self.proof(probe={"method": "migrate", "by": "p", "status": "success"})
+        _, notes = self.find(rep)
+        text = " ".join(notes)
+        self.assertIn("accepted a call from another account", text)
+        self.assertIn("not yet migrated", text)
+        self.assertIn("before 5.18.0", text)
 
     def test_probe_without_error_has_error_none(self):
         proof, _ = self.find(self.proof(probe={"method": "migrate", "by": "p", "status": "failure"}))
@@ -836,8 +871,8 @@ class StateDigestTests(Fixture):
                                           simulate_report=str(p))
         self.assertTrue(data["passed"], data["messages"])
         self.assertIn("state at the upgrade: 3 key(s), 120 byte(s), changed since init", data["messages"])
-        self.assertIn("access probe: migrate called by another account after the upgrade was refused in the "
-                      "sandbox (the method is private)", data["messages"])
+        self.assertIn("access probe: migrate sent by another account to the new code on the not yet migrated "
+                      "state was refused (Method migrate is private)", data["messages"])
         self.assertEqual(data["upgrade"]["state_at_upgrade"]["keys"], 3)
         self.assertEqual(data["upgrade"]["access_probe"]["status"], "failure")
 
@@ -1115,18 +1150,26 @@ class ShippedEvidenceTests(unittest.TestCase):
             with self.subTest(pair=pair):
                 self.assertEqual(hashlib.sha256((WASM / f"{crate}.wasm").read_bytes()).hexdigest(), candidate)
 
-    def test_with_migrate_reports_are_proofs(self):
-        for pair, (onchain, candidate, good, _, _) in PAIRS.items():
+    def test_with_migrate_reports_are_proofs_that_the_source_check_then_blocks(self):
+        """The committed reports prove the pair, but the three fixture crates have ``#[private]`` on an
+        ``#[init]`` method with near-sdk 5.17.2 (no caller check is generated) and the committed reports
+        have no access probe: the gate refuses the upgrade (``private-unenforced``)."""
+        for pair, (onchain, candidate, good, _, crate) in PAIRS.items():
             with self.subTest(pair=pair):
                 code, out, err = self.gate(pair, good)
-                self.assertEqual(code, 0, out + err)
+                self.assertEqual(code, 3, out + err)
                 self.assertIn(f"upgrade of demo.testnet: {onchain} -> {candidate}, proved by passing scenario", out)
                 self.assertIn("migration migrate({}) in the same transaction", out)
                 self.assertIn("proved after upgrade (", out)
                 self.assertIn("call ", out.split("proved after upgrade (")[1].split("\n")[0])
                 self.assertNotIn("only view calls", out)
-                self.assertIn("migration migrate: #[private] (src/lib.rs:", out)
-                self.assertIn("with-init-call migrate json-args '{}' prepaid-gas '100 Tgas'", out)
+                self.assertIn("DEPLOY BLOCKED: migration method migrate in src/lib.rs:", out)
+                self.assertIn("has #[private] on an #[init] method, but this crate builds with near-sdk 5.17.2: "
+                              "before 5.18.0 near-sdk generates no caller check for init methods, so any account "
+                              "can call it; the report has no access probe that says otherwise", out)
+                self.assertIn("  fix: make `require!(env::predecessor_account_id() == env::current_account_id(), ", out)
+                self.assertNotIn("near contract deploy", out)
+                self.assertNotIn("with-init-call", out)
 
     def test_code_only_reports_are_rejected(self):
         for pair, (onchain, candidate, _, bad, _) in PAIRS.items():

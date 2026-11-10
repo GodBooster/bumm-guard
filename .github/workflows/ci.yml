@@ -283,13 +283,13 @@ jobs:
       - name: build swarm_jobs_v2 wasm (rustc 1.85.0; third upgrade pair, swarm_jobs v1 -> v2)
         working-directory: tests/fixtures/near
         run: cargo build --release --locked --target wasm32-unknown-unknown -p swarm_jobs_v2
-      - name: hash guard (the six fixture wasm files built in this job must equal evidence/wasm/SHA256SUMS)
+      - name: hash guard (the seven fixture wasm files built in this job must equal evidence/wasm/SHA256SUMS)
         working-directory: tests/fixtures/near/target/wasm32-unknown-unknown/release
         run: |
-          sha256sum event_registration.wasm event_registration_waitlist.wasm escrow_v1.wasm escrow_v2.wasm swarm_jobs.wasm swarm_jobs_v2.wasm
-          grep -E '  (event_registration|event_registration_waitlist|escrow_v1|escrow_v2|swarm_jobs|swarm_jobs_v2)\.wasm$' \
+          sha256sum event_registration.wasm event_registration_waitlist.wasm escrow_v1.wasm escrow_v2.wasm escrow_v3.wasm swarm_jobs.wasm swarm_jobs_v2.wasm
+          grep -E '  (event_registration|event_registration_waitlist|escrow_v1|escrow_v2|escrow_v3|swarm_jobs|swarm_jobs_v2)\.wasm$' \
             "$GITHUB_WORKSPACE/evidence/wasm/SHA256SUMS" > "$RUNNER_TEMP/fixtures.sums"
-          test "$(wc -l < "$RUNNER_TEMP/fixtures.sums")" -eq 6
+          test "$(wc -l < "$RUNNER_TEMP/fixtures.sums")" -eq 7
           sha256sum --check --strict "$RUNNER_TEMP/fixtures.sums"
       - name: run swarm_jobs scenarios (review pays the agent; guardrails; cancel refunds)
         run: |

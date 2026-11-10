@@ -7,6 +7,7 @@ answers ``call_function`` (get_job, get_reviewer) on the jobs contract and ``vie
 v1/v2 wasm in evidence/wasm/ and the CI reports in evidence/.
 """
 
+import atexit
 import base64
 import contextlib
 import hashlib
@@ -14,6 +15,7 @@ import io
 import json
 import os
 import shlex
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -29,10 +31,31 @@ V2_WASM = EVIDENCE / "wasm" / "escrow_v2.wasm"
 WITH_MIGRATE = EVIDENCE / "escrow-upgrade-with-migrate-report-ci.json"
 CODE_ONLY = EVIDENCE / "escrow-upgrade-code-only-report-ci.json"
 ESCROW_V2 = ROOT / "tests" / "fixtures" / "near" / "escrow_v2"
+CHECK_LINE = ('        require!(env::predecessor_account_id() == env::current_account_id(), '
+              '"only the contract itself may migrate");\n')
 ESCROW_V1 = ROOT / "tests" / "fixtures" / "near" / "escrow_v1"
 D1_VULN = ROOT / "tests" / "fixtures" / "near" / "d1_vuln"
 JOBS, TARGET, REVIEWER, AGENT = "bumm-guard-jobs.testnet", "bumm-guard-escrow2.testnet", "bumm-guard-bob.testnet", \
     "bumm-guard-alice.testnet"
+
+
+def _escrow_v2_with_the_check() -> Path:
+    """A copy of the escrow_v2 crate whose ``migrate`` starts with the explicit caller check (what escrow_v3
+    adds). The review-job flow is tested on it: the real escrow_v2 is refused by the gate (``#[private]`` on an
+    ``#[init]`` method with near-sdk 5.17.2), see ``test_real_escrow_v2_is_rejected``."""
+    d = Path(tempfile.mkdtemp())
+    atexit.register(shutil.rmtree, d, True)
+    crate = d / "escrow_v2_checked"
+    shutil.copytree(ESCROW_V2, crate, ignore=shutil.ignore_patterns("target"))
+    lib = crate / "src" / "lib.rs"
+    text = lib.read_text(encoding="utf-8")
+    head = "pub fn migrate() -> Self {\n"
+    assert text.count(head) == 1
+    lib.write_text(text.replace(head, head + CHECK_LINE), encoding="utf-8")
+    return crate
+
+
+ESCROW_V2_CHECKED = _escrow_v2_with_the_check()
 
 
 def sha(path) -> str:
@@ -112,7 +135,7 @@ class ReviewJobTests(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.out = self.tmp / ".bumm-guard" / "review-0.json"
 
-    def review(self, node, *extra, crate=ESCROW_V2, wasm=V2_WASM, report=WITH_MIGRATE):
+    def review(self, node, *extra, crate=ESCROW_V2_CHECKED, wasm=V2_WASM, report=WITH_MIGRATE):
         argv = ["review-job", "--jobs-contract", JOBS, "--job", "0", "--crate", str(crate), "--wasm", str(wasm),
                 "--network", "testnet", "--out", str(self.out)]
         if report is not None:
@@ -132,7 +155,7 @@ class ReviewJobTests(unittest.TestCase):
         code, out, err = self.review(Node(job()))
         self.assertEqual(code, 0, out + err)
         self.assertIn("REVIEW PASSED", out)
-        self.assertIn("migration migrate: #[private]", out)
+        self.assertIn("migration migrate: owner check at src/lib.rs:", out)
         cmd = self.command(out)
         self.assertEqual(cmd[:6], ["near", "contract", "call-function", "as-transaction", JOBS, "approve"])
         args = json.loads(cmd[cmd.index("json-args") + 1])
@@ -150,10 +173,23 @@ class ReviewJobTests(unittest.TestCase):
         self.assertEqual(rep["inputs"]["report_sha256"], sha(WITH_MIGRATE))
         self.assertEqual(rep["gate"]["upgrade"]["onchain_code_sha256"], sha(V1_WASM))
         self.assertEqual(rep["gate"]["upgrade"]["candidate_sha256"], sha(V2_WASM))
-        self.assertEqual(rep["gate"]["report"]["migration_guard"]["status"], "private")
+        self.assertEqual(rep["gate"]["report"]["migration_guard"]["status"], "owner-check")
         self.assertEqual(rep["gate"]["report"]["deploy"]["status"], "printed")
         self.assertIn("with-init-call migrate", rep["gate"]["report"]["deploy"]["command"])
         self.assertNotIn("deploy command (NOT executed; pass --execute", out)
+
+    def test_real_escrow_v2_is_rejected(self):
+        """The committed with-migrate report proves the pair, but the escrow_v2 crate has #[private] on an
+        #[init] method with near-sdk 5.17.2 and the report has no access probe: reject is printed."""
+        code, out, err = self.review(Node(job()), crate=ESCROW_V2)
+        self.assertEqual(code, 3, out + err)
+        self.assertIn("REVIEW BLOCKED: DEPLOY BLOCKED: migration method migrate in src/lib.rs:118 has #[private] on "
+                      "an #[init] method, but this crate builds with near-sdk 5.17.2", out)
+        self.assertEqual(self.command(out)[5], "reject")
+        self.assertNotIn("REVIEW PASSED", out)
+        rep = json.loads(self.out.read_text())
+        self.assertEqual(rep["verdict"], "reject")
+        self.assertEqual((rep["gate"]["exit_code"], rep["gate"]["passed"]), (3, False))
 
     def test_fresh_target_passes_with_a_report_bound_to_the_wasm(self):
         fresh = self.tmp / "fresh.json"
@@ -517,7 +553,7 @@ class McpReviewJobTests(unittest.TestCase):
         self.addCleanup(os.chdir, self.cwd)
 
     def call(self, node, **kw):
-        args = dict(jobs_contract=JOBS, job_id=0, crate_dir=str(ESCROW_V2), wasm=str(V2_WASM),
+        args = dict(jobs_contract=JOBS, job_id=0, crate_dir=str(ESCROW_V2_CHECKED), wasm=str(V2_WASM),
                     simulate_report=str(WITH_MIGRATE))
         args.update(kw)
         with mock.patch.dict(os.environ, {mcp_server.ALLOW_ANY_PATH_ENV: "1"}), \

@@ -105,8 +105,8 @@ check A2 "CLI runs from the repository root without installing" 0 "^bumm-guard [
 check A3 "committed wasm files equal evidence/wasm/SHA256SUMS (recorded as the deployed files; B1-B3 compare them with the chain)" 0 "swarm_jobs_v2.wasm: OK" -- sha_check
 check A4 "rule-pack: the fixtures give exactly one finding per rule, exit 1" 1 "BG-NEAR-003" -- scan_three_rules
 check A5 "deploy gate blocks a crate with a high finding, exit 3" 3 "DEPLOY BLOCKED" -- "$PY" -m bumm_guard gate tests/fixtures/near/d1_vuln --dry-run
-check A6 "all 23 scenario files are valid (format check, nothing executed)" 0 "^23 scenario file\(s\) valid" -- "$PY" -m bumm_guard simulate scenarios/*/*.json --validate-only
-check A7 "gate replayed offline on the committed CI reports and wasm: migrate proofs pass, code-only refused (3 testnet pairs, on-chain hash RECORDED; plus the official near-sdk-rs versioned example, sandbox only)" 0 "all pairs as expected" -- "$PY" scripts/replay_gate_offline.py
+check A6 "all 24 scenario files are valid (format check, nothing executed)" 0 "^24 scenario file\(s\) valid" -- "$PY" -m bumm_guard simulate scenarios/*/*.json --validate-only
+check A7 "gate replayed offline on the committed CI reports and wasm: the three pairs upgraded live are refused now (their migrate is callable by any account: near-sdk 5.17.2 drops #[private] on #[init]), escrow v1 -> v3 with a caller check passes, code-only refused (on-chain hash RECORDED; plus the official near-sdk-rs versioned example, sandbox only)" 0 "all pairs as expected" -- "$PY" scripts/replay_gate_offline.py
 check A8 "unit tests (with cargo on PATH, two of them also run cargo check --offline on fixture copies)" 0 "^OK" -- "$PY" -m unittest discover -s tests
 if command -v node >/dev/null 2>&1; then
   check A9 "ABI panel tests (node)" 0 "# fail 0" -- node --test ui/test
@@ -141,10 +141,11 @@ else
     "$PY" -m bumm_guard gate --verify-deployed bumm-guard-jobs.testnet --wasm evidence/wasm/swarm_jobs_v2.wasm --network testnet --dry-run \
       --smoke 'get_job:{"id":0}'
   # bumm-guard-escrow2.testnet is upgraded on camera for the demo video: before that it runs v1 and the gate
-  # prints the proven upgrade command; after it, it runs v2 and the gate answers NO CHANGE. Both exit 0.
-  check B4 "live gate on bumm-guard-escrow2.testnet with the committed migrate proof (prints the command, or NO CHANGE once upgraded)" 0 "with-init-call migrate|NO CHANGE" -- \
-    "$PY" -m bumm_guard gate tests/fixtures/near/escrow_v2 --wasm evidence/wasm/escrow_v2.wasm --account bumm-guard-escrow2.testnet --network testnet \
-      --simulate-report evidence/escrow-upgrade-with-migrate-report-ci.json --dry-run
+  # prints the proven upgrade command (escrow v3: migrate() checks its caller); after it, it runs v3 and the
+  # gate answers NO CHANGE. Both exit 0.
+  check B4 "live gate on bumm-guard-escrow2.testnet with the committed escrow v3 migrate proof (prints the command, or NO CHANGE once upgraded)" 0 "with-init-call migrate|NO CHANGE" -- \
+    "$PY" -m bumm_guard gate tests/fixtures/near/escrow_v3 --wasm evidence/wasm/escrow_v3.wasm --account bumm-guard-escrow2.testnet --network testnet \
+      --simulate-report evidence/escrow-v3-upgrade-with-migrate-report-ci.json --dry-run
 fi
 
 # --- group C: real near-sandbox ------------------------------------------------------------------
@@ -192,6 +193,23 @@ PYEOF
   run_pair n06_to_n10 event_registration event_registration_waitlist upgrade-with-migrate-report-ci.json upgrade-code-only-report-ci.json
   run_pair escrow_v1_to_v2 escrow_v1 escrow_v2 escrow-upgrade-with-migrate-report-ci.json escrow-upgrade-code-only-report-ci.json
   run_pair swarm_jobs_v1_to_v2 swarm_jobs swarm_jobs_v2 swarm-jobs-upgrade-with-migrate-report-ci.json swarm-jobs-upgrade-code-only-report-ci.json
+  # the fixed escrow: same upgrade, migrate() checks its caller in the body; the report records the access probe
+  probe_refused() { # report.json, then the simulate command
+    local rep="$1"; shift
+    "$@" || return $?
+    "$PY" - "$rep" <<'PYEOF'
+import json, sys
+(sc,) = json.load(open(sys.argv[1]))["scenarios"]
+up = next(s for s in sc["steps"] if s["kind"] == "upgrade")
+p = up["access_probe"]
+assert p["status"] == "failure" and p["by"] not in sc["accounts"].values(), p
+print(f"access probe: {p['method']} sent by {p['by']} was refused: {p['error']}")
+PYEOF
+  }
+  check C6b "sandbox: escrow v1 -> v3 with migrate() passes on the committed wasm, and migrate() refuses another caller (access probe)" 0 "^access probe: migrate sent by .* was refused" -- \
+    probe_refused "$OUT/escrow-v3-upgrade-with-migrate-report-ci.json" "$PY" -m bumm_guard simulate scenarios/upgrade/escrow_v1_to_v3_with_migrate.json \
+      --runner contracts/target/release/bumm-sim --wasm evidence/wasm/escrow_v1.wasm --upgrade-wasm evidence/wasm/escrow_v3.wasm \
+      --out "$OUT/escrow-v3-upgrade-with-migrate-report-ci.json"
   # third-party pairs: the official near-sdk-rs example examples/versioned (tests/fixtures/near_official/NOTICE.md)
   check C7 "sandbox: official near-sdk-rs versioned example, V0 era -> official code, code only, passes without migrate" 0 "1 scenario\(s\): 1 passed, 0 failed" -- \
     "$PY" -m bumm_guard simulate scenarios/upgrade/official_versioned_v0_to_v1_code_only.json --runner contracts/target/release/bumm-sim \
@@ -200,7 +218,7 @@ PYEOF
     code_only "$OUT/official-versioned-plain-upgrade-report-ci.json" "$PY" -m bumm_guard simulate scenarios/upgrade/official_versioned_plain_to_v1_code_only.json \
       --runner contracts/target/release/bumm-sim --wasm evidence/wasm/versioned_plain.wasm --upgrade-wasm evidence/wasm/versioned.wasm \
       --out "$OUT/official-versioned-plain-upgrade-report-ci.json"
-  check C9 "gate on the reports this run produced: migrate proofs pass, code-only refused, the official V0 proof passes without migrate" 0 "all pairs as expected" -- \
+  check C9 "gate on the reports this run produced: the three pairs with an open migrate() are refused, escrow v1 -> v3 passes, code-only refused, the official V0 proof passes without migrate" 0 "all pairs as expected" -- \
     "$PY" scripts/replay_gate_offline.py --reports-dir "$OUT"
 fi
 

@@ -1,13 +1,18 @@
 """Run the deploy gate on the committed evidence without a network.
 
-For each of the three contract pairs that were upgraded live on testnet, this runs the real
-`bumm-guard gate` CLI on the fixture crate, the committed candidate wasm (evidence/wasm/) and a
-committed CI scenario report (evidence/*-report-ci.json). The only thing replaced is the gate's
-one read-only RPC call (`view_code` of the target account): it returns the old-version code hash
-that was read on testnet right before that live upgrade (RECORDED, see the `source` column), and
-any other network use raises. Expected: the with-migrate report is accepted as the proof of that
-exact hash pair (exit 0, deploy command with `with-init-call migrate`), the code-only report is
-refused (exit 3, no command).
+For each contract pair below this runs the real `bumm-guard gate` CLI on the fixture crate, the
+committed candidate wasm (evidence/wasm/) and a committed CI scenario report
+(evidence/*-report-ci.json). The only thing replaced is the gate's one read-only RPC call
+(`view_code` of the target account): it returns the old-version code hash that was read on testnet
+(RECORDED, see the note of each pair), and any other network use raises.
+
+Three pairs were upgraded live on testnet on 2026-11-03, 04 and 07. The gate of that time accepted
+their with-migrate reports. The current gate refuses all three (exit 3, no command): their
+`migrate` is written `#[private] #[init(ignore_state)]` and the crates build with near-sdk 5.17.2,
+which generates no caller check for an `#[init]` method, so any account can call it (README,
+"Honest limits"). The fourth pair, escrow v1 -> v3, is the same upgrade with a caller check in the
+body of `migrate`: its with-migrate report is accepted (exit 0, deploy command with
+`with-init-call migrate`). A code-only report is refused for every pair (exit 3).
 
     python3 scripts/replay_gate_offline.py                 # committed CI reports
     python3 scripts/replay_gate_offline.py --reports-dir D # your own reports, same file names
@@ -38,21 +43,30 @@ sys.path.insert(0, str(ROOT))
 from bumm_guard import cli  # noqa: E402
 from bumm_guard.gate import sha256_file  # noqa: E402
 
-# pair: (on-chain code sha256 RECORDED before the live upgrade, date, source, candidate crate,
-#        with-migrate report name, code-only report name)
+ESCROW_V1 = "ecd8a805ea3252f1ffa2a285964d3e035d6e3c6be16e6974c33c479c3e034443"
+OPEN_MIGRATE = "upgraded live with this report; refused now: migrate is callable by any account"
+
+# pair: (on-chain code sha256 RECORDED on testnet, where and when it was read, candidate crate,
+#        [(report name, expected gate exit, what the case shows)])
 PAIRS = {
     "N06 -> N10 (bumm-guard-demo.testnet)": (
-        "c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617", "2026-11-03",
-        "evidence/UPGRADE_TESTNET.md", "event_registration_waitlist",
-        "upgrade-with-migrate-report-ci.json", "upgrade-code-only-report-ci.json"),
+        "c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617",
+        "2026-11-03 before the live upgrade, evidence/UPGRADE_TESTNET.md", "event_registration_waitlist",
+        [("upgrade-with-migrate-report-ci.json", 3, OPEN_MIGRATE),
+         ("upgrade-code-only-report-ci.json", 3, "code only")]),
     "escrow v1 -> v2 (bumm-guard-escrow.testnet)": (
-        "ecd8a805ea3252f1ffa2a285964d3e035d6e3c6be16e6974c33c479c3e034443", "2026-11-04",
-        "evidence/UPGRADE_TESTNET.md", "escrow_v2",
-        "escrow-upgrade-with-migrate-report-ci.json", "escrow-upgrade-code-only-report-ci.json"),
+        ESCROW_V1, "2026-11-04 before the live upgrade, evidence/UPGRADE_TESTNET.md", "escrow_v2",
+        [("escrow-upgrade-with-migrate-report-ci.json", 3, OPEN_MIGRATE),
+         ("escrow-upgrade-code-only-report-ci.json", 3, "code only")]),
     "swarm_jobs v1 -> v2 (bumm-guard-jobs.testnet)": (
-        "bcace58397f2ee597dd5687187ea9e178e3cd5405dfdb810553214e416a9a92b", "2026-11-07",
-        "evidence/SWARM_JOBS_TESTNET.md", "swarm_jobs_v2",
-        "swarm-jobs-upgrade-with-migrate-report-ci.json", "swarm-jobs-upgrade-code-only-report-ci.json"),
+        "bcace58397f2ee597dd5687187ea9e178e3cd5405dfdb810553214e416a9a92b",
+        "2026-11-07 before the live upgrade, evidence/SWARM_JOBS_TESTNET.md", "swarm_jobs_v2",
+        [("swarm-jobs-upgrade-with-migrate-report-ci.json", 3, OPEN_MIGRATE),
+         ("swarm-jobs-upgrade-code-only-report-ci.json", 3, "code only")]),
+    "escrow v1 -> v3 (bumm-guard-escrow2.testnet)": (
+        ESCROW_V1, "2026-11-10, the account runs escrow v1", "escrow_v3",
+        [("escrow-v3-upgrade-with-migrate-report-ci.json", 0, "migrate checks its caller; the access probe is refused"),
+         ("escrow-upgrade-with-migrate-report-ci.json", 3, "a proof for another candidate (escrow v2)")]),
 }
 
 
@@ -82,9 +96,9 @@ def run_gate(onchain: str, account: str, crate_dir: str, wasm: str, report: Path
 
 
 def check_reports(reports_dir: Path, onchain: str, account: str, crate_dir: str, wasm: str,
-                  cases: list[tuple[str, int]]) -> bool:
+                  cases: list[tuple]) -> bool:
     ok = True
-    for name, want in cases:
+    for name, want, *why in cases:
         report = reports_dir / name
         if not report.is_file():
             print(f"   FAIL {name}: not found in {reports_dir}")
@@ -92,11 +106,11 @@ def check_reports(reports_dir: Path, onchain: str, account: str, crate_dir: str,
             continue
         code, text = run_gate(onchain, account, crate_dir, wasm, report)
         keep = [ln for ln in text.splitlines()
-                if ln.startswith(("upgrade of", "proved after", "migration migrate", "DEPLOY BLOCKED",
-                                  "gate passed", "  near contract deploy"))]
+                if ln.startswith(("upgrade of", "proved after", "state at the upgrade", "access probe",
+                                  "migration migrate", "DEPLOY BLOCKED", "gate passed", "  near contract deploy"))]
         verdict = "ok" if code == want else "FAIL"
         ok &= code == want
-        print(f"   {verdict}: {name}: exit {code} (expected {want})")
+        print(f"   {verdict}: {name}: exit {code} (expected {want}" + (f"; {why[0]}" if why else "") + ")")
         for ln in keep:
             print(f"      {ln.strip()[:220]}")
     return ok
@@ -110,12 +124,12 @@ def main() -> int:
     args.reports_dir = args.reports_dir.resolve()
     os.chdir(ROOT)
     ok = True
-    for pair, (onchain, date, source, crate, good, bad) in PAIRS.items():
+    for pair, (onchain, read, crate, cases) in PAIRS.items():
         print(f"== {pair}")
-        print(f"   on-chain code sha256 (RECORDED on testnet {date} before the live upgrade, {source}): {onchain}")
+        print(f"   on-chain code sha256 (RECORDED on testnet {read}): {onchain}")
         account = re.search(r"\((\S+)\)", pair).group(1)
         ok &= check_reports(args.reports_dir, onchain, account, f"tests/fixtures/near/{crate}",
-                            f"evidence/wasm/{crate}.wasm", [(good, 0), (bad, 3)])
+                            f"evidence/wasm/{crate}.wasm", cases)
     for pair, (old, crate_dir, new, cases) in SANDBOX_PAIRS.items():
         onchain = sha256_file(f"evidence/wasm/{old}.wasm")
         print(f"== {pair} (sandbox only, never deployed on testnet; account {SANDBOX_ACCOUNT} is a placeholder)")

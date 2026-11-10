@@ -34,12 +34,20 @@ sandbox) block. When the proof has a migration call, ``migration_guard`` also ch
 Rust sources that the migration method is not callable by anyone (``#[private]`` or a recognised
 ``predecessor_account_id()`` guard in its body); a method not found in the sources blocks, and an unprotected one, or one whose predecessor
 comparison has no recognised rejection branch (``owner-check-unknown``), blocks, because after the
-upgrade any account could call it and rewrite the state. A report from a bumm-sim with
+upgrade any account could call it and rewrite the state. ``#[private]`` on an ``#[init]`` method does not
+count when the crate's own Cargo.toml asks for a near-sdk before 5.18.0 (``near_sdk_version``): those
+versions generate no caller check for init methods, so the status is ``private-unenforced`` and it blocks
+like ``unprotected``, unless the body has a recognised check (``owner-check``). A report from a bumm-sim with
 the state digests also needs the state right before the upgrade to differ from the state right after init
-(otherwise the calls before the upgrade wrote nothing); a report whose access probe (the migration call
-repeated after the upgrade by another account) succeeded is not a proof, and a probe refused with
-near-sdk's "is private" lets the migration check pass when the source check could not recognise the guard
-(not for ``not-found``). Reports without these fields are judged by the older rules. The same code as the candidate on the
+(otherwise the calls before the upgrade wrote nothing). A report whose access probe succeeded is not a proof:
+the probe replays the scenario up to the upgrade in a second sandbox, deploys the new code without the
+migration call and sends that call, with the same arguments and gas, from an account that is neither the
+contract nor a scenario account, so it is the same code, state and arguments as the real upgrade with another
+caller. A probe with status ``failure`` (whatever its error text) lets the migration check pass when the
+source check could not recognise the guard, including ``private-unenforced`` (not for ``not-found``); a probe
+that did not run counts as absent. The proof's ``access_probe`` has ``same_state``: whether the probe
+sandbox's state digest equals the step's ``state_before`` (``None`` when either is missing). Reports without
+these fields are judged by the older rules. The same code as the candidate on the
 account: ``NO CHANGE``, exit 0, no command (``deploy.status: "no-change"`` in the report).
 
 Strings taken from the simulate report (scenario names, hashes, step kinds and methods, statuses) are

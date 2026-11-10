@@ -1,0 +1,599 @@
+{
+  "tool": "bumm-guard",
+  "version": "0.4.0",
+  "runner": "bumm-sim 0.4.0",
+  "wasm_sha256": "ecd8a805ea3252f1ffa2a285964d3e035d6e3c6be16e6974c33c479c3e034443",
+  "upgrade_wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013",
+  "scenario_sha256": "7e7d87ce7e6b46feeb6ac43ac345dd2f1c906c6b63c683e12f322f72871fe0bd",
+  "sandbox": {
+    "near_workspaces": "0.24.0",
+    "near_sandbox": "0.4.0"
+  },
+  "scenarios": [
+    {
+      "name": "Upgrade escrow v1 → v2 (upgrade with migrate()): deals survive with the right status, refund works, deposits stay locked",
+      "file": "scenarios/upgrade/escrow_v1_to_v2_with_migrate.json",
+      "scenario_sha256": "7e7d87ce7e6b46feeb6ac43ac345dd2f1c906c6b63c683e12f322f72871fe0bd",
+      "wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/escrow_v1.wasm",
+      "wasm_sha256": "ecd8a805ea3252f1ffa2a285964d3e035d6e3c6be16e6974c33c479c3e034443",
+      "upgrade_wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/escrow_v2.wasm",
+      "upgrade_wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013",
+      "passed": true,
+      "duration_s": 12.1,
+      "accounts": {
+        "alice": "alice.test.near",
+        "bob": "bob.test.near",
+        "carol": "carol.test.near",
+        "contract": "contract.test.near"
+      },
+      "init": {
+        "method": "new",
+        "passed": true,
+        "actual": {
+          "status": "success",
+          "value": null,
+          "gas_burnt_tgas": 1.556
+        }
+      },
+      "state_after_init": {
+        "keys": 1,
+        "bytes": 51,
+        "sha256": "a7ff6cd7b657337073dd60e1671f867ee8ba81cfa8758d8b79c7d9ee05d5f428"
+      },
+      "steps": [
+        {
+          "index": 0,
+          "kind": "call",
+          "method": "create_deal",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "equals": 0
+          },
+          "actual": {
+            "status": "success",
+            "value": 0,
+            "gas_burnt_tgas": 1.837
+          }
+        },
+        {
+          "index": 1,
+          "kind": "call",
+          "method": "create_deal",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "equals": 1
+          },
+          "actual": {
+            "status": "success",
+            "value": 1,
+            "gas_burnt_tgas": 1.849
+          }
+        },
+        {
+          "index": 2,
+          "kind": "call",
+          "method": "create_deal",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "equals": 2
+          },
+          "actual": {
+            "status": "success",
+            "value": 2,
+            "gas_burnt_tgas": 1.851
+          }
+        },
+        {
+          "index": 3,
+          "kind": "call",
+          "method": "release",
+          "by": "alice",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.47
+          }
+        },
+        {
+          "index": 4,
+          "kind": "view",
+          "method": "deal_count",
+          "passed": true,
+          "expected": {
+            "equals": 3
+          },
+          "actual": {
+            "status": "success",
+            "value": 3
+          }
+        },
+        {
+          "index": 5,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_least": "53.9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "53998412986366466800000000",
+            "near": "53.9984129863664668"
+          }
+        },
+        {
+          "index": 6,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_most": "54.1 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "53998412986366466800000000",
+            "near": "53.9984129863664668"
+          }
+        },
+        {
+          "index": 7,
+          "kind": "upgrade",
+          "method": "migrate",
+          "by": "contract",
+          "wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/escrow_v2.wasm",
+          "migrate": {
+            "args": {},
+            "gas": "100 Tgas",
+            "method": "migrate"
+          },
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 18.666,
+            "code_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013"
+          },
+          "state_before": {
+            "keys": 7,
+            "bytes": 362,
+            "sha256": "c281e91d5fe710189bdec67b995c968ca4f0aac5667cd826bc7632b90462142b"
+          },
+          "access_probe": {
+            "method": "migrate",
+            "by": "bumm-sim-access-probe-not-an-alias.test.near",
+            "status": "success",
+            "state_sha256": "c281e91d5fe710189bdec67b995c968ca4f0aac5667cd826bc7632b90462142b"
+          }
+        },
+        {
+          "index": 8,
+          "kind": "view",
+          "method": "deal_count",
+          "passed": true,
+          "expected": {
+            "equals": 3
+          },
+          "actual": {
+            "status": "success",
+            "value": 3
+          }
+        },
+        {
+          "index": 9,
+          "kind": "view",
+          "method": "get_deal",
+          "passed": true,
+          "expected": {
+            "equals": {
+              "amount": "2000000000000000000000000",
+              "buyer": "alice",
+              "created_at_ms": 0,
+              "id": 0,
+              "seller": "bob",
+              "status": "Released"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "amount": "2000000000000000000000000",
+              "buyer": "alice.test.near",
+              "created_at_ms": 0,
+              "id": 0,
+              "seller": "bob.test.near",
+              "status": "Released"
+            }
+          }
+        },
+        {
+          "index": 10,
+          "kind": "view",
+          "method": "get_deal",
+          "passed": true,
+          "expected": {
+            "equals": {
+              "amount": "3000000000000000000000000",
+              "buyer": "alice",
+              "created_at_ms": 0,
+              "id": 1,
+              "seller": "carol",
+              "status": "Funded"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "amount": "3000000000000000000000000",
+              "buyer": "alice.test.near",
+              "created_at_ms": 0,
+              "id": 1,
+              "seller": "carol.test.near",
+              "status": "Funded"
+            }
+          }
+        },
+        {
+          "index": 11,
+          "kind": "view",
+          "method": "get_deal",
+          "passed": true,
+          "expected": {
+            "equals": {
+              "amount": "1000000000000000000000000",
+              "buyer": "bob",
+              "created_at_ms": 0,
+              "id": 2,
+              "seller": "carol",
+              "status": "Funded"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "amount": "1000000000000000000000000",
+              "buyer": "bob.test.near",
+              "created_at_ms": 0,
+              "id": 2,
+              "seller": "carol.test.near",
+              "status": "Funded"
+            }
+          }
+        },
+        {
+          "index": 12,
+          "kind": "view",
+          "method": "get_deal",
+          "passed": true,
+          "expected": {
+            "equals": null
+          },
+          "actual": {
+            "status": "success",
+            "value": null
+          }
+        },
+        {
+          "index": 13,
+          "kind": "view",
+          "method": "get_owner",
+          "passed": true,
+          "expected": {
+            "equals": "contract"
+          },
+          "actual": {
+            "status": "success",
+            "value": "contract.test.near"
+          }
+        },
+        {
+          "index": 14,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_least": "53.5 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "53883567366929599000000000",
+            "near": "53.883567366929599"
+          }
+        },
+        {
+          "index": 15,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_most": "54.1 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "53883567366929599000000000",
+            "near": "53.883567366929599"
+          }
+        },
+        {
+          "index": 16,
+          "kind": "call",
+          "method": "refund",
+          "by": "carol",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.493
+          }
+        },
+        {
+          "index": 17,
+          "kind": "view",
+          "method": "get_deal",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "amount": "3000000000000000000000000",
+              "status": "Refunded"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "amount": "3000000000000000000000000",
+              "buyer": "alice.test.near",
+              "created_at_ms": 0,
+              "id": 1,
+              "seller": "carol.test.near",
+              "status": "Refunded"
+            }
+          }
+        },
+        {
+          "index": 18,
+          "kind": "balance",
+          "account": "alice",
+          "passed": true,
+          "expected": {
+            "at_least": "7.9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "7999406818647908900000000",
+            "near": "7.9994068186479089"
+          }
+        },
+        {
+          "index": 19,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_least": "50.9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "50996546412263116300000000",
+            "near": "50.9965464122631163"
+          }
+        },
+        {
+          "index": 20,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_most": "51.1 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "50996546412263116300000000",
+            "near": "50.9965464122631163"
+          }
+        },
+        {
+          "index": 21,
+          "kind": "call",
+          "method": "refund",
+          "by": "bob",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Deal 0 is already Released"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Deal 0 is already Released\")",
+            "gas_burnt_tgas": 1.628
+          }
+        },
+        {
+          "index": 22,
+          "kind": "call",
+          "method": "refund",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Deal 1 is already Refunded"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Deal 1 is already Refunded\")",
+            "gas_burnt_tgas": 1.629
+          }
+        },
+        {
+          "index": 23,
+          "kind": "call",
+          "method": "release",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Only the buyer can release deal 2"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Only the buyer can release deal 2\")",
+            "gas_burnt_tgas": 1.63
+          }
+        },
+        {
+          "index": 24,
+          "kind": "call",
+          "method": "refund",
+          "by": "alice",
+          "passed": true,
+          "expected": {
+            "fail_contains": "Only the seller can refund deal 2"
+          },
+          "actual": {
+            "status": "failure",
+            "error": "Action #0: ExecutionError(\"Smart contract panicked: Only the seller can refund deal 2\")",
+            "gas_burnt_tgas": 1.63
+          }
+        },
+        {
+          "index": 25,
+          "kind": "call",
+          "method": "create_deal",
+          "by": "carol",
+          "passed": true,
+          "expected": {
+            "equals": 3
+          },
+          "actual": {
+            "status": "success",
+            "value": 3,
+            "gas_burnt_tgas": 1.871
+          }
+        },
+        {
+          "index": 26,
+          "kind": "view",
+          "method": "deal_count",
+          "passed": true,
+          "expected": {
+            "equals": 4
+          },
+          "actual": {
+            "status": "success",
+            "value": 4
+          }
+        },
+        {
+          "index": 27,
+          "kind": "view",
+          "method": "get_deal",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "buyer": "carol",
+              "seller": "alice",
+              "status": "Funded"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "amount": "1000000000000000000000000",
+              "buyer": "carol.test.near",
+              "created_at_ms": 1794303062074,
+              "id": 3,
+              "seller": "alice.test.near",
+              "status": "Funded"
+            }
+          }
+        },
+        {
+          "index": 28,
+          "kind": "call",
+          "method": "release",
+          "by": "bob",
+          "passed": true,
+          "expected": "ok",
+          "actual": {
+            "status": "success",
+            "value": null,
+            "gas_burnt_tgas": 2.492
+          }
+        },
+        {
+          "index": 29,
+          "kind": "view",
+          "method": "get_deal",
+          "passed": true,
+          "expected": {
+            "contains": {
+              "status": "Released"
+            }
+          },
+          "actual": {
+            "status": "success",
+            "value": {
+              "amount": "1000000000000000000000000",
+              "buyer": "bob.test.near",
+              "created_at_ms": 0,
+              "id": 2,
+              "seller": "carol.test.near",
+              "status": "Released"
+            }
+          }
+        },
+        {
+          "index": 30,
+          "kind": "balance",
+          "account": "carol",
+          "passed": true,
+          "expected": {
+            "at_least": "9.9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "9999423089372597100000000",
+            "near": "9.9994230893725971"
+          }
+        },
+        {
+          "index": 31,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_least": "50.9 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "50996546412263116300000000",
+            "near": "50.9965464122631163"
+          }
+        },
+        {
+          "index": 32,
+          "kind": "balance",
+          "account": "contract",
+          "passed": true,
+          "expected": {
+            "at_most": "51.1 NEAR"
+          },
+          "actual": {
+            "status": "success",
+            "value": "50996546412263116300000000",
+            "near": "50.9965464122631163"
+          }
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "scenarios": 1,
+    "passed": 1,
+    "failed": 0,
+    "steps": 33,
+    "steps_failed": 0
+  }
+}

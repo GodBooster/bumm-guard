@@ -124,11 +124,16 @@ upgrade check requires `Cannot deserialize` in `actual.error` of every step afte
   every key and value, sorted by key, each prefixed with its length as 8 little-endian bytes.
 - On an `upgrade` step, `state_before`: the same digest, taken right before the upgrade transaction.
 - On an `upgrade` step with a `migrate` whose upgrade transaction succeeded, `access_probe`:
-  `{"method", "by", "status", "error"?}`. The same migration call is sent again after the upgrade by `by`, an
-  account that is neither the contract nor a scenario account (sub-account `bumm-sim-access-probe-not-an-alias`
-  of the sandbox root). `status` is `success`, `failure` or `not-run` (the probe account could not be created);
-  `error` is the chain's text of a failure. When the status is `success` the runner sets the upgrade step's
-  `passed` to false with a `reason` that starts with `access probe:`, so the scenario fails.
+  `{"method", "by", "status", "error"?, "state_sha256"?}`. The probe runs before the migration, in a second sandbox:
+  the scenario is replayed up to the upgrade step (its `call` steps and earlier `upgrade` steps only), the new
+  code is deployed without the migration call, and `by`, an account that is neither the contract nor a scenario
+  account (sub-account `bumm-sim-access-probe-not-an-alias` of the sandbox root), sends the migration call with
+  the same arguments and gas. Same code, state and arguments as the real upgrade, another caller. `status`:
+  `success` (the method ran: anyone can run the migration), `failure` (the method refused this caller; `error` is
+  the chain's text), `not-run` (the replay could not be done; `error` says why). `state_sha256` is the digest of
+  the probe sandbox's state right before the new code was deployed; it equals the step's `state_before.sha256`
+  unless the contract stores something that differs between two runs, such as a timestamp. The runner only
+  records the probe: it never changes the step's `passed`.
 
 ## 4. Gate report (`.bumm-guard/gate-report.json`, extended)
 
@@ -187,6 +192,12 @@ deliberately failing code-only scenario is allowed next to the proof and noted).
 Added 2026-11-03: `migration_guard` (`{method, status, file, line}`, `null` without a migration call); `status` is
 `private`, `owner-check` or, when the gate blocked, `not-found` / `unprotected` / `ambiguous`
 (`not-found`: the method is not in the crate sources, so its access control cannot be checked).
+Added 2026-11-10: `private-unenforced`: the method has `#[private]` and `#[init...]`, the crate's own Cargo.toml
+asks for a near-sdk below 5.18.0 (`near-sdk = "=5.17.2"` or `near-sdk = { version = "=5.17.2", .. }`; the first
+bound of a range counts) and the body has no recognised `predecessor_account_id()` check. near-sdk-macros before
+5.18.0 generate no caller check for an `#[init]` method, so any account can call it. With a recognised check in
+the body the status is `owner-check`; with near-sdk 5.18.0 or later, or a version that cannot be read from the
+crate's Cargo.toml (no file, workspace-inherited, git or path dependency), `#[private]` is `private`.
 
 **State digest and access probe in the gate (optional fields of section 3).**
 - If `state_after_init` and the upgrade step's `state_before` are both present and their `sha256` are equal, the
@@ -197,16 +208,22 @@ Added 2026-11-03: `migration_guard` (`{method, status, file, line}`, `null` with
   account …`), even if the report says the step passed. `not-run` counts as absent.
 - Output line `state at the upgrade: <k> key(s), <b> byte(s), changed since init`, printed when both digests were
   present. Report field `upgrade.state_at_upgrade`: `{keys, bytes, changed_since_init: true}`.
-- `upgrade.access_probe`: `{method, by, status, error}` (text cleaned as below), only when a probe with status
-  `success` or `failure` was present. `migration_guard.access_probe` repeats it, only when a probe was present.
-  A report without the new fields gives exactly the older `upgrade` block.
-- Output line `access probe: <method> called by another account after the upgrade was refused in the sandbox (the
-  method is private)`: the probe failed and its `error` matches `\bis private\b` (near-sdk `#[private]`: `Method
-  migrate is private`; `assert_self()`: `Method is private`). Then the source-check statuses
-  `owner-check-unknown`, `unprotected` and `ambiguous` no longer block, and the gate prints `migration <method>:
-  the source check did not recognise its guard (<status> at <file:line>); accepted on the access probe`.
-  `not-found` still blocks. A probe that failed with other text (for example `Cannot deserialize the contract
-  state` or a custom `only owner`) changes nothing: the source check decides as before.
+- `upgrade.access_probe`: `{method, by, status, error, same_state}` (text cleaned as below), only when a probe
+  with status `success` or `failure` was present. `same_state` is true or false when the probe has `state_sha256`
+  and the step has a `state_before` digest (equal or not), else null. `migration_guard.access_probe` repeats it,
+  only when a probe was present. A report without the new fields gives exactly the older `upgrade` block.
+- Output line `access probe: <method> sent by another account to the new code on the not yet migrated state was
+  refused (<error or 'no error text'>)`, printed when the probe's status is `failure`, whatever its error text
+  (`; note: the probe sandbox's state differed from the scenario run's` is appended when `same_state` is false).
+  Then the source-check statuses `owner-check-unknown`, `unprotected`, `ambiguous` and `private-unenforced` no
+  longer block, and the gate prints `migration <method>: the source check did not recognise its guard (<status>
+  at <file:line>); accepted on the access probe`. `not-found` still blocks.
+- `private-unenforced` without a refused probe blocks: `DEPLOY BLOCKED: migration method <m> in <file:line> has
+  #[private] on an #[init] method, but this crate builds with near-sdk <version>: before 5.18.0 near-sdk generates
+  no caller check for init methods, so any account can call it` (`; the report has no access probe that says
+  otherwise` when the report has no probe, or one with status `not-run`), and a `fix:` line (a
+  `require!(env::predecessor_account_id() == env::current_account_id(), ..)` as the first line of the body, or
+  near-sdk 5.18.0 or later). The other statuses behave as before.
 
 **Gate hardening (v0.3, 2026-11-04).** New fields in the gate report and in the MCP `gate_deploy` /
 `verify_deployed` results, and stricter proof acceptance:
@@ -249,7 +266,8 @@ Added 2026-11-03: `migration_guard` (`{method, status, file, line}`, `null` with
 - `migration_guard.status` gains `owner-check-unknown`: a `predecessor_account_id()` comparison was seen in an
   `if`/`match` but no rejection (`panic!`, `env::panic_str`, `require!`/`assert!` family, `return`,
   `unreachable!`) was recognised in its body, or the comparison is a tautology (the same expression on both
-  sides). It blocks like `unprotected`, with a message that names the cause and suggests `#[private]`.
+  sides). It blocks like `unprotected`, with a message that names the cause and suggests `#[private]` (not for a crate that builds with a near-sdk before 5.18.0, where it is not
+  enforced on `#[init]` methods).
   `owner-check` now means a recognised rejection: the comparison inside `require!`/`assert!`/`assert_eq!`/
   `assert_ne!`/`require_eq!`/`require_ne!`, or an `if`/`match` with such a rejection in its body (any branch).
 - `post_deploy.smoke[]`: `--smoke METHOD[:ARGS_JSON][=EXPECTED_JSON]` (old forms unchanged). With an expectation
