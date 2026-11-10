@@ -183,9 +183,9 @@ jobs:
           print(f"code-only upgrade: steps 0..{up} passed, {len(after)} step(s) after it failed with "
                 f"'Cannot deserialize' ({len(views)} view steps), as expected")
           EOF
-      - name: build escrow_v1 and escrow_v2 wasm (rustc 1.85.0; second upgrade pair)
+      - name: build escrow_v1, escrow_v2 and escrow_v3 wasm (rustc 1.85.0; second upgrade pair and its fixed version)
         working-directory: tests/fixtures/near
-        run: cargo build --release --locked --target wasm32-unknown-unknown -p escrow_v1 -p escrow_v2
+        run: cargo build --release --locked --target wasm32-unknown-unknown -p escrow_v1 -p escrow_v2 -p escrow_v3
       - name: run escrow v1 scenarios
         run: |
           python -m bumm_guard simulate scenarios/escrow/*.json \
@@ -199,26 +199,50 @@ jobs:
         run: |
           python -m bumm_guard simulate scenarios/upgrade/escrow_v1_to_v2_with_migrate.json \
             --runner contracts/target/release/bumm-sim --out simulate-out/escrow-upgrade-with-migrate.json
-      - name: the escrow with-migrate report records the state digest and the access probe; the gate reads both
+      - name: access probe on escrow v1 -> v2 - migrate() is open (near-sdk 5.17.2 drops #[private] on #[init]); the gate has no proof
         run: |
           python - <<'EOF'
           import json
-          from bumm_guard.gate import find_upgrade_proof
+          from bumm_guard.gate import find_upgrade_proof, migration_guard
           r = json.load(open("simulate-out/escrow-upgrade-with-migrate.json"))
           (sc,) = r["scenarios"]
           up = next(s for s in sc["steps"] if s["kind"] == "upgrade")
           init, before, probe = sc["state_after_init"], up["state_before"], up["access_probe"]
           assert before["keys"] > init["keys"] and before["sha256"] != init["sha256"], (init, before)
-          # The same migrate call, sent by an account that is neither the contract nor a scenario account.
-          assert probe["method"] == "migrate" and probe["status"] == "failure", probe
-          assert "is private" in probe["error"], probe
+          # Same code, state and arguments as the real upgrade; the caller is an account that is neither
+          # the contract nor a scenario account. escrow_v2 writes `#[private] #[init(ignore_state)]`, and
+          # near-sdk 5.17.2 generates no caller check for it: the stranger's migrate goes through.
+          assert probe["method"] == "migrate" and probe["status"] == "success", probe
           assert probe["by"] not in sc["accounts"].values(), probe
-          assert up["passed"] and sc["passed"], up
+          assert probe["state_sha256"] == before["sha256"], (probe, before)
+          assert up["passed"] and sc["passed"], up      # the scenario itself still passes: the probe is a record
           proof, notes = find_upgrade_proof(r, sc["wasm_sha256"], sc["upgrade_wasm_sha256"])
-          assert proof and proof["state_at_upgrade"]["changed_since_init"], notes
-          assert proof["access_probe"]["status"] == "failure", proof
-          print(f"escrow with migrate: state {init['keys']} -> {before['keys']} key(s) before the upgrade; "
-                f"migrate by {probe['by']} refused: {probe['error']}")
+          assert proof is None and any("accepted a call from another account" in n for n in notes), (proof, notes)
+          assert migration_guard("tests/fixtures/near/escrow_v2", "migrate")[0] == "private-unenforced"
+          print(f"escrow v1 -> v2: state {init['keys']} -> {before['keys']} key(s) before the upgrade; migrate sent by "
+                f"{probe['by']} on the not yet migrated state SUCCEEDED; the gate has no proof for this pair")
+          EOF
+      - name: upgrade escrow v1 -> v3 with migrate() (expected PASS; the access probe is refused, the gate has a proof)
+        run: |
+          python -m bumm_guard simulate scenarios/upgrade/escrow_v1_to_v3_with_migrate.json \
+            --runner contracts/target/release/bumm-sim --out simulate-out/escrow-v3-upgrade-with-migrate.json
+          python - <<'EOF'
+          import json
+          from bumm_guard.gate import find_upgrade_proof, migration_guard
+          r = json.load(open("simulate-out/escrow-v3-upgrade-with-migrate.json"))
+          (sc,) = r["scenarios"]
+          up = next(s for s in sc["steps"] if s["kind"] == "upgrade")
+          before, probe = up["state_before"], up["access_probe"]
+          assert sc["passed"] and all(s["passed"] for s in sc["steps"]), sc
+          assert probe["method"] == "migrate" and probe["status"] == "failure", probe
+          assert "only the contract itself may migrate" in probe["error"], probe
+          assert probe["state_sha256"] == before["sha256"], (probe, before)
+          proof, notes = find_upgrade_proof(r, sc["wasm_sha256"], sc["upgrade_wasm_sha256"])
+          assert proof and proof["access_probe"]["status"] == "failure" and proof["access_probe"]["same_state"], (proof, notes)
+          assert proof["state_at_upgrade"]["changed_since_init"], proof
+          assert migration_guard("tests/fixtures/near/escrow_v3", "migrate")[0] == "owner-check"
+          print(f"escrow v1 -> v3: {len(sc['steps'])}/{len(sc['steps'])} steps passed; migrate sent by {probe['by']} on the "
+                f"not yet migrated state was refused: {probe['error']}")
           EOF
       - name: upgrade escrow v1 -> v2 code only (expected FAIL after the first view; the smoke view lies)
         run: |
@@ -345,25 +369,21 @@ jobs:
           print(f"official V0 -> official code: {len(sc['steps'])}/{len(sc['steps'])} steps passed, upgrade at step {up}, "
                 f"get_nonce {nonces} (V0 state read lazily, moved to V1 by the first new deposit), no migrate")
           EOF
-      - name: access probe, negative - a migration method that anyone can call fails the upgrade step
+      - name: access probe, negative - a migration method that anyone can call is recorded and the gate has no proof
         run: |
           python - <<'EOF'
           import json
           s = json.load(open("scenarios/upgrade/official_versioned_v0_to_v1_code_only.json"))
           up = next(i for i, st in enumerate(s["steps"]) if "upgrade" in st)
           # get_nonce stands in for a migration method with no access control: the contract can call it
-          # in the upgrade batch, and so can anyone else afterwards.
+          # in the upgrade batch, and so can anyone else.
           s["steps"][up]["migrate"] = {"method": "get_nonce"}
           s["steps"] = s["steps"][:up + 2]
           s["name"] = "access probe negative: a migration method anyone can call"
           json.dump(s, open("simulate-out/probe-open-scenario.json", "w"))
           EOF
-          set +e
           python -m bumm_guard simulate simulate-out/probe-open-scenario.json \
             --runner contracts/target/release/bumm-sim --out simulate-out/probe-open-report.json
-          code=$?
-          set -e
-          test "$code" -eq 1 || { echo "expected exit 1 (the access probe fails the upgrade step), got $code"; exit 1; }
           python - <<'EOF'
           import json
           from bumm_guard.gate import find_upgrade_proof
@@ -371,14 +391,12 @@ jobs:
           (sc,) = r["scenarios"]
           up = next(s for s in sc["steps"] if s["kind"] == "upgrade")
           assert sc.get("error") is None, sc["error"]
-          assert up["actual"]["status"] == "success", up     # the upgrade itself went through
+          assert up["actual"]["status"] == "success" and up["passed"], up
           assert up["access_probe"]["status"] == "success", up
-          assert not up["passed"] and "access probe" in up["reason"], up
-          assert not sc["passed"]
           proof, notes = find_upgrade_proof(r, sc["wasm_sha256"], sc["upgrade_wasm_sha256"])
-          assert proof is None, proof
-          print(f"access probe negative: {up['access_probe']['by']} called get_nonce after the upgrade and it "
-                "succeeded; the upgrade step is failed and the gate has no proof")
+          assert proof is None and any("accepted a call from another account" in n for n in notes), (proof, notes)
+          print(f"access probe negative: {up['access_probe']['by']} called get_nonce on the new code and it "
+                "succeeded; the gate has no proof")
           EOF
       - name: state digest, negative - a view method sent as a transaction before the upgrade writes nothing
         run: |
@@ -474,6 +492,11 @@ jobs:
         with:
           name: escrow_v2-wasm
           path: tests/fixtures/near/target/wasm32-unknown-unknown/release/escrow_v2.wasm
+      - name: upload the escrow_v3 wasm (escrow v2 with a caller check inside migrate; the access probe is refused)
+        uses: actions/upload-artifact@v4
+        with:
+          name: escrow_v3-wasm
+          path: tests/fixtures/near/target/wasm32-unknown-unknown/release/escrow_v3.wasm
       - name: upload the exact swarm_jobs wasm the scenarios ran against
         uses: actions/upload-artifact@v4
         with:
