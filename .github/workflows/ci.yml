@@ -219,6 +219,7 @@ jobs:
           assert probe["method"] == "migrate" and probe["status"] == "success", probe
           assert probe["by"] not in sc["accounts"].values(), probe
           assert probe["state_sha256"] == before["sha256"], (probe, before)
+          assert "control_status" not in probe, probe     # no control call after a probe that went through
           assert up["passed"] and sc["passed"], up      # the scenario itself still passes: the probe is a record
           proof, notes = find_upgrade_proof(r, sc["wasm_sha256"], sc["upgrade_wasm_sha256"])
           assert proof is None and any("accepted a call from another account" in n for n in notes), (proof, notes)
@@ -241,6 +242,8 @@ jobs:
           assert probe["method"] == "migrate" and probe["status"] == "failure", probe
           assert "only the contract itself may migrate" in probe["error"], probe
           assert probe["state_sha256"] == before["sha256"], (probe, before)
+          # the control: the same call from the contract account, in the same probe sandbox, went through
+          assert probe["control_status"] == "success" and "control_error" not in probe, probe
           proof, notes = find_upgrade_proof(r, sc["wasm_sha256"], sc["upgrade_wasm_sha256"])
           assert proof and proof["access_probe"]["status"] == "failure" and proof["access_probe"]["same_state"], (proof, notes)
           assert proof["state_at_upgrade"]["changed_since_init"], proof
@@ -353,6 +356,22 @@ jobs:
           print(f"swarm_jobs code-only upgrade: steps 0..{up} passed, the 4 views right after it passed (job_count 2, "
                 f"agent_count 1, get_reviewer, get_agent), {len(after)} step(s) after that failed with "
                 f"'Cannot deserialize element' ({len(views)} view steps, {len(calls)} call steps), as expected")
+          EOF
+      - name: access probe on N06 -> N10 and swarm_jobs v1 -> v2 - migrate() is open there too; the gate has no proof
+        run: |
+          python - <<'EOF'
+          import json
+          from bumm_guard.gate import find_upgrade_proof
+          for name in ("upgrade-with-migrate.json", "swarm-jobs-upgrade-with-migrate.json"):
+              r = json.load(open(f"simulate-out/{name}"))
+              (sc,) = r["scenarios"]
+              up = next(s for s in sc["steps"] if s["kind"] == "upgrade")
+              probe = up["access_probe"]
+              assert sc["passed"] and probe["status"] == "success", (name, probe)
+              assert probe["state_sha256"] == up["state_before"]["sha256"], (name, probe)
+              proof, notes = find_upgrade_proof(r, sc["wasm_sha256"], sc["upgrade_wasm_sha256"])
+              assert proof is None and any("accepted a call from another account" in n for n in notes), (name, notes)
+              print(f"{name}: migrate sent by {probe['by']} on the not yet migrated state SUCCEEDED; no proof")
           EOF
       - name: build the official near-sdk-rs example examples/versioned (pinned commit, unmodified) and our two old variants (rustc 1.85.0)
         run: scripts/build_official_example.sh

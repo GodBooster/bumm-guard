@@ -709,10 +709,13 @@ pub fn state_digest<'a>(pairs: impl Iterator<Item = (&'a [u8], &'a [u8])>) -> St
 /// replayed up to the upgrade, the new code is deployed without the migration call, and `by` (an
 /// account that is neither the contract nor a scenario account) sends the migration call. Same
 /// code, state and arguments as the real upgrade, another caller. `status` is `success` (anyone
-/// can run the migration), `failure` (the method refused this caller; `error` is the chain's
-/// text) or `not-run` (`error` says why). `state_sha256` is the digest of the probe sandbox's
-/// state right before the new code was deployed; it equals the step's `state_before.sha256`
-/// unless the contract stores something that differs between two runs (a timestamp).
+/// can run the migration), `failure` (this caller's call failed; `error` is the chain's text) or
+/// `not-run` (`error` says why: the replay did not reproduce the scenario run, or the node did not
+/// accept the call). After a `failure` the same call is sent once more in the same sandbox, signed
+/// by the contract account: `control_status` `success` shows that the migration itself works on
+/// this state, so the first call failed because of who sent it. `state_sha256` is the digest of
+/// the probe sandbox's state right before the new code was deployed; it equals the step's
+/// `state_before.sha256` unless the contract stores something that differs between two runs.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AccessProbe {
     pub method: String,
@@ -722,6 +725,10 @@ pub struct AccessProbe {
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub control_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub control_error: Option<String>,
 }
 
 impl StepResult {
@@ -1461,12 +1468,16 @@ mod tests {
             status: "failure".into(),
             error: Some("Smart contract panicked: only the contract itself may migrate".into()),
             state_sha256: Some("ab".repeat(32)),
+            control_status: Some("success".into()),
+            control_error: None,
         });
         assert!(step.passed, "the probe is a record; the deploy gate judges it");
         let v = serde_json::to_value(&step).unwrap();
         assert_eq!(v["access_probe"]["status"], "failure");
         assert_eq!(v["access_probe"]["by"], "probe.test.near");
         assert_eq!(v["access_probe"]["state_sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(v["access_probe"]["control_status"], "success");
+        assert!(v["access_probe"].get("control_error").is_none());
 
         step.access_probe = Some(AccessProbe {
             method: "migrate".into(),
@@ -1474,9 +1485,12 @@ mod tests {
             status: "success".into(),
             error: None,
             state_sha256: None,
+            control_status: None,
+            control_error: None,
         });
         let v = serde_json::to_value(&step).unwrap();
         assert_eq!(v["access_probe"]["status"], "success");
+        assert!(v["access_probe"].get("control_status").is_none(), "no control call after a probe that went through");
         assert!(v["access_probe"].get("error").is_none() && v["access_probe"].get("state_sha256").is_none());
         assert!(valid_alias("alice") && !valid_alias(PROBE_ACCOUNT), "the probe account can never be a scenario alias");
     }

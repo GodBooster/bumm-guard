@@ -312,7 +312,7 @@ async fn execute(sc: &Scenario, wasm: &[u8], upgrade_code: &UpgradeCode, res: &m
             if !res.steps[pos].actual.is_success() {
                 continue; // the upgrade itself failed: there is nothing to probe
             }
-            let probe = access_probe(sc, wasm, upgrade_code, step.index, m).await;
+            let probe = access_probe(sc, wasm, upgrade_code, step.index, m, &res.steps).await;
             res.steps[pos].access_probe = Some(probe);
         }
     }
@@ -329,17 +329,20 @@ async fn state_of(contract: &Contract) -> Option<StateDigest> {
 /// The access probe of the upgrade step `up_index` (FORMATS section 3): in a fresh sandbox the
 /// scenario is replayed up to that step, the new code is deployed WITHOUT the migration call, and
 /// an account that is neither the contract nor a scenario account sends the migration call. Code,
-/// state and arguments are the ones of the real upgrade; only the caller differs. So `failure`
-/// means the method refuses other callers, and `success` means anyone could have run the
-/// migration. `not-run` (with the reason) when the replay itself could not be done.
+/// state and arguments are the ones of the real upgrade; only the caller differs. A `success`
+/// means anyone could have run the migration. After a `failure` the contract account sends the
+/// same call in the same sandbox (the control): if that one succeeds, the first one failed because
+/// of its caller. `not-run` (with the reason) when the replay did not reproduce the scenario run
+/// (`main` holds its step results) or the node did not accept the probe call.
 async fn access_probe(
     sc: &Scenario,
     wasm: &[u8],
     upgrade_code: &UpgradeCode,
     up_index: usize,
     m: &Migrate,
+    main: &[StepResult],
 ) -> AccessProbe {
-    match access_probe_run(sc, wasm, upgrade_code, up_index, m).await {
+    match access_probe_run(sc, wasm, upgrade_code, up_index, m, main).await {
         Ok(probe) => probe,
         Err(e) => AccessProbe {
             method: m.method.clone(),
@@ -347,6 +350,8 @@ async fn access_probe(
             status: "not-run".into(),
             error: Some(format!("{e:#}")),
             state_sha256: None,
+            control_status: None,
+            control_error: None,
         },
     }
 }
@@ -357,22 +362,32 @@ async fn access_probe_run(
     upgrade_code: &UpgradeCode,
     up_index: usize,
     m: &Migrate,
+    main: &[StepResult],
 ) -> Result<AccessProbe> {
     let env = setup(sc, wasm).await?;
     if let Some(init) = &sc.init {
         let actual = run_init(&env, init).await;
         anyhow::ensure!(actual.is_success(), "init failed in the probe run: {}", actual.error.unwrap_or_default());
     }
-    // Only the steps that can change state are replayed.
+    // Only the steps that can change state are replayed, and each must end as it did in the
+    // scenario run: otherwise the probe sandbox is in another state and the probe says nothing.
     for step in sc.steps.iter().filter(|s| s.index < up_index) {
-        match &step.kind {
+        let replayed = match &step.kind {
             StepKind::Call { method, by, args, deposit, gas } => {
-                run_call(&env, method, by, args, *deposit, *gas).await;
+                Some(run_call(&env, method, by, args, *deposit, *gas).await)
             }
-            StepKind::Upgrade { migrate, .. } => {
-                run_upgrade(&env, &upgrade_code[&step.index], migrate).await;
-            }
-            StepKind::View { .. } | StepKind::Balance { .. } => {}
+            StepKind::Upgrade { migrate, .. } => Some(run_upgrade(&env, &upgrade_code[&step.index], migrate).await),
+            StepKind::View { .. } | StepKind::Balance { .. } => None,
+        };
+        if let Some(actual) = replayed {
+            let want = main.iter().find(|r| r.index == step.index).map(|r| r.actual.status.clone());
+            anyhow::ensure!(
+                want.as_deref() == Some(actual.status.as_str()),
+                "step {} ended {} in the probe run and {} in the scenario run",
+                step.index,
+                actual.status,
+                want.as_deref().unwrap_or("unknown")
+            );
         }
     }
     let state = state_of(&env.contract).await;
@@ -396,14 +411,31 @@ async fn access_probe_run(
         .args_json(resolve_aliases(&m.args, &env.aliases))
         .gas(Gas::from_gas(m.gas))
         .transact()
-        .await;
-    let actual = call_actual(outcome);
+        .await
+        .map_err(|e| anyhow::anyhow!("the node did not accept the probe call: {e}"))?;
+    let actual = call_actual(Ok(outcome));
+    // Control: the same call from the contract account, only when the stranger's call failed.
+    let (control_status, control_error) = if actual.is_success() {
+        (None, None)
+    } else {
+        let control = call_actual(
+            env.contract
+                .call(&m.method)
+                .args_json(resolve_aliases(&m.args, &env.aliases))
+                .gas(Gas::from_gas(m.gas))
+                .transact()
+                .await,
+        );
+        (Some(control.status), control.error)
+    };
     Ok(AccessProbe {
         method: m.method.clone(),
         by: caller.id().to_string(),
         status: actual.status,
         error: actual.error,
         state_sha256: state.map(|d| d.sha256),
+        control_status,
+        control_error,
     })
 }
 
