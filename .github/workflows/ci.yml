@@ -35,14 +35,18 @@ jobs:
           print("fixtures OK:", ids)
           EOF
           test "$code" -eq 1
-      - name: migration guard on the real fixtures (expect private)
+      - name: migration guard on the real fixtures (near-sdk 5.17.2 - #[private] on #[init] is not enforced; escrow_v3 checks the caller in the body)
         run: |
           python - <<'EOF'
-          from bumm_guard.gate import migration_guard
-          for crate in ("tests/fixtures/near/escrow_v2", "tests/fixtures/near/event_registration_waitlist"):
+          from bumm_guard.gate import migration_guard, near_sdk_version
+          want = {"escrow_v2": "private-unenforced", "event_registration_waitlist": "private-unenforced",
+                  "swarm_jobs_v2": "private-unenforced", "escrow_v3": "owner-check"}
+          for name, expected in want.items():
+              crate = f"tests/fixtures/near/{name}"
               status, detail = migration_guard(crate, "migrate")
-              assert status == "private", (crate, status, detail)
-              print(f"{crate}: migrate is #[private] at {detail['file']}:{detail['line']}")
+              assert near_sdk_version(crate) == (5, 17, 2), (crate, near_sdk_version(crate))
+              assert status == expected, (crate, status, detail)
+              print(f"{crate}: migrate is {status} at {detail['file']}:{detail['line']}")
           EOF
 
   ui-panel:
