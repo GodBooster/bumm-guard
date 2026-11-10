@@ -203,7 +203,10 @@ import json, sys
 up = next(s for s in sc["steps"] if s["kind"] == "upgrade")
 p = up["access_probe"]
 assert p["status"] == "failure" and p["by"] not in sc["accounts"].values(), p
-print(f"access probe: {p['method']} sent by {p['by']} was refused: {p['error']}")
+assert p["state_sha256"] == up["state_before"]["sha256"], "the probe ran on another state"
+assert p["control_status"] == "success", "the same call from the contract account did not go through"
+assert "only the contract itself may migrate" in p["error"], p["error"]
+print(f"access probe: {p['method']} sent by {p['by']} was refused: {p['error']}; the same call from the contract account went through")
 PYEOF
   }
   check C6b "sandbox: escrow v1 -> v3 with migrate() passes on the committed wasm, and migrate() refuses another caller (access probe)" 0 "^access probe: migrate sent by .* was refused" -- \

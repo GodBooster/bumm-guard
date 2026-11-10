@@ -790,7 +790,19 @@ class StateDigestTests(Fixture):
         proof, _ = self.find(self.proof(probe={"method": "migrate", "by": "p.test.near", "status": "failure",
                                                "error": "Method migrate is private"}))
         self.assertEqual(proof["access_probe"], {"method": "migrate", "by": "p.test.near", "status": "failure",
-                                                 "error": "Method migrate is private", "same_state": None})
+                                                 "error": "Method migrate is private", "same_state": None,
+                                                 "control_status": None})
+
+    def test_control_status_is_success_failure_or_none(self):
+        for given, want in (("success", "success"), ("failure", "failure"), ("not-run", None), ("ok", None),
+                            (None, None), (7, None)):
+            with self.subTest(control_status=given):
+                probe = {"method": "migrate", "by": "p", "status": "failure", "control_status": given,
+                         "control_error": "ignored by the proof"}
+                proof, _ = self.find(self.proof(probe=probe))
+                self.assertIs(proof["access_probe"]["control_status"], want)
+        proof, _ = self.find(self.proof(probe={"method": "migrate", "by": "p", "status": "failure"}))
+        self.assertIsNone(proof["access_probe"]["control_status"])
 
     def test_probe_failure_with_any_text_is_recorded(self):
         for err in ("only owner", "Smart contract panicked: no", None):
@@ -862,7 +874,8 @@ class StateDigestTests(Fixture):
 
     def test_mcp_gate_deploy_carries_the_new_lines(self):
         from bumm_guard import mcp_server
-        probe = {"method": "migrate", "by": "p.test.near", "status": "failure", "error": "Method migrate is private"}
+        probe = {"method": "migrate", "by": "p.test.near", "status": "failure", "error": "Method migrate is private",
+                 "state_sha256": self.D_UP["sha256"], "control_status": "success"}
         p = self.root / "sim.json"
         p.write_text(json.dumps(self.proof(probe=probe)))
         with mock.patch.dict("os.environ", {"BUMM_GUARD_ALLOW_ANY_PATH": "1"}), \
@@ -872,7 +885,8 @@ class StateDigestTests(Fixture):
         self.assertTrue(data["passed"], data["messages"])
         self.assertIn("state at the upgrade: 3 key(s), 120 byte(s), changed since init", data["messages"])
         self.assertIn("access probe: migrate sent by another account to the new code on the not yet migrated "
-                      "state was refused (Method migrate is private)", data["messages"])
+                      "state was refused (Method migrate is private); the same call from the contract account "
+                      "went through", data["messages"])
         self.assertEqual(data["upgrade"]["state_at_upgrade"]["keys"], 3)
         self.assertEqual(data["upgrade"]["access_probe"]["status"], "failure")
 

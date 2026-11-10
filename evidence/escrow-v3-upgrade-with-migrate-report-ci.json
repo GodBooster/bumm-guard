@@ -1,7 +1,7 @@
 {
   "tool": "bumm-guard",
-  "version": "0.4.0",
-  "runner": "bumm-sim 0.4.0",
+  "version": "0.5.0",
+  "runner": "bumm-sim 0.5.0",
   "wasm_sha256": "ecd8a805ea3252f1ffa2a285964d3e035d6e3c6be16e6974c33c479c3e034443",
   "upgrade_wasm_sha256": "b66a74b929fdc843f73f924e2435ad9b61e41a8d1f8a1a7aec6f9fe0cd4a5527",
   "scenario_sha256": "5b27a381ba5ee997d4d2f4ce0e9478f253f17ecb907d10d6972379ffa223e1fd",
@@ -19,7 +19,7 @@
       "upgrade_wasm": "tests/fixtures/near/target/wasm32-unknown-unknown/release/escrow_v3.wasm",
       "upgrade_wasm_sha256": "b66a74b929fdc843f73f924e2435ad9b61e41a8d1f8a1a7aec6f9fe0cd4a5527",
       "passed": true,
-      "duration_s": 12.1,
+      "duration_s": 12.3,
       "accounts": {
         "alice": "alice.test.near",
         "bob": "bob.test.near",
@@ -169,7 +169,8 @@
             "by": "bumm-sim-access-probe-not-an-alias.test.near",
             "status": "failure",
             "error": "Action #0: ExecutionError(\"Smart contract panicked: only the contract itself may migrate\")",
-            "state_sha256": "c281e91d5fe710189bdec67b995c968ca4f0aac5667cd826bc7632b90462142b"
+            "state_sha256": "c281e91d5fe710189bdec67b995c968ca4f0aac5667cd826bc7632b90462142b",
+            "control_status": "success"
           }
         },
         {
@@ -503,7 +504,7 @@
             "value": {
               "amount": "1000000000000000000000000",
               "buyer": "carol.test.near",
-              "created_at_ms": 1794303074466,
+              "created_at_ms": 1794305949789,
               "id": 3,
               "seller": "alice.test.near",
               "status": "Funded"

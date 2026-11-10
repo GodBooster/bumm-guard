@@ -2,17 +2,17 @@
 
 Drafts for the owner to edit and publish. Nothing here has been posted or submitted. Every claim is backed by a file in this repository or by the CI run named next to it; anything not done is listed as not done. Placeholders in `{braces}` are filled by the owner on 13.11.
 
-## 1. Form field "What did you build?" (limit 2000 characters; this text: 1952 characters, 1968 if the form counts line breaks as two; counted on the text between the markers without the final newline, 2026-11-10)
+## 1. Form field "What did you build?" (limit 2000 characters; this text: 1954 characters, 1970 if the form counts line breaks as two; counted on the text between the markers without the final newline, 2026-11-10)
 
 <!-- form-text-start -->
 BUMM Guard checks in a sandbox that a NEAR contract upgrade works on state the old code wrote, binds that proof to the exact pair of code hashes, and only then hands an agent or a human the deploy command.
 
-The problem: new code over state with another layout, and no migration, fails on every call that reads the data. And the migration is itself an entry point: near-sdk before 5.18.0 generates no caller check for `#[private]` on an `#[init]` method, so the documented `#[private] #[init(ignore_state)] fn migrate()` can be called by anyone.
+The problem: new code over state with another layout, and no migration, fails on every call that reads the data. And the migration is itself an entry point: near-sdk 5.0.0 to 5.17.2 generates no caller check for `#[private]` on an `#[init]` method, so the usual `#[private] #[init(ignore_state)] fn migrate()` can be called by anyone.
 
-What it does: the `upgrade` scenario step deploys the old wasm in near-sandbox, writes state, deploys the new wasm with its `migrate` call and checks the upgraded state. An access probe replays the run, deploys the new code alone and sends `migrate` from another account. The gate reads the account's code hash and prints the deploy command only when a passing scenario proves that pair and the probe was refused. Also: a static rule-pack (3 defect classes) and an MCP server (7 tools).
+What it does: the `upgrade` scenario step deploys the old wasm in near-sandbox, writes state, deploys the new wasm with its `migrate` call and checks the upgraded state. An access probe replays the run, deploys the new code alone and sends `migrate` from another account. The gate reads the account's code hash and prints the deploy command only when a passing scenario proves that pair; a migration another account can run is refused. Also: a static rule-pack and an MCP server.
 
 Evidence:
-- Found by the probe on 2026-11-10: `migrate` of our own three contracts, already upgraded live on testnet, goes through for a stranger. The gate now refuses them; escrow v3 checks the caller and passes 33/33.
+- Found by the probe on 2026-11-10: in a sandbox replay, `migrate` of the three contracts we had upgraded live on testnet accepts a stranger's call. The gate now refuses them; escrow v3 checks the caller and passes 33/33.
 - CI on every push: four of our pairs and the official near-sdk-rs `versioned` example; code-only upgrades fail.
 - Guarded jobs for agent swarms: a contract pays the agent only after the reviewer approves that agent, wasm and report; `review-job` prints the command, never signs.
 - Testnet: the gate refused the open migration and passed v3; the owner ran the printed tx; a 1 NEAR escrow deal survived.
@@ -40,10 +40,10 @@ Field notes, checked against https://nearhackathon.com/HACKATHON.md on 2026-11-0
 
 The rules require the main post to say the project was built at NEAR HACKATHON, to tag `@NEARProtocol` and `#NEARHackathon`, and to carry the demo video (Q-012: screenshots are not enough for a local-only demo). `@NearLegion` and `@NearBuilders` are optional. Counts below treat a link as 23 characters; recheck in the X editor.
 
-Main post (limit 280; this text counts 278 with the repo link; attach the video):
+Main post (limit 280; this text counts 273 with the repo link; attach the video):
 
 <!-- x1-start -->
-The NEAR docs migration, #[private] #[init(ignore_state)], is open to anyone on near-sdk < 5.18. Built at NEAR HACKATHON: BUMM Guard proves an upgrade in near-sandbox and calls migrate() as a stranger before an agent deploys. @NEARProtocol #NEARHackathon {REPO}
+The NEAR migration #[private] #[init(ignore_state)] is open to anyone on near-sdk 5.0-5.17. Built at NEAR HACKATHON: BUMM Guard proves an upgrade in near-sandbox and calls migrate() as a stranger before an agent deploys. @NEARProtocol #NEARHackathon {REPO}
 <!-- x1-end -->
 
 Thread, reply 1 (278 characters), where the upgrade check came from:
@@ -52,10 +52,10 @@ Thread, reply 1 (278 characters), where the upgrade check came from:
 Where the upgrade check came from: a pilot, same task and model, one run per arm, not statistics. The plain agent wrote migrate() and was faster. The agent with our earlier tool passed every fresh-deploy check and shipped no migration. So we built this. evidence/AB_PILOT_N10.md
 <!-- x2-end -->
 
-Thread, reply 2 (278 characters with the link; the hashtag is in the main post), how the finding was made (`evidence/PRIVATE_ON_INIT.md`):
+Thread, reply 2 (277 characters with the link; the hashtag is in the main post), how the finding was made (`evidence/PRIVATE_ON_INIT.md`):
 
 <!-- x3-start -->
-How we found it: BUMM Guard replays the upgrade in a second sandbox, deploys the new code alone and calls migrate() as a stranger. On our own three contracts, live on testnet, the call went through. The gate refuses them now; escrow v3 checks the caller. {REPO}
+How we found it: BUMM Guard replays the upgrade in a second sandbox, deploys the new code alone and calls migrate() as a stranger. On the code of our three testnet contracts that call went through. The gate refuses them now; escrow v3 checks the caller. {REPO}
 <!-- x3-end -->
 
 Thread, reply 3 (274 characters):
@@ -66,7 +66,7 @@ Also new: guarded jobs for agent swarms. A NEAR contract holds the reward and pa
 
 ## 3. Video script v6 (2 min 10 s, screen recording, voice-over in plain statements)
 
-Changed on 2026-11-10 from v5: the access probe found that `migrate` of escrow v2 is callable by any account (near-sdk 5.17.2 generates no caller check for `#[private]` on an `#[init]` method; `evidence/PRIVATE_ON_INIT.md`). The video now opens on that finding, shows the gate refusing escrow v2 and passing escrow v3, and upgrades the live demo account to v3. Two roles on screen: **agent** (Claude Code) and **reviewer** (the human who checks, pays and deploys; on testnet every account is the owner's). Shots 4 to 7 are one continuous take. Every number on screen is in the README or in `evidence/`.
+Changed on 2026-11-10 from v5: the access probe found that `migrate` of escrow v2 is callable by any account (near-sdk 5.17.2 generates no caller check for `#[private]` on an `#[init]` method; `evidence/PRIVATE_ON_INIT.md`; found in the sandbox on the pre-migration state, nobody called `migrate` on the testnet accounts). The video now opens on that finding, shows the gate refusing escrow v2 and passing escrow v3, and upgrades the testnet account kept for the video (`bumm-guard-escrow2.testnet`) to v3. Two roles on screen: **agent** (Claude Code) and **reviewer** (the human who checks, pays and deploys; on testnet every account is the owner's). Shots 4 to 7 are one continuous take. Every number on screen is in the README or in `evidence/`.
 
 Recorded in parts on the owner's machine, in `bumm-guard/` on `main`, and cut together; the terminal is logged to a file (`script`). The agent's waiting time in shot 3 is cut and marked ("waiting time cut"). Every transaction is signed by the owner with `sign-with-keychain` on testnet accounts he controls; each such frame carries the caption "signed by the owner, test account". No key, wallet or seed phrase in frame. BUMM Guard never signs.
 
@@ -88,7 +88,7 @@ Recorded in parts on the owner's machine, in `bumm-guard/` on `main`, and cut to
 3. The agent submits the escrow v3 wasm and its CI report (`evidence/wasm/escrow_v3.wasm`, `evidence/escrow-v3-upgrade-with-migrate-report-ci.json`):
 
    ```
-   near contract call-function as-transaction bumm-guard-jobs.testnet submit json-args '{"job_id":4,"wasm_sha256":"b66a74b929fdc843f73f924e2435ad9b61e41a8d1f8a1a7aec6f9fe0cd4a5527","report_sha256":"9b64eac4ebefc9557d0b9079a2a3d8f1e125e183fa2a3d208b8f77063a4cd2a1"}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as bumm-guard-alice.testnet network-config testnet sign-with-keychain send
+   near contract call-function as-transaction bumm-guard-jobs.testnet submit json-args '{"job_id":4,"wasm_sha256":"b66a74b929fdc843f73f924e2435ad9b61e41a8d1f8a1a7aec6f9fe0cd4a5527","report_sha256":"db7e3fe41a2079a20c49f7bf2d5ec1967ec57adcf641658f858e766d52dbd6a4"}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as bumm-guard-alice.testnet network-config testnet sign-with-keychain send
    ```
 
 4. Read-only checks: `scripts/judge-check.sh` → `no check failed` (B4 prints `with-init-call migrate`); `get_job {"id":4}` says `Submitted`; `bumm-guard-escrow2.testnet` still runs v1 with its one deal.
@@ -97,9 +97,9 @@ Recorded in parts on the owner's machine, in `bumm-guard/` on `main`, and cut to
 
 | # | Time | Screen (role) | Shows | Voice-over |
 |---|---|---|---|---|
-| 1 | 0:00-0:14 | Browser: CI job `scenario runner`, step `access probe on escrow v1 -> v2`; run number and SHA in frame | `migrate sent by bumm-sim-access-probe… on the not yet migrated state SUCCEEDED; the gate has no proof for this pair` | "This is the migration pattern from the NEAR docs: private, init, ignore state. On near-sdk 5.17.2 the private attribute does nothing on an init method. Our sandbox sent migrate from a stranger's account, and it went through." |
+| 1 | 0:00-0:14 | Browser: CI job `scenario runner`, step `access probe on escrow v1 -> v2`; run number and SHA in frame | `migrate sent by bumm-sim-access-probe… on the not yet migrated state SUCCEEDED; the gate has no proof for this pair` | "This is the migration pattern of NEAR's official example: private, init, ignore state. On near-sdk 5.17.2 the private attribute does nothing on an init method. Our sandbox sent migrate from a stranger's account, and it went through." |
 | 2 | 0:14-0:24 | Terminal: `gate --verify-deployed bumm-guard-escrow2.testnet --wasm evidence/wasm/escrow_v1.wasm … --smoke 'deal_count=1' --smoke 'get_deal:{"id":0}'` | `MATCH` for v1, the deal: buyer, seller, 1 NEAR, `released: false` | "A live escrow on testnet holds a one-NEAR deal. The next version stores deals differently, so the upgrade needs a migration." |
-| 3 | 0:24-0:58 | Claude Code (**agent**): prompt 1, then prompt 2 (below) | 1: `blocked: true`, `has #[private] on an #[init] method … any account can call it`, the `fix:` line. 2: `passed: true`, `proved after upgrade (25 step(s))`, `scenario pin: 5b27a381… (matches)`, `access probe: migrate sent by another account … was refused`, `deploy_command` with `with-init-call migrate` | "The agent asks BUMM Guard for the deploy command for version two. Blocked: anyone could call its migration. Version three checks the caller inside the method. The sandbox wrote state with the old code, upgraded and migrated it, 33 of 33 checks, and the stranger's call was refused. Passed, and here is the command. The tool never signs." |
+| 3 | 0:24-0:58 | Claude Code (**agent**): prompt 1, then prompt 2 (below) | 1: `blocked: true`, `has #[private] on an #[init] method … any account can call it`, the `fix:` line. 2: `passed: true`, `proved after upgrade (25 step(s))`, `scenario pin: 5b27a381… (matches)`, `access probe: migrate sent by another account … was refused (…); the same call from the contract account went through`, `deploy_command` with `with-init-call migrate` | "The agent asks BUMM Guard for the deploy command for version two. Blocked: anyone could call its migration. Version three checks the caller inside the method. The sandbox wrote state with the old code, upgraded and migrated it, 33 of 33 checks, and the stranger's call was refused. Passed, and here is the command. The tool never signs." |
 | 4 | 0:58-1:16 | Terminal (**reviewer**): `get_job {"id":4}` (2 s), then `review-job` for job 4 | job: `Submitted`, reward 1 NEAR, pinned `scenario_sha256 5b27a381…`; review: hashes `= submitted`, `report scenarios with it: 1 of 1`, `gate: access probe … was refused`, `REVIEW PASSED`, the `approve` command | "The upgrade is a paid job. The contract holds one NEAR and pins the one scenario it accepts. The reviewer runs the same gate on exactly the files the agent submitted: passed." |
 | 5 | 1:16-1:28 | Terminal (**reviewer**), same take: the printed `approve`, signed with the reviewer's function-call key; then `get_job {"id":4}`; caption "signed by the owner, test account" | tx ID; `status: Paid`, `gate_report_sha256` = the review report's hash | "The reviewer signs with a key that can only approve or reject jobs. The contract pays this agent, for this wasm and this report." |
 | 6 | 1:28-1:38 | Terminal (**reviewer**), same take: the deploy command from shot 3; caption "signed by the owner" | tx ID of deploy + migrate | "Then the upgrade itself: deploy and migrate, one transaction." |

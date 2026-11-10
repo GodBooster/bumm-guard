@@ -34,20 +34,29 @@ sandbox) block. When the proof has a migration call, ``migration_guard`` also ch
 Rust sources that the migration method is not callable by anyone (``#[private]`` or a recognised
 ``predecessor_account_id()`` guard in its body); a method not found in the sources blocks, and an unprotected one, or one whose predecessor
 comparison has no recognised rejection branch (``owner-check-unknown``), blocks, because after the
-upgrade any account could call it and rewrite the state. ``#[private]`` on an ``#[init]`` method does not
-count when the crate's own Cargo.toml asks for a near-sdk before 5.18.0 (``near_sdk_version``): those
-versions generate no caller check for init methods, so the status is ``private-unenforced`` and it blocks
-like ``unprotected``, unless the body has a recognised check (``owner-check``). A report from a bumm-sim with
-the state digests also needs the state right before the upgrade to differ from the state right after init
-(otherwise the calls before the upgrade wrote nothing). A report whose access probe succeeded is not a proof:
-the probe replays the scenario up to the upgrade in a second sandbox, deploys the new code without the
-migration call and sends that call, with the same arguments and gas, from an account that is neither the
-contract nor a scenario account, so it is the same code, state and arguments as the real upgrade with another
-caller. A probe with status ``failure`` (whatever its error text) lets the migration check pass when the
-source check could not recognise the guard, including ``private-unenforced`` (not for ``not-found``); a probe
-that did not run counts as absent. The proof's ``access_probe`` has ``same_state``: whether the probe
-sandbox's state digest equals the step's ``state_before`` (``None`` when either is missing). Reports without
-these fields are judged by the older rules. The same code as the candidate on the
+upgrade any account could call it and rewrite the state. ``#[private]`` on an ``#[init]`` method counts only when
+``private_on_init_enforced`` is true: the near-sdk version is known to be 5.18.0 or later, or not known but the
+Cargo.toml requirement cannot resolve below it. Before 5.18.0 near-sdk generates no caller check for init
+methods. The version is the one resolved in the nearest ``Cargo.lock`` (the crate's directory or up to five
+levels above; the lowest if several), else an exact (``=x.y.z``) requirement in the crate's own
+``[dependencies]`` (never dev- or build-dependencies), else unknown (``near_sdk_version``). A known version below
+5.18.0 and an unknown one (no Cargo.toml, ``workspace = true``, a git, path or renamed dependency, ``"*"``, a
+non-exact requirement below 5.18.0 and no Cargo.lock) are treated alike, failing closed: the status is
+``private-unenforced`` and it blocks like ``unprotected``, unless the body has a recognised check
+(``owner-check``). A report from a bumm-sim with the state digests also needs the state right before the
+upgrade to differ from the state right after init (otherwise the calls before the upgrade wrote nothing).
+A report whose access probe succeeded is not a proof: the probe replays the scenario up to the upgrade in a
+second sandbox, deploys the new code without the migration call and sends that call, with the same arguments
+and gas, from an account that is neither the contract nor a scenario account, so it is the same code, state
+and arguments as the real upgrade with another caller. When that call fails, the runner sends the same call
+from the contract account in the same sandbox (``control_status``, with ``control_error`` on a failure). The
+probe counts as refused (``probe_refused``) only when all three hold: its status is ``failure``, ``same_state``
+is true (the probe sandbox's state digest equals the step's ``state_before``) and ``control_status`` is
+``success`` (the call itself works on that state, so it failed because of who sent it). A refused probe lets
+the migration check pass when the source check could not recognise the guard, including ``private-unenforced``
+(not for ``not-found``). A probe with status ``failure`` that is not refused is inconclusive: the gate prints
+a note and the source check decides as if there were no probe. A probe that did not run (``not-run``) counts
+as absent. Reports without these fields are judged by the older rules. The same code as the candidate on the
 account: ``NO CHANGE``, exit 0, no command (``deploy.status: "no-change"`` in the report).
 
 Strings taken from the simulate report (scenario names, hashes, step kinds and methods, statuses) are
@@ -329,18 +338,88 @@ def _successful_call_after(sc: dict, up_idx) -> bool:
 PRIVATE_ON_INIT_SINCE = (5, 18, 0)
 
 
-def near_sdk_version(crate_dir: str | Path) -> tuple[int, ...] | None:
-    """The near-sdk version the crate's own Cargo.toml asks for, as a tuple, or ``None`` when it
-    cannot be read there (no file, a workspace-inherited dependency, a git or path dependency)."""
+def _version_tuple(text: str) -> tuple[int, int, int] | None:
+    """``major.minor.patch`` of a version or requirement string, missing parts as 0 (``"5.18"`` is
+    ``(5, 18, 0)``), so tuples compare the way versions do."""
+    nums = [int(n) for n in re.findall(r"\d+", text)[:3]]
+    return tuple(nums + [0] * (3 - len(nums))) if nums else None
+
+
+def _locked_near_sdk(crate_dir: Path) -> tuple[int, ...] | None:
+    """The near-sdk version resolved in the nearest ``Cargo.lock`` (the crate's directory or up to five
+    levels above it, for a workspace); the lowest one if the lock holds several; ``None`` without a lock
+    or without near-sdk in it."""
+    here = crate_dir.resolve()
+    for folder in [here, *here.parents][:6]:
+        lock = folder / "Cargo.lock"
+        if not lock.is_file():
+            continue
+        try:
+            text = lock.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        found = [_version_tuple(v) for v in re.findall(r'(?m)^name = "near-sdk"\nversion = "([^"]+)"', text)]
+        found = [v for v in found if v]
+        return min(found) if found else None
+    return None
+
+
+def _required_near_sdk(crate_dir: Path) -> tuple[tuple[int, ...], bool] | None:
+    """near-sdk as the crate's own Cargo.toml asks for it in ``[dependencies]`` (not dev- or
+    build-dependencies): ``(version, exact)`` where ``exact`` is true for an ``=x.y.z`` requirement and
+    false for any other form, whose version is only the lowest one cargo may pick. ``None`` when there
+    is no such line (no file, a workspace-inherited, git, path or renamed dependency)."""
     try:
-        text = (Path(crate_dir) / "Cargo.toml").read_text(encoding="utf-8")
+        text = (crate_dir / "Cargo.toml").read_text(encoding="utf-8")
     except OSError:
         return None
-    m = re.search(r'(?m)^\s*near-sdk\s*=\s*(?:"([^"]+)"|\{[^}\n]*?\bversion\s*=\s*"([^"]+)")', text)
-    if not m:
+    req = None
+    table = re.search(r"(?ms)^\[dependencies\.near-sdk\]\s*$(.*?)(?=^\[|\Z)", text)
+    if table:
+        m = re.search(r'(?m)^\s*version\s*=\s*"([^"]+)"', table.group(1))
+        req = m.group(1) if m else None
+    else:
+        section = re.search(r"(?ms)^\[dependencies\]\s*$(.*?)(?=^\[|\Z)", text)
+        if section:
+            m = re.search(r'(?ms)^\s*near-sdk\s*=\s*(?:"([^"]+)"|\{(.*?)\})', section.group(1))
+            if m and m.group(1):
+                req = m.group(1)
+            elif m:
+                v = re.search(r'\bversion\s*=\s*"([^"]+)"', m.group(2))
+                req = v.group(1) if v else None
+    if not req:
         return None
-    nums = re.findall(r"\d+", (m.group(1) or m.group(2)).split(",")[0])
-    return tuple(int(n) for n in nums[:3]) if nums else None
+    first = req.split(",")[0].strip()
+    version = _version_tuple(first)
+    if version is None or first.startswith(("<", "*")):
+        return None
+    return version, first.startswith("=")
+
+
+def near_sdk_version(crate_dir: str | Path) -> tuple[int, ...] | None:
+    """The near-sdk version the crate builds with, as far as the files can tell: the version resolved
+    in the nearest ``Cargo.lock``, else an exact (``=x.y.z``) requirement of the crate's own
+    ``[dependencies]``. ``None`` when neither says (the caller then treats the version as unknown)."""
+    crate = Path(crate_dir)
+    locked = _locked_near_sdk(crate)
+    if locked:
+        return locked
+    required = _required_near_sdk(crate)
+    return required[0] if required and required[1] else None
+
+
+def private_on_init_enforced(crate_dir: str | Path) -> bool | None:
+    """Does the crate's near-sdk generate the caller check for ``#[private]`` on an ``#[init]``
+    method? ``True`` / ``False`` when the version is known (``near_sdk_version``) or the Cargo.toml
+    requirement can only resolve to 5.18.0 or later; ``None`` when it cannot be told."""
+    crate = Path(crate_dir)
+    version = near_sdk_version(crate)
+    if version is not None:
+        return version >= PRIVATE_ON_INIT_SINCE
+    required = _required_near_sdk(crate)
+    if required and required[0] >= PRIVATE_ON_INIT_SINCE:
+        return True          # a lower bound at or above the fix: whatever cargo picks has it
+    return None
 
 
 def _state_digest(value) -> dict | None:
@@ -360,8 +439,19 @@ def _access_probe(step: dict) -> dict | None:
         return None
     before = _state_digest(step.get("state_before"))
     same = (p.get("state_sha256") == before["sha256"]) if before and isinstance(p.get("state_sha256"), str) else None
+    control = p.get("control_status") if p.get("control_status") in ("success", "failure") else None
     return {"method": clean_str(p.get("method")), "by": clean_str(p.get("by")), "status": p["status"],
-            "error": clean_str(p.get("error")), "same_state": same}
+            "error": clean_str(p.get("error")), "same_state": same, "control_status": control}
+
+
+def probe_refused(probe: dict | None) -> bool:
+    """Is this access probe evidence that the migration method refuses other callers? Only when the
+    other account's call failed, the probe sandbox held the same state as the scenario run, and the
+    same call from the contract account then succeeded there (the control): the call itself works on
+    this state, so it failed because of who sent it. A failure without those two facts can have any
+    cause (another state, gas, a migration that fails for everyone) and proves nothing."""
+    return bool(probe and probe["status"] == "failure" and probe.get("same_state") is True
+                and probe.get("control_status") == "success")
 
 
 def find_upgrade_proof(rep: dict, onchain: str, candidate: str,
@@ -657,9 +747,10 @@ def migration_guard(crate_dir: str | Path, method: str) -> tuple[str, dict | Non
 
     Returns ``(status, detail)`` with status one of ``private`` (``#[private]`` among the attributes
     directly above the ``fn``, in any order with ``#[init(ignore_state)]``), ``private-unenforced``
-    (``#[private]`` on an ``#[init]`` method while the crate's Cargo.toml asks for a near-sdk before
-    5.18.0, which generates no caller check for init methods, and no recognised check in the body;
-    the gate treats it like ``unprotected``), ``owner-check`` (a
+    (``#[private]`` on an ``#[init]`` method while the crate builds with a near-sdk before 5.18.0,
+    which generates no caller check for init methods, or with a version the files do not tell
+    (``private_on_init_enforced``), and no recognised check in the body; the gate treats it like
+    ``unprotected``), ``owner-check`` (a
     recognised ``predecessor_account_id()`` guard in the first 15 lines of the body, see
     ``_owner_check``), ``owner-check-unknown`` (a ``predecessor_account_id()`` comparison was seen in an
     ``if``/``match`` but no rejection branch was recognised, or it is a tautology; the gate treats it
@@ -674,7 +765,7 @@ def migration_guard(crate_dir: str | Path, method: str) -> tuple[str, dict | Non
     are not recognised, so such a method is reported ``unprotected`` unless it carries ``#[private]``.
     """
     crate = Path(crate_dir)
-    sdk = near_sdk_version(crate)
+    enforced = private_on_init_enforced(crate)
     defs: list[dict] = []
     for disp, _root in discover([str(crate)]):
         try:
@@ -688,8 +779,9 @@ def migration_guard(crate_dir: str | Path, method: str) -> tuple[str, dict | Non
             by_body = {"recognized": "owner-check", "unknown": "owner-check-unknown"}.get(check, "unprotected")
             if not m.has_attr("private"):
                 st = by_body
-            elif m.has_attr("init") and sdk is not None and sdk < PRIVATE_ON_INIT_SINCE:
-                # The attribute is there, the check is not generated: only a check in the body counts.
+            elif m.has_attr("init") and enforced is not True:
+                # The attribute is there, the check is not generated (or the near-sdk version cannot be
+                # told, which is treated the same): only a check in the body counts.
                 st = "owner-check" if by_body == "owner-check" else "private-unenforced"
             else:
                 st = "private"
@@ -887,7 +979,7 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
                 # The probe ran on the wasm itself: same code, state and arguments as the real upgrade, another
                 # caller. A refusal there is access control whatever the source looks like; it outranks a
                 # source check that did not recognise the guard.
-                refused = bool(probe and probe["status"] == "failure")
+                refused = probe_refused(probe)
                 data["migration_guard"] = {"method": m["method"], "status": status,
                                            "file": (detail or {}).get("file"), "line": (detail or {}).get("line")}
                 if probe:
@@ -895,9 +987,14 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
                 where = f"{detail['file']}:{detail['line']}" if detail and "file" in detail else None
                 if refused:
                     out.lines.append(f"access probe: {m['method']} sent by another account to the new code on the "
-                                     f"not yet migrated state was refused ({probe['error'] or 'no error text'})"
-                                     + ("" if probe.get("same_state") is not False else
-                                        "; note: the probe sandbox's state differed from the scenario run's"))
+                                     f"not yet migrated state was refused ({probe['error'] or 'no error text'}); the "
+                                     "same call from the contract account went through")
+                elif probe and probe["status"] == "failure":
+                    why = ("the probe sandbox's state differed from the scenario run's"
+                           if probe.get("same_state") is not True else
+                           "the same call from the contract account did not succeed there either")
+                    out.lines.append(f"note: access probe inconclusive: the call by another account failed, but {why}; "
+                                     "the source check decides")
                 if status == "private":
                     out.lines.append(f"migration {m['method']}: #[private] ({where})")
                 elif status == "owner-check":
@@ -906,12 +1003,14 @@ def run_gate(crate_dir: str, wasm: str | None = None, network: str = "testnet", 
                     out.lines.append(f"migration {m['method']}: the source check did not recognise its guard "
                                      f"({status}" + (f" at {where}" if where else "") + "); accepted on the access probe")
                 elif status == "private-unenforced":
+                    sdk = near_sdk_version(crate)
+                    built = ("this crate builds with near-sdk " + ".".join(str(n) for n in sdk) if sdk else
+                             "the near-sdk version of this crate cannot be told from its Cargo.lock or Cargo.toml")
                     return _blocked(out, report, dry_run, [
                         f"DEPLOY BLOCKED: migration method {m['method']} in {where} has #[private] on an #[init] "
-                        "method, but this crate builds with near-sdk "
-                        + ".".join(str(n) for n in (near_sdk_version(crate) or ()))
-                        + ": before 5.18.0 near-sdk generates no caller check for init methods, so any account "
-                        "can call it" + ("" if probe else "; the report has no access probe that says otherwise"),
+                        f"method, but {built}: before 5.18.0 near-sdk generates no caller check for init methods, "
+                        "so any account can call it" + ("" if refused or (probe and probe["status"] == "failure") else
+                                                        "; the report has no access probe that says otherwise"),
                         "  fix: make `require!(env::predecessor_account_id() == env::current_account_id(), "
                         "\"only the contract itself may migrate\")` the first line of the body, or build with "
                         "near-sdk 5.18.0 or later"])

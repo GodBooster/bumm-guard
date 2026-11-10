@@ -45,6 +45,7 @@ from bumm_guard.gate import sha256_file  # noqa: E402
 
 ESCROW_V1 = "ecd8a805ea3252f1ffa2a285964d3e035d6e3c6be16e6974c33c479c3e034443"
 OPEN_MIGRATE = "upgraded live with this report; refused now: migrate is callable by any account"
+PROBE_OPEN = "the same scenario re-run with the access probe: the other account's migrate call went through"
 
 # pair: (on-chain code sha256 RECORDED on testnet, where and when it was read, candidate crate,
 #        [(report name, expected gate exit, what the case shows)])
@@ -53,18 +54,21 @@ PAIRS = {
         "c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617",
         "2026-11-03 before the live upgrade, evidence/UPGRADE_TESTNET.md", "event_registration_waitlist",
         [("upgrade-with-migrate-report-ci.json", 3, OPEN_MIGRATE),
+         ("upgrade-with-migrate-probe-report-ci.json", 3, PROBE_OPEN),
          ("upgrade-code-only-report-ci.json", 3, "code only")]),
     "escrow v1 -> v2 (bumm-guard-escrow.testnet)": (
         ESCROW_V1, "2026-11-04 before the live upgrade, evidence/UPGRADE_TESTNET.md", "escrow_v2",
         [("escrow-upgrade-with-migrate-report-ci.json", 3, OPEN_MIGRATE),
+         ("escrow-upgrade-with-migrate-probe-report-ci.json", 3, PROBE_OPEN),
          ("escrow-upgrade-code-only-report-ci.json", 3, "code only")]),
     "swarm_jobs v1 -> v2 (bumm-guard-jobs.testnet)": (
         "bcace58397f2ee597dd5687187ea9e178e3cd5405dfdb810553214e416a9a92b",
         "2026-11-07 before the live upgrade, evidence/SWARM_JOBS_TESTNET.md", "swarm_jobs_v2",
         [("swarm-jobs-upgrade-with-migrate-report-ci.json", 3, OPEN_MIGRATE),
+         ("swarm-jobs-upgrade-with-migrate-probe-report-ci.json", 3, PROBE_OPEN),
          ("swarm-jobs-upgrade-code-only-report-ci.json", 3, "code only")]),
     "escrow v1 -> v3 (bumm-guard-escrow2.testnet)": (
-        ESCROW_V1, "2026-11-10, the account runs escrow v1", "escrow_v3",
+        ESCROW_V1, "2026-11-08, evidence/SWARM_JOBS_TESTNET.md: the account still runs escrow v1", "escrow_v3",
         [("escrow-v3-upgrade-with-migrate-report-ci.json", 0, "migrate checks its caller; the access probe is refused"),
          ("escrow-upgrade-with-migrate-report-ci.json", 3, "a proof for another candidate (escrow v2)")]),
 }

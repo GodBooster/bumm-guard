@@ -1,8 +1,8 @@
 """An upgrade proof with a migration call also needs the migration method to be protected in the
-candidate crate's sources: ``#[private]`` (but not on an ``#[init]`` method of a crate that asks for near-sdk
-before 5.18.0, which generates no check there) or a ``predecessor_account_id()`` check in the body. An access
-probe in the report (a call of the migration by another account, refused) outranks a source check that did not
-recognise the guard.
+candidate crate's sources: ``#[private]`` (but not on an ``#[init]`` method of a crate whose near-sdk is before 5.18.0 or not known, which
+generate no check there) or a ``predecessor_account_id()`` check in the body. A refused access probe in the report
+(a call of the migration by another account that failed, on the same state, with the control call from the
+contract account succeeding) outranks a source check that did not recognise the guard.
 
 Same stubs as ``test_gate_upgrade.py``: no test touches the network.
 """
@@ -14,7 +14,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from bumm_guard.gate import REPORT_DIR, REPORT_NAME, migration_guard, near_sdk_version
+from bumm_guard.gate import (REPORT_DIR, REPORT_NAME, migration_guard, near_sdk_version, private_on_init_enforced,
+                             probe_refused)
 
 try:  # `unittest discover -s tests` imports the sibling as a top-level module; `tests.x` needs the package form
     from test_gate_upgrade import FIXTURES, NEW, OLD, Node, report, run_cli, upgrade_scenario
@@ -128,6 +129,12 @@ def crate(root: Path, *parts: str, name: str = "cand", sdk: str | None = SDK_ENF
     return d
 
 
+def write_lock(folder: Path, *versions: str, extra: str = "") -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    body = "version = 4\n\n" + "".join(f'[[package]]\nname = "near-sdk"\nversion = "{v}"\n\n' for v in versions)
+    (folder / "Cargo.lock").write_text(body + extra)
+
+
 class MigrationGuardFunctionTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -222,14 +229,35 @@ class MigrationGuardFunctionTests(unittest.TestCase):
         d = crate(self.root, PRIVATE_AFTER_INIT, name="after", sdk=SDK_UNENFORCED)
         self.assertEqual(migration_guard(d, "migrate")[0], "private-unenforced")
 
-    def test_private_on_init_is_private_from_5_18_0_or_with_an_unknown_version(self):
-        for name, sdk in (("new", "=5.18.0"), ("newer", "=5.19.1"), ("v6", "6.0.0"), ("nofile", None)):
+    def test_private_on_init_is_private_when_5_18_0_or_later_is_known(self):
+        for name, sdk in (("new", "=5.18.0"), ("newer", "=5.19.1"), ("v6", "6.0.0"), ("short", "5.18"),
+                          ("caret", "^5.20.1"), ("range", ">=5.18, <6")):
             with self.subTest(sdk=sdk):
                 d = crate(self.root, PRIVATE, name=name, sdk=sdk)
                 self.assertEqual(migration_guard(d, "migrate"), ("private", {"file": "src/lib.rs", "line": 13}))
+
+    def test_private_on_init_with_an_unknown_version_fails_closed(self):
+        for name, sdk in (("nofile", None), ("star", "*"), ("loose", "5.17.2"), ("major", "5")):
+            with self.subTest(sdk=sdk):
+                d = crate(self.root, PRIVATE, name=name, sdk=sdk)
+                self.assertEqual(migration_guard(d, "migrate"), ("private-unenforced", {"file": "src/lib.rs", "line": 13}))
         d = crate(self.root, PRIVATE, name="ws")
         (d / "Cargo.toml").write_text(CARGO.format(sdk="x").replace('near-sdk = "x"', "near-sdk = { workspace = true }"))
+        self.assertEqual(migration_guard(d, "migrate")[0], "private-unenforced")
+
+    def test_private_on_init_follows_the_cargo_lock(self):
+        d = crate(self.root, PRIVATE, name="locked_old", sdk="5.20")      # the lock says 5.17.2: old wins over the requirement
+        write_lock(d, "5.17.2")
+        self.assertEqual(migration_guard(d, "migrate")[0], "private-unenforced")
+        d = crate(self.root, PRIVATE, name="locked_new", sdk=None)
+        write_lock(d, "5.18.0")
         self.assertEqual(migration_guard(d, "migrate")[0], "private")
+
+    def test_unknown_version_with_an_owner_check_in_the_body_is_an_owner_check(self):
+        check = 'require!(env::predecessor_account_id() == env::current_account_id(), "x");'
+        both = PRIVATE.replace("{\n", "{\n        " + check + "\n", 1)
+        for i, sdk in enumerate((None, "=5.17.2")):
+            self.assertEqual(migration_guard(crate(self.root, both, name=f"oc{i}", sdk=sdk), "migrate")[0], "owner-check")
 
     def test_explicit_caller_check_with_an_old_near_sdk_is_an_owner_check(self):
         check = 'require!(env::predecessor_account_id() == env::current_account_id(), "only the contract itself may migrate");'
@@ -278,44 +306,158 @@ class NearSdkVersionTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        self.n = 0
 
-    def version(self, dep_line: str | None, extra: str = ""):
-        (self.root / "Cargo.toml").write_text('[package]\nname = "x"\n[dependencies]\n'
-                                              + (dep_line + "\n" if dep_line else "") + extra)
-        return near_sdk_version(self.root)
+    def toml(self, text: str) -> Path:
+        """A fresh crate directory whose Cargo.toml is ``text``."""
+        self.n += 1
+        d = self.root / f"c{self.n}"
+        d.mkdir()
+        (d / "Cargo.toml").write_text('[package]\nname = "x"\n' + text)
+        return d
 
-    def test_string_form(self):
+    def deps(self, dep_line: str | None, extra: str = "") -> Path:
+        return self.toml("[dependencies]\n" + (dep_line + "\n" if dep_line else "") + extra)
+
+    def version(self, dep_line, extra=""):
+        return near_sdk_version(self.deps(dep_line, extra))
+
+    def enforced(self, dep_line, extra=""):
+        return private_on_init_enforced(self.deps(dep_line, extra))
+
+    def test_exact_requirement_is_the_version(self):
         self.assertEqual(self.version('near-sdk = "=5.17.2"'), (5, 17, 2))
-        self.assertEqual(self.version('near-sdk = "5.18.0"'), (5, 18, 0))
         self.assertEqual(self.version('near-sdk="=5.17.2"'), (5, 17, 2))
-
-    def test_table_form(self):
+        self.assertEqual(self.version('near-sdk = "=5.18.0"', 'near-sdk-sim = "4.0.0"\n'), (5, 18, 0))
         self.assertEqual(self.version('near-sdk = { version = "=5.17.2", features = ["non-contract-usage"] }'),
                          (5, 17, 2))
-        self.assertEqual(self.version('near-sdk = { default-features = false, version = "5.18.0" }'), (5, 18, 0))
+        self.assertEqual(self.version('near-sdk = { default-features = false, version = "=5.18.0" }'), (5, 18, 0))
 
-    def test_operators_and_short_versions(self):
-        self.assertEqual(self.version('near-sdk = "^5.3"'), (5, 3))
-        self.assertEqual(self.version('near-sdk = "5"'), (5,))
-        self.assertEqual(self.version('near-sdk = "~5.17.2"'), (5, 17, 2))
-        self.assertEqual(self.version('near-sdk = "=5.17.2"', 'near-sdk-sim = "4.0.0"\n'), (5, 17, 2))
+    def test_inline_table_may_span_lines(self):
+        self.assertEqual(self.version('near-sdk = {\n    version = "=5.17.2",\n    features = ["abi"],\n}'), (5, 17, 2))
 
-    def test_comma_range_takes_the_first_bound(self):
-        self.assertEqual(self.version('near-sdk = ">=5.1, <6"'), (5, 1))
-        self.assertEqual(self.version('near-sdk = { version = ">=5.17.2, <5.18" }'), (5, 17, 2))
+    def test_dependency_table_form(self):
+        d = self.toml('[dependencies.near-sdk]\nversion = "=5.17.2"\nfeatures = ["abi"]\n')
+        self.assertEqual(near_sdk_version(d), (5, 17, 2))
+        d = self.toml('[dependencies.near-sdk]\nfeatures = ["abi"]\nversion = "=5.18.0"\n[features]\nx = []\n')
+        self.assertEqual(near_sdk_version(d), (5, 18, 0))
+
+    def test_non_exact_requirement_is_not_a_version(self):
+        for req in ("5.17.2", "5.18.0", "^5.3", "5", "~5.17.2", ">=5.1, <6", "*"):
+            with self.subTest(req=req):
+                self.assertIsNone(self.version(f'near-sdk = "{req}"'))
+        self.assertIsNone(self.version('near-sdk = { version = ">=5.17.2, <5.18" }'))
+
+    def test_dev_and_build_dependencies_never_count(self):
+        d = self.toml('[dev-dependencies]\nnear-sdk = { version = "=4.0.0" }\n[dependencies]\nnear-sdk = "=5.18.0"\n')
+        self.assertEqual(near_sdk_version(d), (5, 18, 0))
+        d = self.toml('[dev-dependencies]\nnear-sdk = "=4.0.0"\n[dependencies]\nnear-sdk = { version = "=5.17.2" }\n'
+                      '[build-dependencies]\nnear-sdk = "=3.0.0"\n')
+        self.assertEqual(near_sdk_version(d), (5, 17, 2))
+        d = self.toml('[dev-dependencies]\nnear-sdk = "=4.0.0"\n[build-dependencies]\nnear-sdk = "=3.0.0"\n')
+        self.assertIsNone(near_sdk_version(d))
+        self.assertIsNone(private_on_init_enforced(d))
+        d = self.toml('[dev-dependencies.near-sdk]\nversion = "=4.0.0"\n[dependencies.near-sdk]\nversion = "=5.17.2"\n')
+        self.assertEqual(near_sdk_version(d), (5, 17, 2))
+        d = self.toml('[dev-dependencies]\nnear-sdk = "=4.0.0"\n[dependencies]\nnear-sdk = "5.20"\n')
+        self.assertIsNone(near_sdk_version(d))
+        self.assertIs(private_on_init_enforced(d), True)       # the 5.20 of [dependencies], not the dev 4.0.0
 
     def test_none_when_unreadable(self):
-        self.assertIsNone(near_sdk_version(self.root))                       # no Cargo.toml
+        self.assertIsNone(near_sdk_version(self.root / "nowhere"))             # no Cargo.toml
         self.assertIsNone(self.version(None))                                 # no near-sdk line
-        self.assertIsNone(self.version(None, 'near-sdk-sim = "4.0.0"\n'))     # another crate with that prefix
+        self.assertIsNone(self.version(None, 'near-sdk-sim = "=4.0.0"\n'))    # another crate with that prefix
         self.assertIsNone(self.version("near-sdk = { workspace = true }"))
         self.assertIsNone(self.version('near-sdk = { git = "https://example.invalid/near-sdk-rs" }'))
         self.assertIsNone(self.version('near-sdk = { path = "../near-sdk" }'))
+        self.assertIsNone(self.version('sdk = { package = "near-sdk", version = "=5.17.2" }'))
+
+    def test_cargo_lock_in_the_crate_directory(self):
+        d = self.deps('near-sdk = "5"')
+        write_lock(d, "5.17.2")
+        self.assertEqual(near_sdk_version(d), (5, 17, 2))
+        write_lock(d, "5.19.0")
+        self.assertEqual(near_sdk_version(d), (5, 19, 0))
+
+    def test_cargo_lock_wins_over_an_exact_requirement(self):
+        d = self.deps('near-sdk = "=5.17.2"')
+        write_lock(d, "5.18.0")
+        self.assertEqual(near_sdk_version(d), (5, 18, 0))
+
+    def test_cargo_lock_two_levels_above(self):
+        write_lock(self.root, "5.17.2")
+        d = self.root / "ws" / "contracts" / "cand"
+        d.mkdir(parents=True)
+        (d / "Cargo.toml").write_text('[package]\nname = "x"\n[dependencies]\nnear-sdk = { workspace = true }\n')
+        self.assertEqual(near_sdk_version(d), (5, 17, 2))
+        self.assertIs(private_on_init_enforced(d), False)
+
+    def test_the_nearest_cargo_lock_is_used(self):
+        write_lock(self.root, "5.17.2")
+        d = self.root / "ws" / "cand"
+        write_lock(d.parent, "5.18.0")
+        d.mkdir()
+        self.assertEqual(near_sdk_version(d), (5, 18, 0))
+
+    def test_cargo_lock_more_than_five_levels_above_is_not_looked_at(self):
+        write_lock(self.root, "5.17.2")
+        d = self.root.joinpath(*"abcdef")
+        d.mkdir(parents=True)
+        self.assertIsNone(near_sdk_version(d))
+        d5 = self.root.joinpath(*"vwxyz")          # five levels below the lock: found
+        d5.mkdir(parents=True)
+        self.assertEqual(near_sdk_version(d5), (5, 17, 2))
+
+    def test_the_lowest_version_if_the_lock_has_several(self):
+        d = self.deps('near-sdk = "5"')
+        write_lock(d, "5.19.0", "5.17.2", "5.18.1")
+        self.assertEqual(near_sdk_version(d), (5, 17, 2))
+        self.assertIs(private_on_init_enforced(d), False)
+
+    def test_a_lock_without_near_sdk_falls_back_to_cargo_toml(self):
+        d = self.deps('near-sdk = "=5.17.2"')
+        (d / "Cargo.lock").write_text('version = 4\n\n[[package]]\nname = "near-sdk-macros"\nversion = "5.19.0"\n')
+        self.assertEqual(near_sdk_version(d), (5, 17, 2))
+        d = self.deps('near-sdk = "5.18"')
+        (d / "Cargo.lock").write_text('version = 4\n\n[[package]]\nname = "serde"\nversion = "1.0.0"\n')
+        self.assertIsNone(near_sdk_version(d))
+        self.assertIs(private_on_init_enforced(d), True)
+
+    def test_enforced_from_a_known_version(self):
+        self.assertIs(self.enforced('near-sdk = "=5.17.2"'), False)
+        self.assertIs(self.enforced('near-sdk = "=5.0.0"'), False)
+        self.assertIs(self.enforced('near-sdk = "=5.18.0"'), True)
+        self.assertIs(self.enforced('near-sdk = "=5.19.1"'), True)
+        d = self.deps('near-sdk = "5.20"')
+        write_lock(d, "5.17.2")
+        self.assertIs(private_on_init_enforced(d), False)       # resolved version beats the requirement
+        d = self.deps('near-sdk = "5"')
+        write_lock(d, "5.18.0")
+        self.assertIs(private_on_init_enforced(d), True)
+
+    def test_enforced_from_the_lower_bound_of_the_requirement(self):
+        for req in ("5.18", "^5.18", "^5.20.1", ">=5.18, <6", "~5.18", "5.18.0", "6", "6.0.0"):
+            with self.subTest(req=req):
+                self.assertIs(self.enforced(f'near-sdk = "{req}"'), True)
+        self.assertIs(self.enforced('near-sdk = { version = "^5.20.1", features = ["abi"] }'), True)
+
+    def test_enforced_is_none_when_it_cannot_be_told(self):
+        self.assertIsNone(private_on_init_enforced(self.root / "nowhere"))
+        for req in ("5.17.2", "5", "^5.1", "~5.17.2", "*", ">=5.1, <6", "5.17"):
+            with self.subTest(req=req):
+                self.assertIsNone(self.enforced(f'near-sdk = "{req}"'))
+        for line in ("near-sdk = { workspace = true }", 'near-sdk = { git = "https://example.invalid/near-sdk-rs" }',
+                     'near-sdk = { path = "../near-sdk" }', 'sdk = { package = "near-sdk", version = "5.20" }'):
+            with self.subTest(line=line):
+                self.assertIsNone(self.enforced(line))
+        self.assertIsNone(self.enforced(None))
 
     def test_the_fixtures(self):
+        # the version comes from tests/fixtures/near/Cargo.lock, one level above each fixture
         for name in ("escrow_v2", "escrow_v3", "swarm_jobs_v2", "event_registration_waitlist"):
             with self.subTest(fixture=name):
                 self.assertEqual(near_sdk_version(FIXTURES / name), (5, 17, 2))
+                self.assertIs(private_on_init_enforced(FIXTURES / name), False)
 
 
 class MigrationGuardGateTests(unittest.TestCase):
@@ -543,9 +685,22 @@ class MigrationGuardGateTests(unittest.TestCase):
 
 class AccessProbeGateTests(unittest.TestCase):
     """The access probe (docs/FORMATS.md section 3: the migration call of another account, sent to the new code
-    on the not yet migrated state) next to the source check of the migration method."""
+    on the not yet migrated state, and the control call of the contract account) next to the source check of the
+    migration method."""
 
     PRIVATE_ERR = "Method migrate is private"
+    STATE = "b" * 64            # the state_before digest that probe_report puts on the upgrade step
+    REFUSED = ("access probe: migrate sent by another account to the new code on the not yet migrated state was "
+               "refused ({err}); the same call from the contract account went through")
+    NOTE = ("note: access probe inconclusive: the call by another account failed, but {why}; the source check decides")
+    WHY_STATE = "the probe sandbox's state differed from the scenario run's"
+    WHY_CONTROL = "the same call from the contract account did not succeed there either"
+    # status failure, but one of the three conditions missing: (id, probe_report kwargs, why)
+    INCONCLUSIVE = (("state differs", dict(state_sha256="c" * 64), WHY_STATE),
+                    ("state unknown", dict(state_sha256=None), WHY_STATE),
+                    ("control failed", dict(control_status="failure", control_error="gas"), WHY_CONTROL),
+                    ("control missing", dict(control_status=None), WHY_CONTROL),
+                    ("control junk", dict(control_status="maybe"), WHY_CONTROL))
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -558,19 +713,24 @@ class AccessProbeGateTests(unittest.TestCase):
     gate = MigrationGuardGateTests.gate
     gate_report = MigrationGuardGateTests.gate_report
 
-    def probe_report(self, status="failure", error=PRIVATE_ERR, method="migrate", state_sha256=None):
+    def probe_report(self, status="failure", error=PRIVATE_ERR, method="migrate", state_sha256=STATE,
+                     control_status="success", control_error=None):
+        """A report whose upgrade step has a probe; by default a refused one (failure, same state, control ok).
+        ``None`` leaves a field out; ``status=None`` leaves the whole probe out."""
         sc = upgrade_scenario()
         sc["state_after_init"] = {"keys": 1, "bytes": 40, "sha256": "a" * 64}
-        sc["steps"][0]["state_before"] = {"keys": 3, "bytes": 120, "sha256": "b" * 64}
+        sc["steps"][0]["state_before"] = {"keys": 3, "bytes": 120, "sha256": self.STATE}
         if status is not None:
-            sc["steps"][0]["access_probe"] = {"method": method, "by": "p.test.near", "status": status}
-            if error is not None:
-                sc["steps"][0]["access_probe"]["error"] = error
-            if state_sha256 is not None:
-                sc["steps"][0]["access_probe"]["state_sha256"] = state_sha256
+            pr = {"method": method, "by": "p.test.near", "status": status}
+            for key, val in (("error", error), ("state_sha256", state_sha256), ("control_status", control_status),
+                             ("control_error", control_error)):
+                if val is not None:
+                    pr[key] = val
+            sc["steps"][0]["access_probe"] = pr
         return report(sc)
 
     def crates(self):
+        """One crate per source status that blocks without a refused probe."""
         self.n += 1
         amb = crate(self.root, PRIVATE, name=f"amb{self.n}")
         (amb / "src" / "other.rs").write_text(HEAD + UNPROTECTED + TAIL)
@@ -579,13 +739,27 @@ class AccessProbeGateTests(unittest.TestCase):
                 "ambiguous": amb,
                 "private-unenforced": crate(self.root, PRIVATE, name=f"unf{self.n}", sdk=SDK_UNENFORCED)}
 
+    # rule 1: probe_refused
+
+    def test_probe_refused_needs_all_three_conditions(self):
+        ok = {"status": "failure", "same_state": True, "control_status": "success"}
+        self.assertTrue(probe_refused(ok))
+        self.assertFalse(probe_refused(None))
+        for change in ({"status": "success"}, {"status": "not-run"}, {"same_state": False}, {"same_state": None},
+                       {"control_status": "failure"}, {"control_status": None}):
+            with self.subTest(change=change):
+                self.assertFalse(probe_refused(dict(ok, **change)))
+        self.assertFalse(probe_refused({"status": "failure", "same_state": True}))   # no control key at all
+
+    # rules 1 and 2: a refused probe
+
     def test_refused_probe_accepts_what_the_source_check_could_not_recognise(self):
         for status, d in self.crates().items():
             with self.subTest(status=status):
                 code, out, _ = self.gate(d, self.probe_report())
                 self.assertEqual(code, 0, out)
-                self.assertIn("access probe: migrate sent by another account to the new code on the not yet migrated "
-                              "state was refused (Method migrate is private)", out)
+                self.assertIn(self.REFUSED.format(err=self.PRIVATE_ERR), out.splitlines())
+                self.assertNotIn("inconclusive", out)
                 lines = [l for l in out.splitlines() if l.startswith("migration migrate: the source check")]
                 self.assertEqual(len(lines), 1, out)
                 self.assertTrue(lines[0].startswith(f"migration migrate: the source check did not recognise its "
@@ -595,7 +769,8 @@ class AccessProbeGateTests(unittest.TestCase):
                 mg = self.gate_report(d)["migration_guard"]
                 self.assertEqual(mg["status"], status)
                 self.assertEqual(mg["access_probe"], {"method": "migrate", "by": "p.test.near", "status": "failure",
-                                                      "error": self.PRIVATE_ERR, "same_state": None})
+                                                      "error": self.PRIVATE_ERR, "same_state": True,
+                                                      "control_status": "success"})
 
     def test_a_refused_probe_counts_whatever_its_text(self):
         for err in ("Method migrate is private", "Method is private", "only owner", "Cannot deserialize the contract "
@@ -604,10 +779,58 @@ class AccessProbeGateTests(unittest.TestCase):
                 with self.subTest(error=err, status=status):
                     code, out, _ = self.gate(d, self.probe_report(error=err))
                     self.assertEqual(code, 0, out)
-                    self.assertIn("sent by another account to the new code on the not yet migrated state was refused "
-                                  f"({err or 'no error text'})", out)
+                    self.assertIn(self.REFUSED.format(err=err or "no error text"), out.splitlines())
                     self.assertIn("; accepted on the access probe", out)
                     self.assertIn("with-init-call migrate", out)
+
+    def test_no_error_text_is_said_so(self):
+        d = crate(self.root, PRIVATE, name="noerr")
+        code, out, _ = self.gate(d, self.probe_report(error=None))
+        self.assertEqual(code, 0, out)
+        self.assertIn(self.REFUSED.format(err="no error text"), out.splitlines())
+
+    def test_refused_line_has_no_state_note_any_more(self):
+        d = crate(self.root, PRIVATE, name="plain")
+        code, out, _ = self.gate(d, self.probe_report())
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("differed", out)
+        self.assertNotIn("; note:", out)
+
+    # rules 1 and 3: failure that is not refused is inconclusive, the source check decides
+
+    def test_failure_without_one_of_the_three_conditions_is_not_refused(self):
+        for tag, kw, why in self.INCONCLUSIVE:
+            for status, d in self.crates().items():
+                with self.subTest(case=tag, status=status):
+                    code, out, _ = self.gate(d, self.probe_report(**kw))
+                    self.assertEqual(code, 3, out)
+                    self.assertIn(self.NOTE.format(why=why), out.splitlines())
+                    self.assertNotIn("access probe: migrate sent by another account", out)
+                    self.assertNotIn("accepted on the access probe", out)
+                    self.assertNotIn("near contract deploy", out)
+                    self.assertNotIn("accepted a call from another account", out)
+
+    def test_inconclusive_probe_lets_the_source_check_pass_what_it_recognises(self):
+        for tag, kw, why in self.INCONCLUSIVE:
+            for name, body, line in (("priv", PRIVATE, "migration migrate: #[private] (src/lib.rs:13)"),
+                                     ("own", OWNER_CHECK, "migration migrate: owner check at src/lib.rs:12")):
+                with self.subTest(case=tag, source=name):
+                    d = crate(self.root, body, name=f"{name}{self.n}")
+                    self.n += 1
+                    code, out, _ = self.gate(d, self.probe_report(**kw))
+                    self.assertEqual(code, 0, out)
+                    self.assertIn(line, out)
+                    self.assertIn(self.NOTE.format(why=why), out.splitlines())
+                    self.assertNotIn("access probe: migrate sent by another account", out)
+
+    def test_inconclusive_probe_is_recorded_in_the_gate_report(self):
+        d = crate(self.root, OWNER_CHECK, name="inconc")
+        self.gate(d, self.probe_report(control_status="failure"))
+        self.assertEqual(self.gate_report(d)["migration_guard"]["access_probe"],
+                         {"method": "migrate", "by": "p.test.near", "status": "failure", "error": self.PRIVATE_ERR,
+                          "same_state": True, "control_status": "failure"})
+
+    # rule 4: success and not-run
 
     def test_probe_success_blocks_whatever_the_source_says(self):
         for status, d in self.crates().items():
@@ -622,60 +845,97 @@ class AccessProbeGateTests(unittest.TestCase):
         self.assertEqual(code, 3, out)
         self.assertIn("accepted a call from another account", out)
 
-    def test_no_refused_probe_changes_nothing(self):
+    def test_no_probe_or_not_run_changes_nothing(self):
         for status, d in self.crates().items():
             with self.subTest(status=status):
                 for rep in (self.probe_report(status=None), self.probe_report(status="not-run")):
                     code, out, _ = self.gate(d, rep)
                     self.assertEqual(code, 3, out)
                     self.assertNotIn("access probe:", out)
+                    self.assertNotIn("inconclusive", out)
                     self.assertNotIn("accepted on the access probe", out)
                     self.assertNotIn("near contract deploy", out)
         d = crate(self.root, UNPROTECTED, name="unp2")
         self.gate(d, self.probe_report(status=None))
         self.assertFalse((d / REPORT_DIR / REPORT_NAME).exists())
 
-    def test_private_unenforced_without_a_probe_names_it_with_the_suffix_and_the_fix(self):
+    # rule 7: the private-unenforced block message
+
+    def test_private_unenforced_known_version_without_a_probe_has_the_suffix(self):
         d = crate(self.root, PRIVATE, name="unf_none", sdk=SDK_UNENFORCED)
         code, out, _ = self.gate(d, self.probe_report(status=None))
         self.assertEqual(code, 3, out)
-        self.assertIn("near-sdk 5.17.2: before 5.18.0 near-sdk generates no caller check for init methods, so any "
-                      "account can call it; the report has no access probe that says otherwise", out)
+        self.assertIn("has #[private] on an #[init] method, but this crate builds with near-sdk 5.17.2: before 5.18.0 "
+                      "near-sdk generates no caller check for init methods, so any account can call it; the report "
+                      "has no access probe that says otherwise", out)
         self.assertIn("  fix: make `require!(env::predecessor_account_id() == env::current_account_id(), ", out)
 
-    def test_private_unenforced_with_a_probe_that_was_not_run_blocks(self):
-        d = crate(self.root, PRIVATE, name="unf_notrun", sdk=SDK_UNENFORCED)
-        code, out, _ = self.gate(d, self.probe_report(status="not-run", error="the replay failed"))
+    def test_private_unenforced_unknown_version_message(self):
+        unknown = ("has #[private] on an #[init] method, but the near-sdk version of this crate cannot be told from "
+                   "its Cargo.lock or Cargo.toml: before 5.18.0 near-sdk generates no caller check for init methods, "
+                   "so any account can call it")
+        for i, sdk in enumerate((None, "5.17.2", "*")):
+            with self.subTest(sdk=sdk):
+                d = crate(self.root, PRIVATE, name=f"unk_sdk{i}", sdk=sdk)
+                code, out, _ = self.gate(d, self.probe_report(status=None))
+                self.assertEqual(code, 3, out)
+                self.assertIn(unknown + "; the report has no access probe that says otherwise", out)
+                self.assertNotIn("this crate builds with near-sdk", out)
+                code, out, _ = self.gate(d, self.probe_report(control_status="failure"))
+                self.assertEqual(code, 3, out)
+                self.assertIn(unknown, out)
+                self.assertNotIn("no access probe that says otherwise", out)
+
+    def test_private_unenforced_message_uses_the_locked_version(self):
+        d = crate(self.root, PRIVATE, name="unf_lock", sdk="5")
+        write_lock(d, "5.12.0")
+        code, out, _ = self.gate(d, self.probe_report(status=None))
         self.assertEqual(code, 3, out)
-        self.assertIn("DEPLOY BLOCKED: migration method migrate in src/lib.rs:13 has #[private] on an #[init] method",
-                      out)
-        self.assertIn("so any account can call it; the report has no access probe that says otherwise", out)
-        self.assertIn("  fix: make `require!(", out)
-        self.assertNotIn("near contract deploy", out)
-        self.assertNotIn("access probe:", out)
+        self.assertIn("but this crate builds with near-sdk 5.12.0: before 5.18.0", out)
+
+    def test_private_unenforced_suffix_only_without_a_failed_probe(self):
+        d = crate(self.root, PRIVATE, name="unf_suffix", sdk=SDK_UNENFORCED)
+        suffix = "; the report has no access probe that says otherwise"
+        for rep in (self.probe_report(status=None), self.probe_report(status="not-run", error="the replay failed")):
+            code, out, _ = self.gate(d, rep)
+            self.assertEqual(code, 3, out)
+            self.assertIn("has #[private] on an #[init] method", out)
+            self.assertIn(suffix, out)
+            self.assertNotIn("access probe:", out)
+            self.assertNotIn("near contract deploy", out)
+        for tag, kw, why in self.INCONCLUSIVE:         # an inconclusive probe: no suffix, the note instead
+            with self.subTest(case=tag):
+                code, out, _ = self.gate(d, self.probe_report(**kw))
+                self.assertEqual(code, 3, out)
+                self.assertIn("has #[private] on an #[init] method", out)
+                self.assertNotIn(suffix, out)
+                self.assertIn(self.NOTE.format(why=why), out.splitlines())
+        code, out, _ = self.gate(d, self.probe_report(status="success", error=None))   # a probe that succeeded blocks too
+        self.assertEqual(code, 3, out)
 
     def test_private_unenforced_with_a_refused_probe_passes(self):
-        d = crate(self.root, PRIVATE, name="unf_ref", sdk=SDK_UNENFORCED)
-        code, out, _ = self.gate(d, self.probe_report())
-        self.assertEqual(code, 0, out)
-        self.assertIn("migration migrate: the source check did not recognise its guard (private-unenforced at "
-                      "src/lib.rs:13); accepted on the access probe", out)
-        self.assertEqual(self.gate_report(d)["migration_guard"]["status"], "private-unenforced")
+        for i, sdk in enumerate((SDK_UNENFORCED, None)):
+            d = crate(self.root, PRIVATE, name=f"unf_ref{i}", sdk=sdk)
+            code, out, _ = self.gate(d, self.probe_report())
+            self.assertEqual(code, 0, out)
+            self.assertIn("migration migrate: the source check did not recognise its guard (private-unenforced at "
+                          "src/lib.rs:13); accepted on the access probe", out)
+            self.assertEqual(self.gate_report(d)["migration_guard"]["status"], "private-unenforced")
 
     def test_not_found_still_blocks_with_a_refused_probe(self):
         d = crate(self.root, PRIVATE, name="nf")
-        m = {"method": "migrate_v2", "args": {}, "gas": "100 Tgas"}
-        sc = upgrade_scenario(migrate=m)
+        sc = upgrade_scenario(migrate={"method": "migrate_v2", "args": {}, "gas": "100 Tgas"})
         sc["state_after_init"] = {"keys": 1, "bytes": 40, "sha256": "a" * 64}
-        sc["steps"][0]["state_before"] = {"keys": 3, "bytes": 120, "sha256": "b" * 64}
+        sc["steps"][0]["state_before"] = {"keys": 3, "bytes": 120, "sha256": self.STATE}
         sc["steps"][0]["access_probe"] = {"method": "migrate_v2", "by": "p", "status": "failure",
-                                          "error": "Method migrate_v2 is private"}
+                                          "error": "Method migrate_v2 is private", "state_sha256": self.STATE,
+                                          "control_status": "success"}
         code, out, _ = self.gate(d, report(sc))
         self.assertEqual(code, 3, out)
         self.assertIn("migration method migrate_v2 not found", out)
         self.assertNotIn("near contract deploy", out)
 
-    def test_recognised_guards_still_print_their_own_line_with_a_probe(self):
+    def test_recognised_guards_still_print_their_own_line_with_a_refused_probe(self):
         for name, body, line in (("priv", PRIVATE, "migration migrate: #[private] (src/lib.rs:13)"),
                                  ("own", OWNER_CHECK, "migration migrate: owner check at src/lib.rs:12")):
             with self.subTest(name=name):
@@ -684,40 +944,30 @@ class AccessProbeGateTests(unittest.TestCase):
                 self.assertEqual(code, 0, out)
                 self.assertIn(line, out)
                 self.assertNotIn("accepted on the access probe", out)
-                self.assertIn("access probe: migrate sent by another account", out)
+                self.assertIn(self.REFUSED.format(err=self.PRIVATE_ERR), out.splitlines())
 
-    def test_same_state_true_and_none_print_no_note(self):
-        d = crate(self.root, PRIVATE, name="same")
-        for state_sha in ("b" * 64, None):
-            with self.subTest(state_sha256=state_sha):
-                code, out, _ = self.gate(d, self.probe_report(state_sha256=state_sha))
-                self.assertEqual(code, 0, out)
-                self.assertNotIn("the probe sandbox's state differed", out)
-                self.assertIs(self.gate_report(d)["migration_guard"]["access_probe"]["same_state"],
-                              True if state_sha else None)
-
-    def test_same_state_false_adds_a_note_to_the_probe_line(self):
-        d = crate(self.root, PRIVATE, name="differ")
-        code, out, _ = self.gate(d, self.probe_report(state_sha256="c" * 64))
-        self.assertEqual(code, 0, out)
-        self.assertIn("access probe: migrate sent by another account to the new code on the not yet migrated state "
-                      "was refused (Method migrate is private); note: the probe sandbox's state differed from the "
-                      "scenario run's", out)
-        self.assertIs(self.gate_report(d)["migration_guard"]["access_probe"]["same_state"], False)
-
-    def test_no_error_text_is_said_so(self):
-        d = crate(self.root, PRIVATE, name="noerr")
-        code, out, _ = self.gate(d, self.probe_report(error=None))
-        self.assertEqual(code, 0, out)
-        self.assertIn("was refused (no error text)", out)
+    def test_same_state_and_control_status_in_the_recorded_probe(self):
+        d = crate(self.root, PRIVATE, name="rec")
+        for kw, same, control in ((dict(), True, "success"), (dict(state_sha256="c" * 64), False, "success"),
+                                  (dict(state_sha256=None), None, "success"),
+                                  (dict(control_status="failure"), True, "failure"),
+                                  (dict(control_status=None), True, None)):
+            with self.subTest(kw=kw):
+                code, out, _ = self.gate(d, self.probe_report(**kw))
+                self.assertEqual(code, 0, out)      # #[private] with 5.18.0: the source check passes on its own
+                pr = self.gate_report(d)["migration_guard"]["access_probe"]
+                self.assertIs(pr["same_state"], same)
+                self.assertEqual(pr["control_status"], control)
+                self.assertNotIn("control_error", pr)
 
     def test_probe_is_in_the_gate_report_migration_guard(self):
         d = crate(self.root, OWNER_CHECK, name="inrep")
-        self.gate(d, self.probe_report(state_sha256="b" * 64))
+        self.gate(d, self.probe_report())
         self.assertEqual(self.gate_report(d)["migration_guard"],
                          {"method": "migrate", "status": "owner-check", "file": "src/lib.rs", "line": 12,
                           "access_probe": {"method": "migrate", "by": "p.test.near", "status": "failure",
-                                           "error": self.PRIVATE_ERR, "same_state": True}})
+                                           "error": self.PRIVATE_ERR, "same_state": True,
+                                           "control_status": "success"}})
 
     def test_mcp_gate_deploy_accepts_unprotected_with_a_refused_probe(self):
         from bumm_guard import mcp_server
@@ -730,6 +980,7 @@ class AccessProbeGateTests(unittest.TestCase):
                                           simulate_report=str(p))
         self.assertTrue(data["passed"], data["messages"])
         self.assertTrue(any(m.endswith("; accepted on the access probe") for m in data["messages"]))
+        self.assertIn(self.REFUSED.format(err=self.PRIVATE_ERR), data["messages"])
 
 
 if __name__ == "__main__":

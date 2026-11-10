@@ -1,7 +1,7 @@
 {
   "tool": "bumm-guard",
-  "version": "0.4.0",
-  "runner": "bumm-sim 0.4.0",
+  "version": "0.5.0",
+  "runner": "bumm-sim 0.5.0",
   "wasm_sha256": "ecd8a805ea3252f1ffa2a285964d3e035d6e3c6be16e6974c33c479c3e034443",
   "upgrade_wasm_sha256": "13425a042dec55eec364240e890a1645c7332f2898149353ebcb5830a5886013",
   "scenario_sha256": "7e7d87ce7e6b46feeb6ac43ac345dd2f1c906c6b63c683e12f322f72871fe0bd",
@@ -502,7 +502,7 @@
             "value": {
               "amount": "1000000000000000000000000",
               "buyer": "carol.test.near",
-              "created_at_ms": 1794303062074,
+              "created_at_ms": 1794305937488,
               "id": 3,
               "seller": "alice.test.near",
               "status": "Funded"

@@ -1,7 +1,7 @@
 {
   "tool": "bumm-guard",
-  "version": "0.4.0",
-  "runner": "bumm-sim 0.4.0",
+  "version": "0.5.0",
+  "runner": "bumm-sim 0.5.0",
   "wasm_sha256": "c3f50addfb067db8b9fcfc4b8dc6d1a6a197e66d392648bda372f7a7b3a3f617",
   "upgrade_wasm_sha256": "8526195a51a5f5d94f15fab7df1c685804eb419a01dc1a734ac1c76d6220e079",
   "scenario_sha256": "32bebb6e17bf4dcca1490ba0f0a7df6e9c7deed38563f472edf82021e7a38d1e",
