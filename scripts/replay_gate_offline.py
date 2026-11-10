@@ -46,6 +46,7 @@ from bumm_guard.gate import sha256_file  # noqa: E402
 ESCROW_V1 = "ecd8a805ea3252f1ffa2a285964d3e035d6e3c6be16e6974c33c479c3e034443"
 OPEN_MIGRATE = "upgraded live with this report; refused now: migrate is callable by any account"
 PROBE_OPEN = "the same scenario re-run with the access probe: the other account's migrate call went through"
+PROBE_REPORT_SUFFIX = "-probe-report-ci.json"
 
 # pair: (on-chain code sha256 RECORDED on testnet, where and when it was read, candidate crate,
 #        [(report name, expected gate exit, what the case shows)])
@@ -104,6 +105,11 @@ def check_reports(reports_dir: Path, onchain: str, account: str, crate_dir: str,
     ok = True
     for name, want, *why in cases:
         report = reports_dir / name
+        if name.endswith(PROBE_REPORT_SUFFIX) and not report.is_file() and reports_dir != ROOT / "evidence":
+            # Only the committed evidence keeps the earlier report and the probe re-run side by side. A
+            # fresh run writes one with-migrate report per pair, and it already carries the probe.
+            print(f"   skip: {name}: only in the committed evidence (this run's with-migrate report has the probe)")
+            continue
         if not report.is_file():
             print(f"   FAIL {name}: not found in {reports_dir}")
             ok = False
