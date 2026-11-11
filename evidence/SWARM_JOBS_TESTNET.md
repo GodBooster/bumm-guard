@@ -47,7 +47,7 @@ The state written by v1 (two jobs inside an `IterableMap`, one agent, counters) 
 | 3 | `approve` job 0 (agent alice, wasm `13425a04…`, report `f305461f…`, gate report `a27d07db…`) | `bumm-guard-bob.testnet` | `na3HbkkajdpGxbRrCWTu6ecrsEr5PkFn1qpnCFMcmuF` | returns `true`; job 0 `Paid`, `gate_report_sha256` recorded; alice `jobs_paid` 1, `jobs_in_review` 1 → 0 after step 4; alice balance 9.4989 → 10.4989 NEAR (+1 NEAR) |
 | 4 | `reject` job 1 with `close: true` | `bumm-guard-bob.testnet` | `ChUyAwT1qm8tjioA69MN96TU3ecCK2DehthFEKkGexZC` | job 1 `Cancelled` with the gate's reason; demo balance 5.9958 → 6.9958 NEAR (+1 NEAR refund); contract balance 12.4955 → 10.4955 NEAR |
 
-Both reviews read `bumm-guard-escrow2.testnet` only; it still runs escrow v1 (`ecd8a805…`) and is upgraded in the video. Balances were read with `view_account` right after each transaction; the small differences from round numbers are gas paid by the signers.
+Both reviews read `bumm-guard-escrow2.testnet` only; it ran escrow v1 (`ecd8a805…`) then and was upgraded to v3 on 2026-11-11 (`UPGRADE_TESTNET.md`). Balances were read with `view_account` right after each transaction; the small differences from round numbers are gas paid by the signers.
 
 
 ## Jobs for the video (2026-11-08)
@@ -63,7 +63,7 @@ Two more jobs on the v2 contract, one with an assigned agent and a pinned scenar
 | 5 | `review-job` for job 3 (rehearsal) | (read-only) | — | `scenario_sha256 on the job: null`; `REVIEW BLOCKED: … no passing upgrade scenario proves ecd8a805… -> 13425a04…`, exit 3, both `reject` variants printed |
 | 6 | `review-job` for job 2 (rehearsal) | (read-only) | — | `report scenarios with it: 1 of 1`; `REVIEW PASSED: job 2 may be paid`, exit 0, `approve` for bob printed |
 
-Nothing was approved, rejected or deployed after these steps; the approve of job 2 and the escrow2 upgrade are recorded once, in the video.
+Nothing was approved, rejected or deployed on 2026-11-08. Job 2 was never approved: on 2026-11-10 the gate began to refuse escrow v2 (`PRIVATE_ON_INIT.md`), and both jobs were rejected and closed (below).
 
 ## Reviewer function-call key (2026-11-08)
 
@@ -71,4 +71,30 @@ Nothing was approved, rejected or deployed after these steps; the approve of job
 |---|---|---|---|---|
 | 1 | Add a function-call access key to the reviewer: receiver `bumm-guard-jobs.testnet`, methods `approve`, `reject`, allowance 0.25 NEAR | `bumm-guard-bob.testnet` (full-access key) | `uVNWrSJSy9MDiP7oPdpkT6Zxbt5PKeCYePHdK4jzMZG` | `view_access_key_list`: `ed25519:BhBsPnJeC1KP1FuCJogm5gRnrN6nfGH5NgpBx1b4v3bP` with `FunctionCall {allowance: 250000000000000000000000, receiver_id: bumm-guard-jobs.testnet, method_names: [approve, reject]}`, next to the existing full-access key |
 
-The approve of job 0 (2026-11-07) was signed with the full-access key; later approvals and rejections are signed with this key (`--signer-public-key`).
+The approve of job 0 (2026-11-07) was signed with the full-access key. So were the two rejects of 2026-11-10, against the plan (next section). The approve of job 4 (2026-11-11) is the first transaction signed with this key.
+
+## Jobs 2 and 3 rejected and closed (2026-11-10)
+
+Both jobs held the escrow v2 wasm. Since the finding of 2026-11-10 the gate refuses that wasm even with its passing migrate report, because another account can call its `migrate`.
+
+| # | Step | Signed by | Transaction | Checked after it |
+|---|---|---|---|---|
+| 1 | `review-job` for job 2 (migrate report) | (read-only) | — | `REVIEW BLOCKED: DEPLOY BLOCKED: migration method migrate in src/lib.rs:118 has #[private] on an #[init] method, but this crate builds with near-sdk 5.17.2: before 5.18.0 near-sdk generates no caller check for init methods, so any account can call it; the report has no access probe that says otherwise`, both `reject` variants printed |
+| 2 | `reject` job 2 with `close: true` | `bumm-guard-bob.testnet` (full-access key, see below) | `9dZG6CKGBaGtDewX9hPs6YBPL4oDdRmZRq3ErKXkzYov` | block 277063512, 11:49:35 UTC; job 2 `Cancelled`, `reject_reason` = the text of step 1; demo balance 4.9883 → 5.9883 NEAR (+1 NEAR refund) |
+| 3 | `review-job` for job 3 (code-only report) | (read-only) | — | `REVIEW BLOCKED: DEPLOY BLOCKED: account bumm-guard-escrow2.testnet already runs code ecd8a805…; this is an upgrade and no passing upgrade scenario proves ecd8a805… -> 13425a04…` |
+| 4 | `reject` job 3 with `close: true` | `bumm-guard-bob.testnet` (full-access key) | `BbCkjCUcBRH829xycNfZSukwy6sFXWW6Gub8x5x98yfY` | block 277063588, 11:50:21 UTC; job 3 `Cancelled` with that reason; demo balance 5.9883 → 6.9883 NEAR; contract balance 12.5024 → 10.5024 NEAR over both rejects |
+
+**Which key signed.** Both rejects were meant to be signed with the reviewer's function-call key and were signed with the full-access key `ed25519:HAEGHEk2…`: the `public_key` of both transactions says so, and the nonce of the function-call key did not move. The commands had `--signer-public-key <function-call key>` after `sign-with-keychain`. near-cli-rs 0.31.1 does not use that option when it is online: it asks the network for the signer's keys and takes a full-access one (read in its source, `src/transaction_signature_options/sign_with_keychain/mod.rs`; the option is used only with `--offline`). Nothing was lost, but the claim "rejections are signed with the limited key" would have been false for these two. The commands in `docs/SWARM_JOBS.md` ("Reviewer key") are corrected.
+
+## Job 4: escrow v3, paid after review, approve signed with the function-call key (2026-11-10 and 2026-11-11)
+
+| # | Step | Signed by | Transaction | Checked after it |
+|---|---|---|---|---|
+| 1 | Demo posts job 4: reward 1 NEAR, `assigned_agent` alice, `scenario_sha256` `5b27a381…` (the escrow v1 → v3 upgrade-with-migrate scenario), deposit 1.1 NEAR | `bumm-guard-demo.testnet` | `4L8nD9pm2Miho5zLVWqEgyb1fPUCEZB5iMk2FfwJ3VpU` | block 277063646, 2026-11-10 11:50:53 UTC; returns `4`; job 4 `Open`, `reward_storage_fee` `4210000000000000000000`; 0.09579 NEAR excess refunded to demo; `job_count` 5 |
+| 2 | Alice submits escrow v3 (`evidence/wasm/escrow_v3.wasm`) with its CI report (`evidence/escrow-v3-upgrade-with-migrate-report-ci.json`) | `bumm-guard-alice.testnet` | `EBddd3LHaCnS2HoG7Yvt7eCyzmixckESNX1euk7PPCym` | block 277063695; job 4 `Submitted`, `wasm_sha256` `b66a74b9…`, `report_sha256` `db7e3fe4…` |
+| 3 | `review-job` for job 4, 2026-11-11 08:44:57 UTC | (read-only, reviewer's run) | — | `wasm sha256 … = submitted`, `report sha256 … = submitted`, `scenario_sha256 on the job: 5b27a381…; report scenarios with it: 1 of 1`; `gate: upgrade of bumm-guard-escrow2.testnet: ecd8a805… -> b66a74b9…`; `gate: proved after upgrade (25 step(s))`; `gate: access probe: migrate sent by another account to the new code on the not yet migrated state was refused (… only the contract itself may migrate); the same call from the contract account went through`; `REVIEW PASSED: job 4 may be paid`. Review report sha256 `fd307c873f49e2714e15c2b9b1d1c6ebdcf425a5f594c1824cfe0a8f1a2532e8`; the file is committed as [`review-job-4-2026-11-11.json`](review-job-4-2026-11-11.json) |
+| 4 | `approve` job 4 (agent alice, wasm `b66a74b9…`, report `db7e3fe4…`, gate report `fd307c87…`) | `bumm-guard-bob.testnet`, **function-call key** `ed25519:BhBsPnJeC1KP1FuCJogm5gRnrN6nfGH5NgpBx1b4v3bP` | `EHNVGz6iWLX81C5gsu58JL5Wv1B3zpL6Fiqubd5e6vRy` | block 277192290, 08:45:32 UTC, 5.5 Tgas; returns `true`; job 4 `Paid`, `gate_report_sha256` = the hash of step 3; alice balance 10.4982 → 11.4982 NEAR (+1 NEAR), `jobs_paid` 2, `jobs_in_review` 0; contract balance 11.5066 → 10.5066 NEAR; the key's nonce is `276802634000001` (its first use), its allowance 0.25 → 0.2495 NEAR |
+
+The approve was signed offline, the only way near-cli-rs 0.31.1 takes a chosen key from the keychain: `near --offline contract call-function as-transaction … sign-with-keychain --signer-public-key <key> --nonce <n> --block-hash <h> --block-height <b> save-to-file <file>`, then `near transaction send-signed-transaction file-with-base64-signed-transaction <file> network-config testnet send`. The `public_key` field of the transaction is the function-call key.
+
+The job's target, `bumm-guard-escrow2.testnet`, was upgraded to the approved wasm three minutes later by its owner (`UPGRADE_TESTNET.md`, tx `27sDyuPT…`); the upgrade is not part of the job. The jobs contract now holds five jobs: 0 and 4 `Paid`, 1, 2 and 3 `Cancelled`. `scripts/judge-check.sh` reads job 4 back as check B6.

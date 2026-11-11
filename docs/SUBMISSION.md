@@ -24,7 +24,7 @@ Prior work: BUMM, the author's Solana builder, is separate, not in this repo. Bu
 Try: scripts/judge-check.sh
 <!-- form-text-end -->
 
-The last evidence line ("Testnet: …") is true only after the escrow2 upgrade to v3 recorded for the video (section 3, shots 5 to 7). If that upgrade is not done, replace it with: "Testnet: three earlier pairs upgraded live with the previous gate; pre-upgrade state survived."
+The last evidence line ("Testnet: …") is true since 2026-11-11: `evidence/UPGRADE_TESTNET.md`, last section (escrow v1 → v3 on `bumm-guard-escrow2.testnet`), and `evidence/SWARM_JOBS_TESTNET.md` (the gate's refusal of escrow v2 is stored on chain as the reject reason of job 2).
 
 Field notes, checked against https://nearhackathon.com/HACKATHON.md on 2026-11-06:
 
@@ -58,69 +58,70 @@ Thread, reply 2 (277 characters with the link; the hashtag is in the main post),
 How we found it: BUMM Guard replays the upgrade in a second sandbox, deploys the new code alone and calls migrate() as a stranger. On the code of our three testnet contracts that call went through. The gate refuses them now; escrow v3 checks the caller. {REPO}
 <!-- x3-end -->
 
-Thread, reply 3 (274 characters):
+Thread, reply 3 (277 characters):
 
 <!-- x4-start -->
-Also new: guarded jobs for agent swarms. A NEAR contract holds the reward and pays the agent only after a reviewer approves the exact wasm hash BUMM Guard checked; review-job never signs. On testnet: one job paid, one rejected and refunded. docs/SWARM_JOBS.md #NEARHackathon
+Also new: guarded jobs for agent swarms. A NEAR contract holds the reward and pays the agent only after a reviewer approves the exact wasm hash BUMM Guard checked; review-job never signs. On testnet: two jobs paid, three rejected and refunded. docs/SWARM_JOBS.md #NEARHackathon
 <!-- x4-end -->
 
-## 3. Video script v6 (2 min 10 s, screen recording, voice-over in plain statements)
+## 3. Demo video as recorded (1 min 51 s, 2026-11-11)
 
-Changed on 2026-11-10 from v5: the access probe found that `migrate` of escrow v2 is callable by any account (near-sdk 5.17.2 generates no caller check for `#[private]` on an `#[init]` method; `evidence/PRIVATE_ON_INIT.md`; found in the sandbox on the pre-migration state, nobody called `migrate` on the testnet accounts). The video now opens on that finding, shows the gate refusing escrow v2 and passing escrow v3, and upgrades the testnet account kept for the video (`bumm-guard-escrow2.testnet`) to v3. Two roles on screen: **agent** (Claude Code) and **reviewer** (the human who checks, pays and deploys; on testnet every account is the owner's). Shots 4 to 7 are one continuous take. Every number on screen is in the README or in `evidence/`.
+A screen recording with an English voice-over; nobody is on camera. Recorded in parts on the owner's machine, in `bumm-guard/` on `main` at `b4e73e2`, and cut together. Waiting time (network, the agent thinking) is cut; the voice says so ("Waits are cut"). Every transaction in it was signed by the owner with `sign-with-keychain` on testnet accounts the owner controls; the voice says "Test account". No key, wallet or seed phrase is in frame. BUMM Guard signs nothing. Two roles: **agent** (Claude Code with the BUMM Guard MCP server) and **reviewer** (the human who checks, pays and deploys; on testnet every account is the owner's). Everything shown is recorded with transaction ids in `evidence/UPGRADE_TESTNET.md` (last section) and `evidence/SWARM_JOBS_TESTNET.md` (last two sections).
 
-Recorded in parts on the owner's machine, in `bumm-guard/` on `main`, and cut together; the terminal is logged to a file (`script`). The agent's waiting time in shot 3 is cut and marked ("waiting time cut"). Every transaction is signed by the owner with `sign-with-keychain` on testnet accounts he controls; each such frame carries the caption "signed by the owner, test account". No key, wallet or seed phrase in frame. BUMM Guard never signs.
+| # | Time | Screen (role) | Shows |
+|---|---|---|---|
+| 1 | 0:00-0:17 | Browser: CI job `scenario runner`, step `access probe on escrow v1 -> v2` | `migrate sent by bumm-sim-access-probe-not-an-alias.test.near on the not yet migrated state SUCCEEDED; the gate has no proof for this pair` |
+| 2 | 0:17-0:23 | Terminal: `gate --verify-deployed bumm-guard-escrow2.testnet --wasm evidence/wasm/escrow_v1.wasm …` | `MATCH` for v1 (`ecd8a805…`); `deal_count` 1; the deal: buyer, seller, 1 NEAR, `released: false` |
+| 3 | 0:23-0:41 | Claude Code (**agent**): prompt 1, then prompt 2 (below) | 1: the gate returned `BLOCKED` (`blocked: true`, `deploy_command: null`), `#[private]` on an `#[init]` method with near-sdk 5.17.2. 2: `passed: true`, the access probe refused, the deploy command with `with-init-call migrate`, not run |
+| 4 | 0:41-0:54 | Terminal (**reviewer**): `get_job {"id":4}`, then `review-job` for job 4 | job 4 `Submitted`, reward 1 NEAR, pinned `scenario_sha256 5b27a381…`; hashes `= submitted`, `report scenarios with it: 1 of 1`, `gate: access probe … was refused`, `REVIEW PASSED`, the `approve` command |
+| 5 | 0:54-1:12 | Terminal (**reviewer**): the `approve` signed offline with the reviewer's function-call key, sent, then `get_job {"id":4}` | `Public key: ed25519:BhBsPnJe…` (the function-call key); tx `EHNVGz6i…`; `status: Paid`, `gate_report_sha256` = the review report's hash |
+| 6 | 1:12-1:20 | Terminal (**reviewer**): the deploy command from shot 3 | tx `27sDyuPT…`: `Contract code has been successfully deployed`, `migrate … succeeded` |
+| 7 | 1:20-1:25 | Terminal (**reviewer**): `gate --verify-deployed … --wasm evidence/wasm/escrow_v3.wasm` with the expected deal | `MATCH` for `b66a74b9…`, `deal_count: ok: 1 (as expected)`, `get_deal: ok: {…} (as expected)`, `post-deploy verification passed` |
+| 8 | 1:25-1:51 | Browser: the repository, README "For judges and AI agents", the claim/check table | `scripts/judge-check.sh`; each claim next to its check |
 
-**Before recording (owner, off camera), in this order.**
+**Voice-over script** (one line per shot, parts of a shot separated by a slash):
 
-1. Jobs 2 and 3 on `bumm-guard-jobs.testnet` are `Submitted` with the escrow v2 wasm. The current gate rejects job 2 (its `migrate` is open) and job 3 (code-only report). Run `review-job` for each and sign the second command it prints (`reject` with `"close":true`) with the reviewer's function-call key (`--signer-public-key <key>` after `sign-with-keychain`): both jobs become `Cancelled`, the rewards go back to `bumm-guard-demo.testnet`.
+1. BUMM Guard is a deploy gate for NEAR contract upgrades. In older near-sdk versions, a private migrate can be called by anyone. Our CI proves it: a stranger's call succeeds.
+2. On testnet, escrow two runs version one, with a one-NEAR deal.
+3. Claude Code asks for version two. Waits are cut. / Blocked: migrate has no caller check. Nothing deployed. / Now version three: migrate checks its caller. / Passed. Command shown, not run.
+4. Job four: agent Alice submitted version three for one NEAR. / The review checks the submitted files and reruns the gate. Passed.
+5. The owner signs with a limited reviewer key. Test account. / The signed transaction is sent, and the approve succeeds. / Job four is Paid.
+6. The owner deploys version three, with migrate in the same transaction.
+7. Verified: version three on chain, the deal intact.
+8. Everything is open source. One command for judges and AI agents checks the claims, signs nothing, and needs no NEAR account. / Each claim maps to a check, and CI replays them on every push. / BUMM Guard. Code on GitHub: GodBooster slash bumm-guard.
 
-   ```
-   python3 -m bumm_guard review-job --jobs-contract bumm-guard-jobs.testnet --job 2 --crate tests/fixtures/near/escrow_v2 --wasm evidence/wasm/escrow_v2.wasm --simulate-report evidence/escrow-upgrade-with-migrate-report-ci.json --network testnet
-   python3 -m bumm_guard review-job --jobs-contract bumm-guard-jobs.testnet --job 3 --crate tests/fixtures/near/escrow_v2 --wasm evidence/wasm/escrow_v2.wasm --simulate-report evidence/escrow-upgrade-code-only-report-ci.json --network testnet
-   ```
+"Older near-sdk versions" means 5.0.0 to 5.17.2 (README, "Honest limits"). "Limited reviewer key" is a function-call access key for `approve` and `reject` on the jobs contract.
 
-2. The poster posts the new job (the call returns its id; 4 if nothing else was posted in between), pinned to the escrow v3 scenario and assigned to the agent:
+**What was cut, besides waiting time.** A first take of shot 7 that was run before the deploy: it printed a mismatch, correctly, because the account still ran v1. A second, mistaken send of the deploy command 22 seconds after the first: it failed in `migrate` and rolled back (tx `DpdRuA9u…`, `evidence/UPGRADE_TESTNET.md`). The macOS keychain prompt. Shots 5 and 6 are from two takes three minutes apart (08:45 and 08:48 UTC). In shot 7 the tool also prints a warning that an older local `gate-report.json` was for another wasm; it does not affect the comparison.
 
-   ```
-   near contract call-function as-transaction bumm-guard-jobs.testnet post_job json-args '{"description":"upgrade bumm-guard-escrow2.testnet to escrow v3 (migrate checks its caller) keeping its deals","target_account":"bumm-guard-escrow2.testnet","reward":"1000000000000000000000000","scenario_sha256":"5b27a381ba5ee997d4d2f4ce0e9478f253f17ecb907d10d6972379ffa223e1fd","assigned_agent":"bumm-guard-alice.testnet"}' prepaid-gas '30 Tgas' attached-deposit '1.1 NEAR' sign-as bumm-guard-demo.testnet network-config testnet sign-with-keychain send
-   ```
+**Done before the recording, off camera (2026-11-10).** Jobs 2 and 3 held escrow v2, which the gate refuses since the finding; `review-job` printed a `reject` for each, and the owner signed the `close: true` variant: both `Cancelled`, rewards back to the poster. These two rejects went out under the reviewer's full-access key, not the function-call key as intended (`evidence/SWARM_JOBS_TESTNET.md` says why). Then the poster posted job 4, pinned to the escrow v3 scenario and assigned to the agent, and the agent submitted the escrow v3 wasm and its CI report:
 
-3. The agent submits the escrow v3 wasm and its CI report (`evidence/wasm/escrow_v3.wasm`, `evidence/escrow-v3-upgrade-with-migrate-report-ci.json`):
-
-   ```
-   near contract call-function as-transaction bumm-guard-jobs.testnet submit json-args '{"job_id":4,"wasm_sha256":"b66a74b929fdc843f73f924e2435ad9b61e41a8d1f8a1a7aec6f9fe0cd4a5527","report_sha256":"db7e3fe41a2079a20c49f7bf2d5ec1967ec57adcf641658f858e766d52dbd6a4"}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as bumm-guard-alice.testnet network-config testnet sign-with-keychain send
-   ```
-
-4. Read-only checks: `scripts/judge-check.sh` → `no check failed` (B4 prints `with-init-call migrate`); `get_job {"id":4}` says `Submitted`; `bumm-guard-escrow2.testnet` still runs v1 with its one deal.
-
-**Order matters.** Shots 1 to 3 are read-only and can be re-recorded. Shot 5 (approve) is a real transaction that cannot be repeated once it succeeds; shot 6 (deploy + migrate of escrow2) is a real transaction too, but a failed one rolls back (deploy and migrate are one batch), so retrying it after a failure is safe. Shot 4 must run before shot 5 (after the approve the job is `Paid` and the review refuses it) and before shot 6 (the review reads escrow2 while it still runs v1).
-
-| # | Time | Screen (role) | Shows | Voice-over |
-|---|---|---|---|---|
-| 1 | 0:00-0:14 | Browser: CI job `scenario runner`, step `access probe on escrow v1 -> v2`; run number and SHA in frame | `migrate sent by bumm-sim-access-probe… on the not yet migrated state SUCCEEDED; the gate has no proof for this pair` | "This is the migration pattern of NEAR's official example: private, init, ignore state. On near-sdk 5.17.2 the private attribute does nothing on an init method. Our sandbox sent migrate from a stranger's account, and it went through." |
-| 2 | 0:14-0:24 | Terminal: `gate --verify-deployed bumm-guard-escrow2.testnet --wasm evidence/wasm/escrow_v1.wasm … --smoke 'deal_count=1' --smoke 'get_deal:{"id":0}'` | `MATCH` for v1, the deal: buyer, seller, 1 NEAR, `released: false` | "A live escrow on testnet holds a one-NEAR deal. The next version stores deals differently, so the upgrade needs a migration." |
-| 3 | 0:24-0:58 | Claude Code (**agent**): prompt 1, then prompt 2 (below) | 1: `blocked: true`, `has #[private] on an #[init] method … any account can call it`, the `fix:` line. 2: `passed: true`, `proved after upgrade (25 step(s))`, `scenario pin: 5b27a381… (matches)`, `access probe: migrate sent by another account … was refused (…); the same call from the contract account went through`, `deploy_command` with `with-init-call migrate` | "The agent asks BUMM Guard for the deploy command for version two. Blocked: anyone could call its migration. Version three checks the caller inside the method. The sandbox wrote state with the old code, upgraded and migrated it, 33 of 33 checks, and the stranger's call was refused. Passed, and here is the command. The tool never signs." |
-| 4 | 0:58-1:16 | Terminal (**reviewer**): `get_job {"id":4}` (2 s), then `review-job` for job 4 | job: `Submitted`, reward 1 NEAR, pinned `scenario_sha256 5b27a381…`; review: hashes `= submitted`, `report scenarios with it: 1 of 1`, `gate: access probe … was refused`, `REVIEW PASSED`, the `approve` command | "The upgrade is a paid job. The contract holds one NEAR and pins the one scenario it accepts. The reviewer runs the same gate on exactly the files the agent submitted: passed." |
-| 5 | 1:16-1:28 | Terminal (**reviewer**), same take: the printed `approve`, signed with the reviewer's function-call key; then `get_job {"id":4}`; caption "signed by the owner, test account" | tx ID; `status: Paid`, `gate_report_sha256` = the review report's hash | "The reviewer signs with a key that can only approve or reject jobs. The contract pays this agent, for this wasm and this report." |
-| 6 | 1:28-1:38 | Terminal (**reviewer**), same take: the deploy command from shot 3; caption "signed by the owner" | tx ID of deploy + migrate | "Then the upgrade itself: deploy and migrate, one transaction." |
-| 7 | 1:38-1:50 | Terminal (**reviewer**), same take: the verify command below | `MATCH` for `b66a74b9…`, `deal_count: ok: 1 (as expected)`, `get_deal: ok: {…} (as expected)` | "The code on chain is the proven wasm, and the deal made on version one is still there, in the new shape." |
-| 8 | 1:50-2:10 | README "For judges and AI agents" (the one command), then the repo URL | `scripts/judge-check.sh`; the limits line | "Limits: the state comes from the scenario, not from mainnet, and one reviewer signs. Every claim is checked by one command in the repository. Who can call your migration method? {REPO}" |
-
-Total 2:10 (under the 2:20 limit with 10 s of margin).
+```
+python3 -m bumm_guard review-job --jobs-contract bumm-guard-jobs.testnet --job 2 --crate tests/fixtures/near/escrow_v2 --wasm evidence/wasm/escrow_v2.wasm --simulate-report evidence/escrow-upgrade-with-migrate-report-ci.json --network testnet
+python3 -m bumm_guard review-job --jobs-contract bumm-guard-jobs.testnet --job 3 --crate tests/fixtures/near/escrow_v2 --wasm evidence/wasm/escrow_v2.wasm --simulate-report evidence/escrow-upgrade-code-only-report-ci.json --network testnet
+near contract call-function as-transaction bumm-guard-jobs.testnet post_job json-args '{"description":"upgrade bumm-guard-escrow2.testnet to escrow v3 (migrate checks its caller) keeping its deals","target_account":"bumm-guard-escrow2.testnet","reward":"1000000000000000000000000","scenario_sha256":"5b27a381ba5ee997d4d2f4ce0e9478f253f17ecb907d10d6972379ffa223e1fd","assigned_agent":"bumm-guard-alice.testnet"}' prepaid-gas '30 Tgas' attached-deposit '1.1 NEAR' sign-as bumm-guard-demo.testnet network-config testnet sign-with-keychain send
+near contract call-function as-transaction bumm-guard-jobs.testnet submit json-args '{"job_id":4,"wasm_sha256":"b66a74b929fdc843f73f924e2435ad9b61e41a8d1f8a1a7aec6f9fe0cd4a5527","report_sha256":"db7e3fe41a2079a20c49f7bf2d5ec1967ec57adcf641658f858e766d52dbd6a4"}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as bumm-guard-alice.testnet network-config testnet sign-with-keychain send
+```
 
 Shot 3 prompts, typed verbatim, one at a time:
 
-1. `Upgrade bumm-guard-escrow2.testnet to escrow v2: crate tests/fixtures/near/escrow_v2, wasm evidence/wasm/escrow_v2.wasm, network testnet, simulate_report evidence/escrow-upgrade-with-migrate-report-ci.json. Call bumm-guard gate_deploy and show me the result. Do not deploy anything.`
-2. `Now escrow v3: crate tests/fixtures/near/escrow_v3, wasm evidence/wasm/escrow_v3.wasm, simulate_report evidence/escrow-v3-upgrade-with-migrate-report-ci.json, scenario_sha256 5b27a381ba5ee997d4d2f4ce0e9478f253f17ecb907d10d6972379ffa223e1fd. Show me the deploy command; do not run it.`
+1. `Upgrade bumm-guard-escrow2.testnet to escrow v2: crate tests/fixtures/near/escrow_v2, wasm evidence/wasm/escrow_v2.wasm, network testnet, simulate_report evidence/escrow-upgrade-with-migrate-report-ci.json. Call bumm-guard gate_deploy and show me the result. Do not deploy anything. Report only what the gate returned, briefly; no suggestions of your own.`
+2. `Now escrow v3: crate tests/fixtures/near/escrow_v3, wasm evidence/wasm/escrow_v3.wasm, simulate_report evidence/escrow-v3-upgrade-with-migrate-report-ci.json, scenario_sha256 5b27a381ba5ee997d4d2f4ce0e9478f253f17ecb907d10d6972379ffa223e1fd. Show me the deploy command; do not run it. Report only what the gate returned, briefly; no suggestions of your own.`
 
-Shot 4 commands (read-only; the review writes `.bumm-guard/review-4.json`):
+Shot 4 commands (read-only; the review wrote the report committed as `evidence/review-job-4-2026-11-11.json`):
 
 ```
 near contract call-function as-read-only bumm-guard-jobs.testnet get_job json-args '{"id":4}' network-config testnet now
 python3 -m bumm_guard review-job --jobs-contract bumm-guard-jobs.testnet --job 4 --crate tests/fixtures/near/escrow_v3 --wasm evidence/wasm/escrow_v3.wasm --simulate-report evidence/escrow-v3-upgrade-with-migrate-report-ci.json --network testnet
 ```
 
-Shot 5: the `approve` command exactly as shot 4 printed it, with `--signer-public-key <reviewer function-call key>` inserted after `sign-with-keychain`. The `gate_report_sha256` in it is the hash of `.bumm-guard/review-4.json` from that run (the file carries a timestamp, so every run of shot 4 prints a different hash): sign only the command of the take that is used.
+Shot 5: the `approve` that shot 4 printed, signed offline so that near-cli-rs takes the function-call key (`$K` the key, `$N` its next nonce, `$H` and `$B` a recent block; how to get them: `docs/SWARM_JOBS.md`, "Reviewer key"), then sent. `$R` is the hash of the review report of that run:
+
+```
+R=$(shasum -a 256 .bumm-guard/review-4.json | cut -d' ' -f1); echo $R
+near --offline contract call-function as-transaction bumm-guard-jobs.testnet approve json-args "{\"job_id\":4,\"agent\":\"bumm-guard-alice.testnet\",\"wasm_sha256\":\"b66a74b929fdc843f73f924e2435ad9b61e41a8d1f8a1a7aec6f9fe0cd4a5527\",\"report_sha256\":\"db7e3fe41a2079a20c49f7bf2d5ec1967ec57adcf641658f858e766d52dbd6a4\",\"gate_report_sha256\":\"$R\"}" prepaid-gas '100 Tgas' attached-deposit '0 NEAR' sign-as bumm-guard-bob.testnet network-config testnet sign-with-keychain --signer-public-key $K --nonce $N --block-hash $H --block-height $B save-to-file ../approve-4.json
+near transaction send-signed-transaction file-with-base64-signed-transaction ../approve-4.json network-config testnet send
+```
 
 Shot 6: the deploy command from shot 3, exactly as printed:
 
@@ -128,15 +129,13 @@ Shot 6: the deploy command from shot 3, exactly as printed:
 near contract deploy bumm-guard-escrow2.testnet use-file evidence/wasm/escrow_v3.wasm with-init-call migrate json-args '{}' prepaid-gas '100 Tgas' attached-deposit '0 NEAR' network-config testnet sign-with-keychain send
 ```
 
-Shot 7 command (valid while the account holds exactly this one deal):
+Shot 7 command (valid while the account holds exactly this one deal; `scripts/judge-check.sh` repeats it as check B5):
 
 ```
 python3 -m bumm_guard gate --verify-deployed bumm-guard-escrow2.testnet --wasm evidence/wasm/escrow_v3.wasm --network testnet --smoke 'deal_count=1' --smoke 'get_deal:{"id":0}={"id":0,"buyer":"bumm-guard-demo.testnet","seller":"bumm-guard-escrow2.testnet","amount":"1000000000000000000000000","status":"Funded","created_at_ms":0}'
 ```
 A `MATCH` alone proves only that the code is the candidate; the `(as expected)` lines show that the deal survived.
 
-Nothing else in the video: no ABI panel, no A/B table, no rule-pack shot, no claim that BUMM Guard makes development faster.
-
-After the recording: the author verifies both accounts read-only and adds to `evidence/UPGRADE_TESTNET.md` the escrow2 upgrade and to `evidence/SWARM_JOBS_TESTNET.md` jobs 2, 3 and 4 (reject-close of 2 and 3, review report hash and approve of 4 with the function-call key), and commits the review report of job 4.
+Not in the video: the ABI panel, the A/B pilot, the rule-pack, any claim that BUMM Guard makes development faster.
 
 History: `bumm-guard-escrow2.testnet` was prepared on 2026-11-04 (create tx `4RhzPTdksaBccof7Gjwv1G2iz5qMkhYSVtUsqUrtmy61`, v1 deploy `yihTWZt7bYBcsZFSbrJVA2MoKJquJPzxdUqKj1EENc9`, `new` `Cv2f7M7W8n2WW22nmTPzNCwq8yAxMXjma61ARxowVqNi`, one 1 NEAR deal from `bumm-guard-demo.testnet` `BhGjfR7Nf3xVpFv2bkshysS3N7zaeHQNCcqYwJ5imF1K`). `bumm-guard-escrow.testnet` runs escrow v2 (upgraded on 2026-11-04, before the finding); it is not used in the video.

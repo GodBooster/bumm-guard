@@ -71,6 +71,9 @@ The new wasm hashes of the first three rows are the files that run on testnet (`
   (resolved in its `Cargo.lock`), or with a version the files do not tell, and with no recognised caller check
   in the body, blocks (`private-unenforced`).
 - `python3 scripts/replay_gate_offline.py` shows both: the three earlier pairs exit 3, escrow v1 → v3 exits 0.
+- Live, 2026-11-11: `bumm-guard-escrow2.testnet` was upgraded from escrow v1 to v3 with the command this gate
+  printed (`UPGRADE_TESTNET.md`, last section). No call of `migrate` from another account was made on testnet;
+  the refusal is shown in the sandbox only.
 
 ## Fix for a contract
 

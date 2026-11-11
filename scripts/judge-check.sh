@@ -102,7 +102,7 @@ echo "logs and reports: .bumm-guard/judge/"
 echo; echo "== A. offline (no network, no Rust, no account)"
 check A1 "Python is 3.12 or newer" 0 "" -- "$PY" -c 'import sys; print(sys.version); sys.exit(sys.version_info < (3, 12))'
 check A2 "CLI runs from the repository root without installing" 0 "^bumm-guard [0-9]" -- "$PY" -m bumm_guard --version
-check A3 "committed wasm files equal evidence/wasm/SHA256SUMS (recorded as the deployed files; B1-B3 compare them with the chain)" 0 "swarm_jobs_v2.wasm: OK" -- sha_check
+check A3 "committed wasm files equal evidence/wasm/SHA256SUMS (recorded as the deployed files; B1-B3 and B5 compare them with the chain)" 0 "swarm_jobs_v2.wasm: OK" -- sha_check
 check A4 "rule-pack: the fixtures give exactly one finding per rule, exit 1" 1 "BG-NEAR-003" -- scan_three_rules
 check A5 "deploy gate blocks a crate with a high finding, exit 3" 3 "DEPLOY BLOCKED" -- "$PY" -m bumm_guard gate tests/fixtures/near/d1_vuln --dry-run
 check A6 "all 24 scenario files are valid (format check, nothing executed)" 0 "^24 scenario file\(s\) valid" -- "$PY" -m bumm_guard simulate scenarios/*/*.json --validate-only
@@ -126,9 +126,9 @@ json.load(urllib.request.urlopen(req, timeout=10))
 EOF
 }
 if [ "$OFFLINE" = 1 ]; then
-  for id in B1 B2 B3 B4; do skip "$id" "testnet check" "--offline given"; done
+  for id in B1 B2 B3 B4 B5 B6; do skip "$id" "testnet check" "--offline given"; done
 elif ! rpc_up >/dev/null 2>&1; then
-  for id in B1 B2 B3 B4; do skip "$id" "testnet check" "https://rpc.testnet.near.org unreachable; group A7 replays the gate on the recorded hashes instead"; done
+  for id in B1 B2 B3 B4 B5 B6; do skip "$id" "testnet check" "https://rpc.testnet.near.org unreachable; group A7 replays the gate on the recorded hashes instead"; done
 else
   check B1 "escrow upgraded live: code = escrow_v2.wasm, the v1 deal reads back in the v2 shape" 0 "post-deploy verification passed" -- \
     "$PY" -m bumm_guard gate --verify-deployed bumm-guard-escrow.testnet --wasm evidence/wasm/escrow_v2.wasm --network testnet --dry-run \
@@ -140,12 +140,19 @@ else
   check B3 "jobs contract upgraded live to v2; job 0 paid, approve bound to the committed review report (sha256 ${REVIEW0_SHA:0:8}…)" 0 "\"status\": \"Paid\".*\"gate_report_sha256\": \"$REVIEW0_SHA\"" -- \
     "$PY" -m bumm_guard gate --verify-deployed bumm-guard-jobs.testnet --wasm evidence/wasm/swarm_jobs_v2.wasm --network testnet --dry-run \
       --smoke 'get_job:{"id":0}'
-  # bumm-guard-escrow2.testnet is upgraded on camera for the demo video: before that it runs v1 and the gate
-  # prints the proven upgrade command (escrow v3: migrate() checks its caller); after it, it runs v3 and the
-  # gate answers NO CHANGE. Both exit 0.
-  check B4 "live gate on bumm-guard-escrow2.testnet with the committed escrow v3 migrate proof (prints the command, or NO CHANGE once upgraded)" 0 "with-init-call migrate|NO CHANGE" -- \
+  # bumm-guard-escrow2.testnet was upgraded to escrow v3 (migrate() checks its caller) on 2026-11-11, for the
+  # demo video (evidence/UPGRADE_TESTNET.md). Before that the gate printed the proven upgrade command here;
+  # now the account runs the candidate and the gate answers NO CHANGE.
+  check B4 "live gate on bumm-guard-escrow2.testnet with the committed escrow v3 migrate proof: the account already runs that wasm (NO CHANGE)" 0 "NO CHANGE" -- \
     "$PY" -m bumm_guard gate tests/fixtures/near/escrow_v3 --wasm evidence/wasm/escrow_v3.wasm --account bumm-guard-escrow2.testnet --network testnet \
       --simulate-report evidence/escrow-v3-upgrade-with-migrate-report-ci.json --dry-run
+  check B5 "escrow2 upgraded live to v3: code = escrow_v3.wasm, the v1 deal reads back in the v3 shape" 0 "post-deploy verification passed" -- \
+    "$PY" -m bumm_guard gate --verify-deployed bumm-guard-escrow2.testnet --wasm evidence/wasm/escrow_v3.wasm --network testnet --dry-run \
+      --smoke 'get_deal:{"id":0}={"id":0,"buyer":"bumm-guard-demo.testnet","seller":"bumm-guard-escrow2.testnet","amount":"1000000000000000000000000","status":"Funded","created_at_ms":0}'
+  REVIEW4_SHA="$("$PY" -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' evidence/review-job-4-2026-11-11.json)"
+  check B6 "job 4 (escrow v3) paid; approve bound to the committed review report (sha256 ${REVIEW4_SHA:0:8}…)" 0 "\"status\": \"Paid\".*\"gate_report_sha256\": \"$REVIEW4_SHA\"" -- \
+    "$PY" -m bumm_guard gate --verify-deployed bumm-guard-jobs.testnet --wasm evidence/wasm/swarm_jobs_v2.wasm --network testnet --dry-run \
+      --smoke 'get_job:{"id":4}'
 fi
 
 # --- group C: real near-sandbox ------------------------------------------------------------------

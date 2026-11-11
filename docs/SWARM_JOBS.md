@@ -228,9 +228,37 @@ near account list-keys bumm-guard-bob.testnet network-config testnet now
 ```
 
 The listing must show a `function call` key with receiver `bumm-guard-jobs.testnet`, methods `approve, reject` and
-the allowance, next to the existing full-access key. To sign the printed `approve` / `reject` with it, add
-`--signer-public-key <the new ed25519 public key>` right after `sign-with-keychain` (otherwise near-cli may pick the
-full-access key). What it protects and what it does not: README, "Honest limits", "Reviewer key".
+the allowance, next to the existing full-access key.
+
+**Signing with that key (near-cli-rs 0.31.1).** Adding `--signer-public-key <key>` after `sign-with-keychain` in
+the printed command is not enough. Online, `sign-with-keychain` asks the network for the signer's keys and takes a
+full-access one; the option is used only in `--offline` mode. We learned it on 2026-11-10: two rejects carried the
+option and were signed with the full-access key (`evidence/SWARM_JOBS_TESTNET.md`). To sign with the function-call
+key, sign offline and send the signed file. Offline mode needs the key's next nonce and a recent block, both read
+without a key:
+
+```
+K=<the function-call public key>
+near account list-keys bumm-guard-bob.testnet network-config testnet now      # N = that key's nonce + 1
+read -r H B <<< "$(curl -s https://rpc.testnet.near.org -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"block","params":{"finality":"final"}}' | python3 -c 'import sys,json;h=json.load(sys.stdin)["result"]["header"];print(h["hash"],h["height"])')"
+```
+
+Then take the `approve` (or `reject`) command that `review-job` printed, put `--offline` right after `near`, and
+replace its ending `sign-with-keychain send` with:
+
+```
+sign-with-keychain --signer-public-key $K --nonce $N --block-hash $H --block-height $B save-to-file approve.json
+```
+
+Check the `Public key:` line it prints, then send it soon (a transaction is accepted only while its block hash is
+recent):
+
+```
+near transaction send-signed-transaction file-with-base64-signed-transaction approve.json network-config testnet send
+```
+
+The approve of job 4 on 2026-11-11 was signed this way (`evidence/SWARM_JOBS_TESTNET.md`). What the key protects
+and what it does not: README, "Honest limits", "Reviewer key".
 
 ## Honest limits
 
@@ -315,8 +343,8 @@ are done after the upgrade, see the next section. Steps 7 to 9 below are the v1 
 rehearsal.
 
 Accounts: `bumm-guard-jobs.testnet` (new, holds the contract), reviewer `bumm-guard-bob.testnet`, agent
-`bumm-guard-alice.testnet`, poster `bumm-guard-demo.testnet`, target `bumm-guard-escrow2.testnet` (runs escrow v1,
-`ecd8a805…`; it is only read here and is upgraded later, in the video). Hashes used below:
+`bumm-guard-alice.testnet`, poster `bumm-guard-demo.testnet`, target `bumm-guard-escrow2.testnet` (ran escrow v1,
+`ecd8a805…`, at that time; it is only read here and was upgraded to v3 on 2026-11-11). Hashes used below:
 
 | file | sha256 |
 |---|---|
@@ -375,7 +403,8 @@ Accounts: `bumm-guard-jobs.testnet` (new, holds the contract), reviewer `bumm-gu
    ```
    The review of job 1 and bob's reject are step 6 of the next section.
 
-Both reviews only read `bumm-guard-escrow2.testnet` (`view_code`); it stays on v1 until the video's upgrade.
+Both reviews only read `bumm-guard-escrow2.testnet` (`view_code`); it stayed on v1 until its upgrade to v3 on 2026-11-11
+(`evidence/UPGRADE_TESTNET.md`).
 
 ## Upgrade v1 → v2 on testnet (the owner signs; BUMM Guard prints and reads)
 
